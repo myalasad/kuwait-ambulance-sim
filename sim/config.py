@@ -62,6 +62,12 @@ class SimConfig:
 
     # --- vehicles ---
     ambulance_type: str = "ambulance"
+    speed_exemption_factor: float = 1.5  # ambulances may run at up to 150%
+    #                                      of the posted limit (traffic-law
+    #                                      emergency exemption — enforcement
+    #                                      cameras recognise the lights and
+    #                                      issue no citation)
+    ambulance_max_kmh: float = 140.0     # absolute cap regardless of road
 
 
 # Dispatch origins inside the simulated area (lat, lon).  Amiri Hospital is the

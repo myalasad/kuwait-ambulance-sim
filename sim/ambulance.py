@@ -87,6 +87,9 @@ class Dispatcher:
         traci.route.add(route_id, route)
         traci.vehicle.add(amb_id, route_id, typeID=self.cfg.ambulance_type,
                           departLane="best", departSpeed="max")
+        # emergency speed exemption: above the posted limit, capped absolutely
+        traci.vehicle.setSpeedFactor(amb_id, self.cfg.speed_exemption_factor)
+        traci.vehicle.setMaxSpeed(amb_id, self.cfg.ambulance_max_kmh / 3.6)
         case = self.ops.open_case("A", amb_id, now,
                                   f"{amb_id}: {from_desc} -> {to_desc}")
         self.info[amb_id] = {
@@ -107,8 +110,11 @@ class Dispatcher:
                       f"{amb_id} dispatched ({from_desc} to {to_desc}): "
                       f"{algorithm}, {length_m / 1000:.1f} km, "
                       f"{self.info[amb_id]['signals_on_route']} signals on "
-                      f"route, ETA {eta_s:.0f} s, lights ON", "info",
-                      actor=amb_id, case=case)
+                      f"route, ETA {eta_s:.0f} s, lights ON, speed-limit "
+                      f"exemption active (up to "
+                      f"{self.cfg.speed_exemption_factor:.0%} of posted "
+                      f"limit, max {self.cfg.ambulance_max_kmh:.0f} km/h)",
+                      "info", actor=amb_id, case=case)
         return amb_id
 
     def _resolve(self, spec, kind):

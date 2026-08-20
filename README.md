@@ -66,6 +66,8 @@ python run_live.py                   # open http://127.0.0.1:8642
 | Page | What it does |
 |---|---|
 | `/` **Live Map** | Kuwait City map with 3D-look signal housings and ambulance sprites, Dijkstra route overlays, per-approach signal heads, "PURPOSELY ENABLED / BACK TO NORMAL" junction labels, per-ambulance lights toggles, dispatch controls, Kuwait sim clock, priority-conflict banner with supervisor grant buttons |
+| `/driver` | The phone in the ambulance cab: heading-up navigation on the shared route, "next signal will be GREEN" card, live speed beside the posted-limit sign with the EMERGENCY EXEMPT badge, arrival time on the Kuwait clock |
+| `/how` | A continuously looping, bilingual (EN/AR) animated explainer of the whole cycle — camera detection, amber + all-red, corridor green, the no-fine speed exemption, back to normal — built for non-engineers |
 | `/navigation` | The Dijkstra corridor per ambulance: route on the network, node-by-node analysis (distance, ETA, signals, live preemption state) |
 | `/operations` | Real-time typed operations feed with severity filters and search, the full case ledger (P/A/D cases with durations and outcomes), pending supervisor decisions |
 | `/protocol` | The complete operating rulebook: dual-ambulance arbitration, operator referral, error fail-safes, why-did-it-disappear guarantees, data provenance, scope-of-use |
@@ -150,8 +152,10 @@ To push to GitHub (needs your login once):
 - Signal placement comes from OSM `highway=traffic_signals` tags plus
   netconvert's guessing; downtown Kuwait City is well mapped, but individual
   signal plans are synthetic (static programs), not the real KMoI timings.
-- The ambulance obeys signals like any vehicle — the measured benefit is the
-  green wave itself, not red-running.
+- Ambulances carry the emergency speed exemption: up to 150% of the posted
+  limit (capped at 140 km/h) with lights active; every enforcement camera
+  logs the exempt pass with "NO CITATION issued". At signals they still
+  benefit from the corridor rather than red-running.
 - SUMO's sublane model is **on by default** (`lateral_resolution = 0.8` in
   `sim/config.py`), so cars form rescue lanes for the blue-light device; set
   it to `0.0` to disable it if the simulation feels slow.

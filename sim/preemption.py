@@ -409,6 +409,20 @@ class GreenWaveController:
                       f"Camera at junction {tls_id} detected {amb_id} "
                       f"with lights on, {dist:.0f} m out", "info",
                       actor=amb_id)
+        # The same camera is an enforcement camera: over the limit with
+        # lights active means the emergency exemption applies — no citation.
+        try:
+            speed = traci.vehicle.getSpeed(amb_id)
+            limit = traci.lane.getMaxSpeed(traci.vehicle.getLaneID(amb_id))
+        except traci.TraCIException:
+            return
+        if speed > limit + 0.5:
+            self.ops.emit(self._now, "enforcement",
+                          f"Enforcement camera at {tls_id}: {amb_id} at "
+                          f"{speed * 3.6:.0f} km/h in a {limit * 3.6:.0f} "
+                          f"km/h zone — emergency lights active, exemption "
+                          f"applies, NO CITATION issued", "info",
+                          actor=amb_id)
         if amb_id not in self.confirmed:
             self.confirmed.add(amb_id)
             self.ops.emit(self._now, "corridor",

@@ -107,11 +107,17 @@ class Simulation:
             angle = round(vals.get(tc.VAR_ANGLE, 0.0), 1)
             if veh_id.startswith("AMB_"):
                 rec = self.dispatcher.info.get(veh_id, {})
+                try:
+                    limit = round(traci.lane.getMaxSpeed(
+                        traci.vehicle.getLaneID(veh_id)) * 3.6)
+                except traci.TraCIException:
+                    limit = None
                 ambs.append({
                     "id": veh_id,
                     "lon": round(lon, 6), "lat": round(lat, 6),
                     "angle": angle,
                     "kmh": round(vals.get(tc.VAR_SPEED, 0.0) * 3.6),
+                    "limit": limit,
                     "lights": rec.get("lights", True),
                     "case": rec.get("case"),
                 })

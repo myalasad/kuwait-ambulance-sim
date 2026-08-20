@@ -128,11 +128,13 @@
       camera detection → Dijkstra corridor → phase-hold preemption</div>
   </div>
 
-  <nav>
-    <a class="on" href="/">Live Map</a>
-    <a href="/navigation">Navigation</a>
-    <a href="/operations">Operations</a>
-    <a href="/protocol">Protocol</a>
+  <nav style="flex-wrap:wrap">
+    <a class="on" href="/" style="flex:1 1 30%">Live Map</a>
+    <a href="/driver" style="flex:1 1 30%">Driver</a>
+    <a href="/navigation" style="flex:1 1 30%">Navigation</a>
+    <a href="/operations" style="flex:1 1 30%">Operations</a>
+    <a href="/protocol" style="flex:1 1 30%">Protocol</a>
+    <a href="/how" style="flex:1 1 30%">How it works</a>
   </nav>
 
   <div class="card stack">
@@ -316,9 +318,10 @@ function onFrame(ev) {
     seenA.add(a.id);
     const p = ambPos.get(a.id);
     if (p) { p.tLon = a.lon; p.tLat = a.lat; p.kmh = a.kmh;
-             p.angle = a.angle; p.lights = a.lights; }
+             p.angle = a.angle; p.lights = a.lights; p.limit = a.limit; }
     else ambPos.set(a.id, { lon: a.lon, lat: a.lat, tLon: a.lon, tLat: a.lat,
-                            kmh: a.kmh, angle: a.angle, lights: a.lights });
+                            kmh: a.kmh, angle: a.angle, lights: a.lights,
+                            limit: a.limit });
   }
   for (const id of ambPos.keys()) if (!seenA.has(id)) ambPos.delete(id);
 
@@ -621,7 +624,12 @@ function render(now) {
       ctx.beginPath(); ctx.arc(c.x, c.y, 22, 0, 7);
       ctx.fillStyle = grad; ctx.fill();
     }
-    const label = zoom >= 14 ? `${id} · ${p.kmh} km/h${p.lights ? "" : " · lights OFF"}` : null;
+    let label = null;
+    if (zoom >= 14) {
+      label = `${id} · ${p.kmh} km/h`;
+      if (p.limit && p.kmh > p.limit) label += ` (limit ${p.limit} · EXEMPT)`;
+      if (!p.lights) label += " · lights OFF";
+    }
     drawAmbulance(c.x, c.y, p.angle || 0, blue, p.lights, label);
   }
 }

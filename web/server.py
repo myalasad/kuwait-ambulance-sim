@@ -183,6 +183,16 @@ async def protocol_page():
     return _page("protocol.html")
 
 
+@app.get("/driver")
+async def driver_page():
+    return _page("driver.html")
+
+
+@app.get("/how")
+async def how_page():
+    return _page("how.html")
+
+
 @app.get("/api/operations")
 async def api_operations(since: int = 0):
     if hub.sim is None or hub.sim.ops is None:

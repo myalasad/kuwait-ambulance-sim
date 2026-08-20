@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driver View — Kuwait Ambulance Green Wave</title>
+<style>
+  :root {
+    --bg: #10141c; --panel: #171d29; --panel2: #1e2634; --line: #2a3547;
+    --text: #e8edf6; --muted: #8b98ad;
+    --kw-green: #009a4e; --kw-red: #ce1126; --amber: #f0b429;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
+  header h1 { font-size: 16px; }
+  header .flag { display: inline-block; width: 14px; height: 10px;
+    background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
+    border-radius: 2px; margin-right: 6px; }
+  nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  nav a { padding: 6px 12px; font-size: 12px; font-weight: 600;
+    color: var(--muted); text-decoration: none; border: 1px solid var(--line);
+    border-radius: 8px; background: #141a25; }
+  nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
+  select { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: #141a25; color: var(--text); font-size: 13px; }
+
+  main { display: flex; justify-content: center; align-items: flex-start;
+         gap: 26px; padding: 24px 20px 50px; flex-wrap: wrap; }
+  .explain { max-width: 330px; font-size: 13.5px; color: #c6d0e0; }
+  .explain h2 { font-size: 13px; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--muted); margin: 14px 0 6px; }
+  .explain b { color: #4ade80; }
+
+  /* ---- the phone mounted in the cab ---- */
+  #phone { width: 375px; height: 730px; background: #05070b;
+    border-radius: 44px; border: 3px solid #2c3547;
+    box-shadow: 0 24px 60px rgba(0,0,0,.65), inset 0 0 0 6px #000;
+    position: relative; overflow: hidden; flex: none; }
+  #notch { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 120px; height: 26px; background: #000; border-radius: 14px; z-index: 30; }
+  #statusbar { position: absolute; top: 12px; left: 26px; right: 26px;
+    display: flex; justify-content: space-between; font-size: 13px;
+    font-weight: 600; z-index: 20; font-variant-numeric: tabular-nums; }
+  /* canvas is a replaced element: inset alone does not stretch it, and an
+     unpinned size feeds back through the ResizeObserver and doubles forever */
+  #navcv { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  #instruction { position: absolute; top: 48px; left: 12px; right: 12px;
+    background: rgba(0,122,64,.94); border-radius: 14px; padding: 10px 14px;
+    z-index: 20; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  #instruction .dist { font-size: 12px; opacity: .85; }
+  #instruction .street { font-size: 19px; font-weight: 800; line-height: 1.2;
+    text-wrap: balance; }
+
+  #signalcard { position: absolute; top: 128px; left: 12px; right: 12px;
+    border-radius: 12px; padding: 8px 12px; z-index: 20; font-size: 13px;
+    font-weight: 700; display: none; align-items: center; gap: 10px; }
+  #signalcard.green { display: flex; background: rgba(18,58,32,.95);
+    color: #4ade80; border: 1.5px solid #22c55e; }
+  #signalcard.normal { display: flex; background: rgba(42,33,19,.95);
+    color: var(--amber); border: 1.5px solid var(--amber); }
+  #signalcard .lamp { width: 14px; height: 14px; border-radius: 50%;
+    flex: none; }
+  #signalcard.green .lamp { background: #22c55e; box-shadow: 0 0 10px #22c55e;
+    animation: pulse 1s infinite alternate; }
+  #signalcard.normal .lamp { background: var(--amber); }
+  @keyframes pulse { from { opacity: .6; } to { opacity: 1; } }
+
+  #speedo { position: absolute; left: 14px; bottom: 96px; z-index: 20;
+    display: flex; align-items: flex-end; gap: 10px; }
+  #speednum { background: rgba(5,7,11,.85); border: 2px solid #3a4454;
+    border-radius: 16px; padding: 6px 14px; text-align: center; }
+  #speednum .v { font-size: 40px; font-weight: 800; line-height: 1;
+    font-variant-numeric: tabular-nums; }
+  #speednum .u { font-size: 11px; color: var(--muted); }
+  #limitsign { width: 54px; height: 54px; border-radius: 50%;
+    background: #fff; border: 7px solid #ce1126; display: grid;
+    place-items: center; font-size: 19px; font-weight: 800; color: #111; }
+  #exempt { position: absolute; left: 14px; bottom: 66px; z-index: 21;
+    background: var(--kw-green); color: #fff; border-radius: 999px;
+    font-size: 11px; font-weight: 800; padding: 3px 12px; display: none;
+    letter-spacing: .05em; }
+  #etabar { position: absolute; left: 12px; right: 12px; bottom: 12px;
+    background: rgba(5,7,11,.9); border: 1px solid #2c3547;
+    border-radius: 16px; padding: 9px 16px; z-index: 20;
+    display: flex; justify-content: space-between; align-items: center; }
+  #etabar .big { font-size: 21px; font-weight: 800; color: #4ade80;
+    font-variant-numeric: tabular-nums; }
+  #etabar .sub { font-size: 11px; color: var(--muted); }
+  #nofix { position: absolute; inset: 0; display: grid; place-items: center;
+    z-index: 25; background: rgba(5,7,11,.8); text-align: center;
+    font-size: 15px; color: var(--muted); padding: 30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="flag"></span>Driver View — the phone in the ambulance</h1>
+  <select id="amb"></select>
+  <nav>
+    <a href="/">Live Map</a>
+    <a class="on" href="/driver">Driver</a>
+    <a href="/navigation">Navigation</a>
+    <a href="/operations">Operations</a>
+    <a href="/protocol">Protocol</a>
+    <a href="/how">How it works</a>
+  </nav>
+</header>
+
+<main>
+  <div id="phone">
+    <canvas id="navcv"></canvas>
+    <div id="notch"></div>
+    <div id="statusbar"><span id="ph-clock">--:--</span><span>🔋 LTE ▮▮▮</span></div>
+    <div id="instruction">
+      <div class="dist" id="i-dist">—</div>
+      <div class="street" id="i-street">Waiting for dispatch…</div>
+    </div>
+    <div id="signalcard"><span class="lamp"></span><span id="sc-text"></span></div>
+    <div id="speedo">
+      <div id="speednum"><div class="v" id="sp-v">0</div><div class="u">km/h</div></div>
+      <div id="limitsign">--</div>
+    </div>
+    <div id="exempt">EMERGENCY EXEMPT — NO FINE</div>
+    <div id="etabar">
+      <div><div class="big" id="eta-t">--:--</div><div class="sub">arrival (sim clock)</div></div>
+      <div style="text-align:right"><div class="big" id="eta-d" style="color:#e8edf6">-- km</div><div class="sub">remaining</div></div>
+    </div>
+    <div id="nofix"><div>📡<br>No active ambulance.<br>Dispatch one from the
+      <a href="/" style="color:#4ade80">Live Map</a> and this phone comes
+      alive.</div></div>
+  </div>
+
+  <div class="explain">
+    <h2>What this screen is</h2>
+    <p>The navigation display mounted in the ambulance cab (or the operator's
+    phone). It runs from the <b>same route object</b> the control centre uses
+    to open the green corridor — the driver and the traffic lights are
+    literally reading one plan.</p>
+    <h2>What the driver sees</h2>
+    <p>• The road ahead, <b>heading-up</b>, with the corridor drawn in green.<br>
+    • The next signal's state before reaching it — <b>"will be GREEN"</b>
+    means the control centre has purposely enabled it.<br>
+    • Speed beside the <b>posted limit sign</b>; above the limit with lights
+    on, the <b>EMERGENCY EXEMPT</b> badge shows — enforcement cameras log the
+    pass and issue no citation.<br>
+    • Live arrival time on the Kuwait clock.</p>
+    <h2>Why it matters</h2>
+    <p>The driver never wonders whether the next junction knows about them.
+    If it's on the route, it knows — and this screen proves it.</p>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let network = null, nav = null, frame = null, selected = null;
+let edgesM = null, minLat, maxLat, minLon, maxLon, KX;
+const KY = 110540;
+
+function toM(lat, lon) { return [(lon - minLon) * KX, (lat - minLat) * KY]; }
+
+fetch("/api/network").then(r => r.json()).then(n => {
+  network = n;
+  const [[a, b], [c, d]] = n.bounds;
+  minLat = Math.min(a, c); maxLat = Math.max(a, c);
+  minLon = Math.min(b, d); maxLon = Math.max(b, d);
+  KX = Math.cos((minLat + maxLat) / 2 * Math.PI / 180) * 111320;
+  edgesM = n.edges.map(e => ({
+    w: e.lanes >= 3 || e.prio >= 9 ? 8 : 4,
+    pts: e.pts.map(([lat, lon]) => toM(lat, lon)),
+  }));
+});
+
+async function pollNav() {
+  try {
+    const r = await fetch("/api/navigation");
+    nav = await r.json();
+    const sel = $("amb");
+    const act = nav.ambulances.filter(a => a.active);
+    if (!act.find(a => a.id === selected))
+      selected = act.length ? act[act.length - 1].id : null;
+    sel.innerHTML = act.map(a =>
+      `<option value="${a.id}" ${a.id === selected ? "selected" : ""}>${a.id}</option>`
+    ).join("") || "<option>no active ambulance</option>";
+  } catch (e) {}
+}
+$("amb").onchange = e => { selected = e.target.value; };
+pollNav(); setInterval(pollNav, 2500);
+
+let ws = null;
+(function connect() {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${scheme}://${location.host}/ws`);
+  ws.onmessage = ev => { const f = JSON.parse(ev.data); if (f.cars) frame = f; };
+  ws.onclose = () => setTimeout(connect, 2000);
+})();
+
+const cv = $("navcv"), ctx = cv.getContext("2d");
+function fit() {
+  cv.width = cv.clientWidth * devicePixelRatio;
+  cv.height = cv.clientHeight * devicePixelRatio;
+}
+fit(); new ResizeObserver(fit).observe(cv);
+
+let disp = null;   // smoothed pose {x, y, a}
+function tick(now) {
+  requestAnimationFrame(tick);
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  const W = cv.clientWidth, H = cv.clientHeight;
+  ctx.fillStyle = "#0b0e14"; ctx.fillRect(0, 0, W, H);
+  const amb = frame && frame.ambs.find(a => a.id === selected);
+  const route = nav && nav.ambulances.find(a => a.id === selected);
+  $("nofix").style.display = amb ? "none" : "grid";
+  if (frame) $("ph-clock").textContent = (frame.kpi.clock || "").slice(0, 5);
+  if (!amb || !edgesM) return;
+
+  const [ax, ay] = toM(amb.lat, amb.lon);
+  let da = amb.angle * Math.PI / 180;
+  if (!disp) disp = { x: ax, y: ay, a: da };
+  disp.x += (ax - disp.x) * 0.15;
+  disp.y += (ay - disp.y) * 0.15;
+  let diff = ((da - disp.a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  disp.a += diff * 0.12;
+
+  const SCALE = 1.9;                 // px per metre
+  const CX = W / 2, CY = H * 0.7;
+  const cosA = Math.cos(disp.a), sinA = Math.sin(disp.a);
+  const P = (mx, my) => {
+    const dx = mx - disp.x, dy = my - disp.y;
+    return [CX + (dx * cosA - dy * sinA) * SCALE,
+            CY - (dx * sinA + dy * cosA) * SCALE];
+  };
+  const R = 420;                     // draw radius, metres
+
+  // roads
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  for (const e of edgesM) {
+    const [fx, fy] = e.pts[0];
+    if (Math.abs(fx - disp.x) > R && Math.abs(fy - disp.y) > R) continue;
+    ctx.beginPath();
+    ctx.moveTo(...P(fx, fy));
+    for (let i = 1; i < e.pts.length; i++) ctx.lineTo(...P(...e.pts[i]));
+    ctx.strokeStyle = "#232e44";
+    ctx.lineWidth = e.w * SCALE;
+    ctx.stroke();
+    ctx.strokeStyle = "#2f3d5c";
+    ctx.lineWidth = e.w * SCALE * 0.55;
+    ctx.stroke();
+  }
+
+  // the corridor
+  if (route && amb.lights) {
+    ctx.beginPath();
+    let started = false;
+    for (const [lat, lon] of route.geometry) {
+      const [mx, my] = toM(lat, lon);
+      if (Math.abs(mx - disp.x) > R * 2 && Math.abs(my - disp.y) > R * 2)
+        { started = false; continue; }
+      const p = P(mx, my);
+      if (!started) { ctx.moveTo(...p); started = true; }
+      else ctx.lineTo(...p);
+    }
+    ctx.strokeStyle = "rgba(34,197,94,.9)";
+    ctx.lineWidth = 7;
+    ctx.setLineDash([16, 12]);
+    ctx.lineDashOffset = -(now / 30) % 28;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // signals near us
+  if (frame.tls && network) {
+    for (const t of network.tls) {
+      const [mx, my] = toM(t.lat, t.lon);
+      if (Math.abs(mx - disp.x) > R && Math.abs(my - disp.y) > R) continue;
+      const st = frame.tls[t.id];
+      if (!st) continue;
+      const [sx, sy] = P(mx, my);
+      const preempted = st.m === "preempted" || st.m === "clearing";
+      if (preempted) {
+        ctx.beginPath(); ctx.arc(sx, sy, 14 + 4 * Math.sin(now / 160), 0, 7);
+        ctx.strokeStyle = "rgba(34,197,94,.85)"; ctx.lineWidth = 3; ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(sx, sy, 7, 0, 7);
+      ctx.fillStyle = preempted ? "#22c55e"
+        : st.m !== "normal" ? "#f0b429"
+        : /[Gg]/.test(st.s) ? "#15803d" : "#7f1d1d";
+      ctx.fill();
+      ctx.strokeStyle = "#0b0e14"; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
+
+  // other traffic nearby
+  ctx.fillStyle = "#8b98ad";
+  for (const [, lon2, lat2] of frame.cars.map(c => [c[0], c[1], c[2]])) {
+    const [mx, my] = toM(lat2, lon2);
+    if (Math.abs(mx - disp.x) > R && Math.abs(my - disp.y) > R) continue;
+    const [sx, sy] = P(mx, my);
+    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 7); ctx.fill();
+  }
+
+  // us: fixed chevron, heading up
+  ctx.save();
+  ctx.translate(CX, CY);
+  const grad = ctx.createRadialGradient(0, 0, 4, 0, 0, 30);
+  grad.addColorStop(0, Math.floor(now / 260) % 2 ? "rgba(255,45,45,.5)" : "rgba(59,130,246,.5)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.beginPath(); ctx.arc(0, 0, 30, 0, 7); ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(0, -16); ctx.lineTo(11, 12); ctx.lineTo(0, 5); ctx.lineTo(-11, 12);
+  ctx.closePath();
+  ctx.fillStyle = "#fff"; ctx.fill();
+  ctx.strokeStyle = "#009a4e"; ctx.lineWidth = 3; ctx.stroke();
+  ctx.restore();
+
+  // ---- HUD ----
+  $("sp-v").textContent = amb.kmh;
+  $("limitsign").textContent = amb.limit ?? "--";
+  $("exempt").style.display =
+    amb.limit && amb.kmh > amb.limit && amb.lights ? "block" : "none";
+
+  if (route) {
+    // nearest node row -> what's ahead
+    let best = 0, bestD = 1e18;
+    for (let i = 0; i < route.rows.length; i++) {
+      const [mx, my] = toM(route.rows[i].lat, route.rows[i].lon);
+      const d = (mx - ax) ** 2 + (my - ay) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    const here = route.rows[best];
+    const next = route.rows[Math.min(best + 1, route.rows.length - 1)];
+    $("i-street").textContent = next.street;
+    $("i-dist").textContent =
+      `${Math.max(0, route.length_m - here.dist_m).toFixed(0)} m to destination · next:`;
+    const remM = Math.max(0, route.length_m - here.dist_m);
+    $("eta-d").textContent = (remM / 1000).toFixed(1) + " km";
+    const remS = Math.max(0, route.eta_s - here.eta_s);
+    if (frame.kpi.clock) {
+      const [h, m2, s2] = frame.kpi.clock.split(":").map(Number);
+      const tot = h * 3600 + m2 * 60 + s2 + remS;
+      $("eta-t").textContent =
+        `${String(Math.floor(tot / 3600) % 24).padStart(2, "0")}:` +
+        `${String(Math.floor(tot % 3600 / 60)).padStart(2, "0")}`;
+    }
+    // next signal on the route ahead
+    const sigRow = route.rows.slice(best + 1).find(r2 => r2.signal);
+    const card = $("signalcard");
+    if (sigRow && frame.tls[sigRow.signal]) {
+      const stm = frame.tls[sigRow.signal].m;
+      if (stm === "preempted" || stm === "transition" || stm === "clearing") {
+        card.className = "green";
+        $("sc-text").textContent =
+          `Signal in ${Math.max(0, sigRow.dist_m - here.dist_m).toFixed(0)} m ` +
+          `— PURPOSELY ENABLED, will be GREEN for you`;
+      } else {
+        card.className = "normal";
+        $("sc-text").textContent =
+          `Signal in ${Math.max(0, sigRow.dist_m - here.dist_m).toFixed(0)} m ` +
+          `— normal cycle (corridor opens as you approach)`;
+      }
+    } else card.className = "";
+  }
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

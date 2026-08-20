@@ -8,3 +8,4 @@ replay*.html
 data/operations.jsonl
 data/server.log
 data/*.trips.xml
+.tools/

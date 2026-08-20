@@ -58,9 +58,11 @@
   <h1><span class="flag"></span>Operating Protocol</h1>
   <nav>
     <a href="/">Live Map</a>
+    <a href="/driver">Driver</a>
     <a href="/navigation">Navigation</a>
     <a href="/operations">Operations</a>
     <a class="on" href="/protocol">Protocol</a>
+    <a href="/how">How it works</a>
   </nav>
 </header>
 
@@ -216,7 +218,24 @@
     <a href="/navigation" style="color:#4ade80">Navigation</a> page.</p>
   </div>
 
-  <h2><span class="no">7</span>Data provenance — what is real here</h2>
+  <h2><span class="no">7</span>Speed-limit exemption — no fines</h2>
+  <div class="scenario">
+    <h3>Emergency vehicles may exceed the posted limit</h3>
+    <p>A dispatched ambulance with active lights runs at up to <code>150%</code>
+    of the posted limit (absolute cap <code>140 km/h</code>), consistent with
+    the emergency exemption in Kuwaiti traffic law. The enforcement camera at
+    each junction is the same camera that detects the corridor: when it
+    measures the ambulance above the limit with lights active, it logs
+    <b>"exemption applies — NO CITATION issued"</b> as an operation instead of
+    a fine. Lights off = no exemption: the ambulance drives as normal traffic.
+    The <a href="/driver" style="color:#4ade80">Driver view</a> shows the
+    live speed beside the posted-limit sign with an <b>EMERGENCY EXEMPT</b>
+    badge whenever the exemption is in effect.</p>
+    <p class="tag">Every exempt pass is on the operations record — auditable,
+    per camera, per ambulance, per case.</p>
+  </div>
+
+  <h2><span class="no">8</span>Data provenance — what is real here</h2>
   <ul>
     <li><b>Real:</b> the downtown Kuwait City road network, one-way system,
         turn restrictions and signal locations (OpenStreetMap), simulated at
