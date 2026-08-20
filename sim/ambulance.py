@@ -59,7 +59,7 @@ class Dispatcher:
                 if to_edge.getID() == from_edge.getID():
                     continue
                 route = self.router.route(from_edge.getID(), to_edge.getID(),
-                                          live=True)
+                                          live=self.cfg.route_live_weights)
                 algorithm = "Dijkstra (live edge travel times)"
                 if route is None:
                     stage = traci.simulation.findRoute(
@@ -75,7 +75,8 @@ class Dispatcher:
         if not route:
             raise ValueError(f"No route from {from_desc} to {to_desc}")
 
-        rows = self.router.nodal_analysis(route, live=True)
+        rows = self.router.nodal_analysis(route,
+                                          live=self.cfg.route_live_weights)
         length_m = rows[-1]["dist_m"] if rows else 0
         eta_s = rows[-1]["eta_s"] if rows else 0
         geometry = self.router.route_geometry(route)

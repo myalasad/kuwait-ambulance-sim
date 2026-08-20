@@ -55,6 +55,11 @@ class SimConfig:
     #                                      Kuwait morning peak)
     demand_hours: float = 2.0            # hours of background demand to build
 
+    # --- routing ---
+    route_live_weights: bool = True      # Dijkstra uses live travel times;
+    #                                      the comparison harness sets False
+    #                                      so both runs route identically
+
     # --- vehicles ---
     ambulance_type: str = "ambulance"
 

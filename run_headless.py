@@ -31,7 +31,8 @@ SCENARIO = [
 
 
 def run(minutes, seed, preemption, record_frames=False, frame_every_s=1.0):
-    cfg = SimConfig()
+    # deterministic routing so both compared runs drive the identical route
+    cfg = SimConfig(route_live_weights=False)
     sim = Simulation(ROOT, cfg, preemption=preemption, seed=seed)
     sim.start()
     total_steps = int(minutes * 60 / cfg.step_length)
