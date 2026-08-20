@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ambulance-dashboard",
+      "runtimeExecutable": "/Users/mohammedal-asad/Desktop/kuwait-ambulance-sim/.venv/bin/python",
+      "runtimeArgs": ["run_live.py", "--port", "8642"],
+      "port": 8642
+    }
+  ]
+}

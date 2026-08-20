@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kuwait Ambulance Green Wave</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #10141c; --panel: #171d29; --panel2: #1e2634; --line: #2a3547;
+    --text: #e8edf6; --muted: #8b98ad;
+    --kw-green: #009a4e; --kw-red: #ce1126; --amber: #f0b429; --blue: #3b82f6;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); display: flex; }
+
+  #panel { width: 330px; min-width: 330px; height: 100vh; overflow-y: auto;
+           background: var(--panel); border-right: 1px solid var(--line);
+           padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  #panel h1 { font-size: 17px; line-height: 1.3; }
+  #panel h1 .flag { display: inline-block; width: 14px; height: 10px;
+    background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
+    border-radius: 2px; margin-right: 6px; }
+  #panel .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .card { background: var(--panel2); border: 1px solid var(--line);
+          border-radius: 10px; padding: 12px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--muted); margin-bottom: 9px; }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  select, button { width: 100%; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: #141a25; color: var(--text);
+    font-size: 13px; }
+  button { cursor: pointer; font-weight: 600; }
+  button:hover { border-color: #46586f; }
+  button.primary { background: var(--kw-green); border-color: var(--kw-green); }
+  button.primary:hover { filter: brightness(1.1); }
+  button.armed { background: var(--kw-red); border-color: var(--kw-red); }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .stack { display: flex; flex-direction: column; gap: 8px; }
+  .switch { display: flex; align-items: center; justify-content: space-between;
+            font-size: 13px; }
+  .switch input { width: 18px; height: 18px; accent-color: var(--kw-green); }
+  input[type=range] { width: 100%; accent-color: var(--kw-green); }
+
+  #kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpi { background: #141a25; border-radius: 8px; padding: 8px 10px; }
+  .kpi .v { font-size: 20px; font-weight: 700; }
+  .kpi .l { font-size: 10.5px; color: var(--muted); text-transform: uppercase;
+            letter-spacing: .06em; }
+  #runs { font-size: 12px; width: 100%; border-collapse: collapse; }
+  #runs td, #runs th { padding: 3px 4px; text-align: right; color: var(--text); }
+  #runs th { color: var(--muted); font-weight: 500; }
+  #runs td:first-child, #runs th:first-child { text-align: left; }
+
+  #log { font: 11.5px/1.5 ui-monospace, Menlo, monospace; height: 190px;
+         overflow-y: auto; background: #0d1119; border-radius: 8px;
+         padding: 8px; }
+  #log .t { color: var(--muted); }
+  #log .cam { color: var(--amber); }
+  #log .amb { color: #ff6b6b; }
+  #log .tls { color: #5eead4; }
+
+  .legend { font-size: 11.5px; color: var(--muted); display: grid;
+            grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+              margin-right: 5px; vertical-align: -1px; }
+
+  #map { flex: 1; height: 100vh; background: #0b0e14; }
+  #overlay { position: absolute; inset: 0; pointer-events: none; z-index: 500; }
+  #mapwrap { position: relative; flex: 1; }
+  #status { position: absolute; top: 10px; right: 10px; z-index: 1000;
+    background: rgba(13,17,25,.85); border: 1px solid var(--line);
+    border-radius: 8px; padding: 5px 10px; font-size: 12px; }
+  #status .dot { display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--kw-red); margin-right: 6px; }
+  #status.on .dot { background: var(--kw-green); }
+  #pickhint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: var(--kw-green); color: #fff; font-weight: 600;
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; display: none; }
+  .leaflet-container { background: #0b0e14; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div>
+    <h1><span class="flag"></span>Kuwait City — Ambulance Green Wave</h1>
+    <div class="sub">SUMO microsimulation · downtown network from OpenStreetMap ·
+      camera detection → route green-wave signal preemption</div>
+  </div>
+
+  <div class="card stack">
+    <h2>Dispatch</h2>
+    <div>
+      <label for="origin">Origin</label>
+      <select id="origin"></select>
+    </div>
+    <button class="primary" id="btn-pick">🚑 Dispatch — pick destination on map</button>
+    <button id="btn-random">Dispatch to random destination</button>
+  </div>
+
+  <div class="card stack">
+    <h2>Control centre</h2>
+    <div class="switch">
+      <span>Signal preemption (green wave)</span>
+      <input type="checkbox" id="preemption" checked>
+    </div>
+    <div class="switch">
+      <span>Follow ambulance</span>
+      <input type="checkbox" id="follow" checked>
+    </div>
+    <div>
+      <label>Simulation speed: <span id="speedval">1×</span></label>
+      <input type="range" id="speed" min="0" max="5" step="1" value="1">
+    </div>
+    <div class="row">
+      <button id="btn-pause">Pause</button>
+      <button id="btn-reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Live KPIs</h2>
+    <div id="kpis">
+      <div class="kpi"><div class="v" id="k-time">0:00</div><div class="l">sim time</div></div>
+      <div class="kpi"><div class="v" id="k-veh">0</div><div class="l">vehicles</div></div>
+      <div class="kpi"><div class="v" id="k-amb">0</div><div class="l">ambulances</div></div>
+      <div class="kpi"><div class="v" id="k-pre">0</div><div class="l">preempted signals</div></div>
+    </div>
+    <table id="runs"><thead><tr><th>run</th><th>time</th><th>km</th><th>km/h</th></tr></thead>
+      <tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Event log</h2>
+    <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <h2>Legend</h2>
+    <div class="legend">
+      <span><i style="background:#22c55e"></i>approach green</span>
+      <span><i style="background:#ef4444"></i>approach red</span>
+      <span><i style="background:#f0b429"></i>amber transition</span>
+      <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>preempted junction</span>
+      <span><i style="background:#9aa7bb"></i>car</span>
+      <span><i style="background:#ff2d2d;box-shadow:0 0 6px #3b82f6"></i>ambulance</span>
+    </div>
+  </div>
+</div>
+
+<div id="mapwrap">
+  <div id="map"></div>
+  <canvas id="overlay"></canvas>
+  <div id="status"><span class="dot"></span><span id="status-text">connecting…</span></div>
+  <div id="pickhint"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const SPEEDS = [0.5, 1, 2, 4, 8, 16];
+
+// ---------------------------------------------------------------- map setup
+const map = L.map("map", { zoomControl: true, preferCanvas: true })
+  .setView([29.375, 47.982], 15);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: "© OpenStreetMap contributors © CARTO",
+  maxZoom: 19,
+}).addTo(map);
+
+const canvas = $("overlay"), ctx = canvas.getContext("2d");
+function fitCanvas() {
+  const el = map.getContainer();
+  canvas.width = el.clientWidth * devicePixelRatio;
+  canvas.height = el.clientHeight * devicePixelRatio;
+  canvas.style.width = el.clientWidth + "px";
+  canvas.style.height = el.clientHeight + "px";
+}
+fitCanvas();
+new ResizeObserver(fitCanvas).observe(map.getContainer());
+
+// ------------------------------------------------------------ network layer
+let tlsStatic = [];           // [{id, lat, lon, heads:[[lat,lon]|null,...]}]
+fetch("/api/network").then(r => r.json()).then(net => {
+  const major = [], minor = [];
+  for (const e of net.edges)
+    (e.prio >= 9 || e.lanes >= 3 ? major : minor).push(e.pts);
+  L.polyline(minor, { color: "#273246", weight: 1.5, opacity: .8, interactive: false }).addTo(map);
+  L.polyline(major, { color: "#33415c", weight: 3, opacity: .9, interactive: false }).addTo(map);
+  tlsStatic = net.tls;
+  const sel = $("origin");
+  for (const h of net.hospitals) {
+    L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "",
+      html: '<div style="font-size:20px;filter:drop-shadow(0 0 3px #000)">🏥</div>',
+      iconSize: [20, 20], iconAnchor: [10, 10] }) })
+      .addTo(map).bindTooltip(h.name)
+      // in picking mode a click on the hospital icon should count as a map
+      // click at the hospital's position, not be swallowed by the marker
+      .on("click", e => map.fire("click", { latlng: e.latlng }));
+    const o = document.createElement("option");
+    o.value = "H:" + h.name; o.textContent = h.name;
+    sel.appendChild(o);
+  }
+  for (const [v, t] of [["random", "Random edge"], ["pick", "Pick origin on map"]]) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = t; sel.appendChild(o);
+  }
+  if (net.bounds) {
+    // Fit synchronously: an animated invalidateSize/fitBounds pair cancel
+    // each other, and a zero-size viewport (hidden tab, early load) pins the
+    // zoom at maxZoom — so gate on size, apply without animation, verify.
+    let verifyTries = 0;
+    const tryFit = () => {
+      const s = map.getSize();
+      // wait indefinitely for a real viewport: a page loaded in a hidden or
+      // background tab reports size 0 until it is first shown
+      if (s.x < 100 || s.y < 100) { setTimeout(tryFit, 300); return; }
+      map.invalidateSize(false);
+      map.fitBounds(net.bounds, { padding: [20, 20], animate: false });
+      setTimeout(() => {
+        const want = map.getBoundsZoom(net.bounds, false, L.point(20, 20));
+        if (Math.abs(map.getZoom() - want) > 1 && ++verifyTries < 5) tryFit();
+      }, 300);
+    };
+    tryFit();
+  }
+});
+
+// -------------------------------------------------------------- live frames
+let frame = null;                 // latest snapshot from the server
+const carPos = new Map();         // id -> {lon, lat, tLon, tLat}
+const ambPos = new Map();
+let lastFollowPan = 0;
+
+let ws = null;
+function connect() {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${scheme}://${location.host}/ws`);
+  ws.onopen = () => { $("status").classList.add("on"); $("status-text").textContent = "live"; };
+  ws.onclose = () => {
+    $("status").classList.remove("on");
+    $("status-text").textContent = "disconnected — reconnecting…";
+    setTimeout(connect, 2000);
+  };
+  ws.onmessage = onFrame;
+}
+connect();
+function onFrame(ev) {
+  const f = JSON.parse(ev.data);
+  syncControls(f);
+  if (f.error) { $("status").classList.remove("on"); $("status-text").textContent = f.error; }
+  if (!f.cars) return;             // heartbeat frame (paused / error state only)
+  frame = f;
+  const seen = new Set();
+  for (const [id, lon, lat] of frame.cars) {
+    seen.add(id);
+    const p = carPos.get(id);
+    if (p) { p.tLon = lon; p.tLat = lat; }
+    else carPos.set(id, { lon, lat, tLon: lon, tLat: lat });
+  }
+  for (const id of carPos.keys()) if (!seen.has(id)) carPos.delete(id);
+  const seenA = new Set();
+  for (const a of frame.ambs) {
+    seenA.add(a.id);
+    const p = ambPos.get(a.id);
+    if (p) { p.tLon = a.lon; p.tLat = a.lat; p.kmh = a.kmh; }
+    else ambPos.set(a.id, { lon: a.lon, lat: a.lat, tLon: a.lon, tLat: a.lat, kmh: a.kmh });
+  }
+  for (const id of ambPos.keys()) if (!seenA.has(id)) ambPos.delete(id);
+
+  updatePanel(frame);
+  if ($("follow").checked && frame.ambs.length && Date.now() - lastFollowPan > 900) {
+    lastFollowPan = Date.now();
+    const a = frame.ambs[0];
+    map.panTo([a.lat, a.lon], { animate: true, duration: .8 });
+  }
+};
+
+function updatePanel(f) {
+  const m = Math.floor(f.t / 60), s = Math.floor(f.t % 60);
+  $("k-time").textContent = `${m}:${String(s).padStart(2, "0")}`;
+  $("k-veh").textContent = f.kpi.vehicles;
+  $("k-amb").textContent = f.kpi.ambulances;
+  $("k-pre").textContent = f.kpi.preempted_tls;
+  const tb = $("runs").querySelector("tbody");
+  tb.innerHTML = f.kpi.runs.map(r =>
+    `<tr><td>${r.id}</td><td>${r.duration_s.toFixed(0)} s</td>` +
+    `<td>${(r.length_m / 1000).toFixed(1)}</td><td>${r.kmh.toFixed(0)}</td></tr>`).join("");
+  for (const ev of f.events) {
+    const div = document.createElement("div");
+    const mm = Math.floor(ev.t / 60), ss = Math.floor(ev.t % 60);
+    let cls = "";
+    if (ev.msg.startsWith("Camera") || ev.msg.startsWith("Control")) cls = "cam";
+    else if (ev.msg.includes("AMB")) cls = "amb";
+    else if (ev.msg.startsWith("Junction")) cls = "tls";
+    div.innerHTML = `<span class="t">${mm}:${String(ss).padStart(2, "0")}</span> ` +
+      `<span class="${cls}"></span>`;
+    div.lastChild.textContent = ev.msg;
+    const log = $("log");
+    log.appendChild(div);
+    while (log.childNodes.length > 250) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+function syncControls(f) {
+  if (f.preemption !== undefined && $("preemption").checked !== f.preemption)
+    $("preemption").checked = f.preemption;
+  if (f.paused !== undefined && paused !== f.paused) {
+    paused = f.paused;
+    $("btn-pause").textContent = paused ? "Resume" : "Pause";
+  }
+  if (f.speed !== undefined) {
+    const idx = SPEEDS.indexOf(f.speed);
+    if (idx >= 0 && +$("speed").value !== idx) {
+      $("speed").value = idx;
+      $("speedval").textContent = f.speed + "×";
+    }
+  }
+}
+
+// ------------------------------------------------------------ canvas render
+const COLORS = { G: "#22c55e", g: "#22c55e", y: "#f0b429", Y: "#f0b429",
+                 r: "#ef4444", R: "#ef4444", u: "#ef4444", o: "#6b7280",
+                 O: "#6b7280", s: "#6b7280" };
+
+function render(now) {
+  requestAnimationFrame(render);
+  const vw = canvas.clientWidth, vh = canvas.clientHeight;  // CSS pixels
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, vw, vh);
+  if (!frame) return;
+  const zoom = map.getZoom();
+  const k = 0.18;   // smoothing factor toward the latest server position
+
+  // signal heads: one dot per controlled approach, colored by its state char
+  if (zoom >= 13.5) {
+    const rHead = zoom >= 16 ? 3.5 : 2.5;
+    for (const t of tlsStatic) {
+      const st = frame.tls[t.id];
+      if (!st) continue;
+      if (st.m !== "normal") {            // preemption halo on the junction
+        const c = map.latLngToContainerPoint([t.lat, t.lon]);
+        const pulse = 10 + 4 * Math.sin(now / 180);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, pulse, 0, 7);
+        ctx.strokeStyle = st.m === "preempted" || st.m === "clearing"
+          ? "rgba(34,197,94,.85)" : "rgba(240,180,41,.85)";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      }
+      for (let i = 0; i < t.heads.length; i++) {
+        const h = t.heads[i];
+        if (!h) continue;
+        const p = map.latLngToContainerPoint(h);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rHead, 0, 7);
+        ctx.fillStyle = COLORS[st.s[i]] || "#6b7280";
+        ctx.fill();
+      }
+    }
+  }
+
+  // cars
+  const rCar = zoom >= 16 ? 3.4 : zoom >= 14.5 ? 2.6 : 2;
+  ctx.fillStyle = "#9aa7bb";
+  for (const p of carPos.values()) {
+    p.lon += (p.tLon - p.lon) * k;
+    p.lat += (p.tLat - p.lat) * k;
+    const c = map.latLngToContainerPoint([p.lat, p.lon]);
+    if (c.x < -10 || c.y < -10 || c.x > vw + 10 || c.y > vh + 10) continue;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, rCar, 0, 7);
+    ctx.fill();
+  }
+
+  // ambulances: pulsing red/blue emergency lights
+  const blue = Math.floor(now / 260) % 2 === 0;
+  for (const [id, p] of ambPos) {
+    p.lon += (p.tLon - p.lon) * k;
+    p.lat += (p.tLat - p.lat) * k;
+    const c = map.latLngToContainerPoint([p.lat, p.lon]);
+    const grad = ctx.createRadialGradient(c.x, c.y, 2, c.x, c.y, 16);
+    grad.addColorStop(0, blue ? "rgba(59,130,246,.9)" : "rgba(239,68,68,.9)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.beginPath(); ctx.arc(c.x, c.y, 16, 0, 7);
+    ctx.fillStyle = grad; ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x, c.y, 5.5, 0, 7);
+    ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x, c.y, 4, 0, 7);
+    ctx.fillStyle = blue ? "#3b82f6" : "#ef4444"; ctx.fill();
+    if (zoom >= 14) {
+      ctx.font = "bold 11px -apple-system, sans-serif";
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = "rgba(0,0,0,.7)"; ctx.lineWidth = 3;
+      ctx.strokeText(`${id} · ${p.kmh} km/h`, c.x + 10, c.y - 8);
+      ctx.fillText(`${id} · ${p.kmh} km/h`, c.x + 10, c.y - 8);
+    }
+  }
+}
+requestAnimationFrame(render);
+
+// ----------------------------------------------------------------- controls
+const send = obj => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); };
+
+let picking = null;   // null | {origin: value, stage: "origin"|"dest", from?}
+function setPickHint(text) {
+  const el = $("pickhint");
+  if (text) { el.textContent = text; el.style.display = "block"; }
+  else el.style.display = "none";
+  map.getContainer().style.cursor = text ? "crosshair" : "";
+}
+
+function beginDispatch(randomDest) {
+  picking = null;           // cancel any stale picking session
+  setPickHint(null);
+  const val = $("origin").value;
+  if (randomDest) {
+    if (val === "pick") { picking = { stage: "origin", randomDest: true }; setPickHint("Click the ambulance ORIGIN"); }
+    else send({ cmd: "dispatch", origin: originSpec(val), dest: null });
+    return;
+  }
+  if (val === "pick") { picking = { stage: "origin", randomDest: false }; setPickHint("Click the ambulance ORIGIN"); }
+  else { picking = { stage: "dest", origin: originSpec(val) }; setPickHint("Click the DESTINATION"); }
+}
+const originSpec = v => v === "random" ? null : v.startsWith("H:") ? v.slice(2) : null;
+
+map.on("click", e => {
+  if (!picking) return;
+  const ll = [e.latlng.lat, e.latlng.lng];
+  if (picking.stage === "origin") {
+    if (picking.randomDest) { send({ cmd: "dispatch", origin: ll, dest: null }); picking = null; setPickHint(null); }
+    else { picking = { stage: "dest", origin: ll }; setPickHint("Click the DESTINATION"); }
+  } else {
+    send({ cmd: "dispatch", origin: picking.origin, dest: ll });
+    picking = null; setPickHint(null);
+  }
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && picking) { picking = null; setPickHint(null); }
+});
+
+$("btn-pick").onclick = () => beginDispatch(false);
+$("btn-random").onclick = () => beginDispatch(true);
+$("preemption").onchange = e => send({ cmd: "preemption", on: e.target.checked });
+$("speed").oninput = e => {
+  const v = SPEEDS[+e.target.value];
+  $("speedval").textContent = v + "×";
+  send({ cmd: "speed", value: v });
+};
+let paused = false;
+$("btn-pause").onclick = () => {
+  paused = !paused;
+  $("btn-pause").textContent = paused ? "Resume" : "Pause";
+  send({ cmd: paused ? "pause" : "resume" });
+};
+$("btn-reset").onclick = () => {
+  if (confirm("Restart the simulation from t=0?")) send({ cmd: "reset" });
+  carPos.clear(); ambPos.clear();
+};
+</script>
+</body>
+</html>

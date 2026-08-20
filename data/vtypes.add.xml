@@ -1,0 +1,11 @@
+<additional>
+    <!-- Kuwait MoH ambulance: emergency class + blue-light device.  Other
+         vehicles react to the device (yielding / rescue-lane behaviour when
+         the sublane model is enabled). -->
+    <vType id="ambulance" vClass="emergency" guiShape="emergency"
+           length="6.5" width="2.2" accel="3.0" decel="5.0" emergencyDecel="9.0"
+           maxSpeed="33.3" speedFactor="1.35" minGap="1.5" tau="0.8"
+           lcStrategic="1.0" lcSpeedGain="2.0" lcAssertive="1.5" color="1,0,0">
+        <param key="has.bluelight.device" value="true"/>
+    </vType>
+</additional>

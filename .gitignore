@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+data/*.osm.xml
+data/background.trips.xml
+replay*.html
+.DS_Store

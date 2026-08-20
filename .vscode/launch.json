@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Live dashboard (web UI)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_live.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Headless: compare preemption on/off",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_headless.py",
+      "args": ["--compare", "--minutes", "10"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Headless: single run + replay export",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run_headless.py",
+      "args": ["--minutes", "10", "--replay", "replay.html"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Rebuild network from OSM",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/build_network.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
+}
