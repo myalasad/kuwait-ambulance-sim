@@ -82,6 +82,51 @@
   .p-closed { background: #232d3f; color: var(--muted); }
   .p-error { background: #3a1414; color: #ff6b6b; }
   .kind-P { color: #4ade80; } .kind-A { color: #93c5fd; } .kind-D { color: var(--purple); }
+
+  /* ---- arrival-time comparison ---- */
+  #agg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+         margin-bottom: 12px; }
+  @media (max-width: 700px) { #agg { grid-template-columns: 1fr 1fr; } }
+  .aggbox { background: #141a25; border-radius: 8px; padding: 7px 10px;
+            text-align: center; }
+  .aggbox .v { font-size: 19px; font-weight: 800; color: #4ade80;
+               font-variant-numeric: tabular-nums; }
+  .aggbox .l { font-size: 10px; color: var(--muted); text-transform: uppercase;
+               letter-spacing: .05em; }
+  .runrow { margin-bottom: 12px; }
+  .runrow h4 { font-size: 12px; margin-bottom: 4px; }
+  .runrow h4 small { color: var(--muted); font-weight: 400; }
+  .barlab { display: flex; justify-content: space-between; font-size: 10.5px;
+            color: var(--muted); margin: 3px 0 1px; }
+  .bar { display: flex; height: 16px; border-radius: 5px; overflow: hidden;
+         background: #0d1119; }
+  .bar i { display: block; height: 100%; }
+  .seg-ff { background: #3c556e; }
+  .seg-traffic { background: var(--amber); }
+  .seg-signal { background: #e5484d; }
+  .seg-timer { background: #e5484d;
+    background-image: repeating-linear-gradient(45deg, transparent 0 5px,
+      rgba(0,0,0,.35) 5px 10px); }
+  .legend2 { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px;
+             color: var(--muted); margin: 8px 0 2px; }
+  .legend2 i { display: inline-block; width: 10px; height: 10px;
+               border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .method { font-size: 11.5px; color: var(--muted); background: #0d1119;
+            border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+  .method b { color: #4ade80; }
+
+  /* ---- decision-making matrix ---- */
+  #dmm table td { vertical-align: top; font-size: 11.5px; }
+  #dmm .crit { font-weight: 700; }
+  .w-safety { color: #ff6b6b; } .w-cont { color: #f0b429; }
+  .w-timer { color: #4ade80; } .w-fair { color: #93c5fd; }
+  .w-human { color: var(--purple); }
+  .act { font-weight: 800; }
+  #dmm-live { font: 11px/1.5 ui-monospace, Menlo, monospace;
+    background: #0d1119; border-radius: 8px; padding: 8px; margin-top: 8px;
+    max-height: 130px; overflow-y: auto; }
+  #dmm-live .decision { color: #cdbdfa; }
+  #dmm-live .warn { color: var(--amber); }
 </style>
 </head>
 <body>
@@ -99,6 +144,91 @@
 </header>
 
 <main>
+  <section class="card" style="grid-column: 1 / -1">
+    <h2>Arrival-time comparison — with vs without signal preemption</h2>
+    <div id="agg"></div>
+    <div id="cmp-runs"><p style="color:var(--muted);font-size:12.5px">
+      No completed runs yet — dispatch an ambulance and its analysis appears
+      here on arrival.</p></div>
+    <div class="legend2">
+      <span><i class="seg-ff"></i>free flow (exempt speed, empty road)</span>
+      <span><i class="seg-traffic"></i>traffic delay (measured)</span>
+      <span><i class="seg-signal"></i>signal wait suffered (measured)</span>
+      <span><i class="seg-timer"></i>signal-timer delay the wave removed
+        (r²/2C per junction)</span>
+    </div>
+    <div class="method"><b>Method &amp; weights.</b> The WITH bar is the
+    measured run: free-flow time at the exempt speed profile, plus measured
+    traffic delay, plus any residual signal wait. The WITHOUT bar adds the
+    expected red-light wait at every signal on the route from that junction's
+    real programme: a vehicle arriving at a random point of the cycle waits
+    <b>E[w]&nbsp;=&nbsp;r²&nbsp;/&nbsp;2C</b> (r&nbsp;=&nbsp;red time for the
+    approach, C&nbsp;=&nbsp;cycle). Because this term is <b>quadratic in the
+    signal timer</b>, the timer is the highest-weight variable in the
+    comparison — traffic enters linearly through the measured delay, and the
+    no-traffic bounds isolate the timer's effect completely.</div>
+  </section>
+
+  <section class="card" id="dmm" style="grid-column: 1 / -1">
+    <h2>Decision-Making Matrix (DMM) — how this software rules</h2>
+    <p style="font-size:12.5px;color:#c6d0e0;margin-bottom:8px">
+    Every ruling the controller makes comes from this matrix. Criteria are
+    weighted <b>lexicographically</b> — a higher row always beats every row
+    below it, so the outcome is deterministic, auditable, and never a blend:
+    <span class="w-safety">SAFETY</span> &gt;
+    <span class="w-cont">CONTINUITY</span> &gt;
+    <span class="w-timer">SIGNAL-TIMER / PROXIMITY</span> &gt;
+    <span class="w-fair">FAIRNESS</span> &gt;
+    <span class="w-human">HUMAN REFERRAL</span> when machine criteria cannot
+    separate the candidates. Each applied rule is logged with a case id.</p>
+    <table>
+      <thead><tr><th>#</th><th>Situation (inputs)</th>
+        <th>Deciding criterion (weight)</th><th>Ruling</th>
+        <th>Logged as</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Signal command fails, or ambulance physically
+          inside the junction box</td>
+          <td class="crit w-safety">SAFETY (absolute)</td>
+          <td class="act">Fail-safe to normal programme / hold until
+          physically clear</td><td>error op · P-case</td></tr>
+        <tr><td>2</td><td>Junction already serving a corridor; second
+          ambulance arrives</td>
+          <td class="crit w-cont">CONTINUITY</td>
+          <td class="act">Keep current ambulance; follower queued</td>
+          <td>arbitration op</td></tr>
+        <tr><td>3</td><td>Lights ON, signal on route, ETA ≤ 25 s
+          (never later than 160 m out)</td>
+          <td class="crit w-timer">SIGNAL TIMER (avoid r²/2C wait)</td>
+          <td class="act">ENABLE: amber → all-red → hold serving phase</td>
+          <td>P-case open</td></tr>
+        <tr><td>4</td><td>Two fresh corridors, distance margin &gt; 20 m</td>
+          <td class="crit w-timer">PROXIMITY</td>
+          <td class="act">Grant nearest; other queued</td>
+          <td>arbitration op</td></tr>
+        <tr><td>5</td><td>Junction held &gt; 90 s, ambulance still &gt; 200 m
+          out</td><td class="crit w-fair">FAIRNESS (starvation guard)</td>
+          <td class="act">Release + 20 s cross-traffic cooldown, then
+          re-arm</td><td>hold_limit op</td></tr>
+        <tr><td>6</td><td>Two fresh corridors, margin ≤ 20 m — machine
+          criteria tie</td>
+          <td class="crit w-human">HUMAN REFERRAL</td>
+          <td class="act">Junction stays normal; operator decides
+          (8 s timeout → policy grants nearest)</td>
+          <td>D-case</td></tr>
+        <tr><td>7</td><td>Lights switched OFF</td>
+          <td class="crit w-cont">NO PRIORITY BASIS</td>
+          <td class="act">Release corridors; drives as normal traffic</td>
+          <td>lights op</td></tr>
+        <tr><td>8</td><td>Above posted limit, lights ON, camera pass</td>
+          <td class="crit w-safety">LEGAL EXEMPTION</td>
+          <td class="act">No citation; pass logged</td>
+          <td>enforcement op</td></tr>
+      </tbody>
+    </table>
+    <div id="dmm-live"><span style="color:var(--muted)">DMM in action —
+      recent rulings appear here live…</span></div>
+  </section>
+
   <section class="card">
     <h2>Real-time operations feed — every event, as it happens</h2>
     <div id="filters">
@@ -168,9 +298,73 @@ async function poll() {
     for (const e of d.events) events.push(e);
     while (events.length > 1500) events.shift();
     seq = d.seq || seq;
-    if (d.events.length) renderFeed();
+    if (d.events.length) { renderFeed(); renderDMMLive(); }
     renderPending(d.pending || []);
   } catch (e) { /* server restarting; keep polling */ }
+}
+
+// ---- DMM in action: the rulings the matrix produced, live ----
+const DMM_TYPES = ["arbitration", "decision_referred", "decision_made",
+                   "decision_moot", "hold_limit", "enforcement", "lights",
+                   "error"];
+function renderDMMLive() {
+  const rel = events.filter(e => DMM_TYPES.includes(e.type)).slice(-12);
+  const box = document.getElementById("dmm-live");
+  if (!rel.length) return;
+  box.innerHTML = rel.map(e => {
+    const div = document.createElement("div");
+    div.innerHTML = `<span class="t">${fmt(e.t)}</span> ` +
+      `<span class="${e.sev}"></span>`;
+    div.lastChild.textContent = (e.case ? `[${e.case}] ` : "") + e.msg;
+    return div.outerHTML;
+  }).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+// ---- arrival-time comparison ----
+async function pollAnalysis() {
+  try {
+    const r = await fetch("/api/analysis");
+    const d = await r.json();
+    if (d.aggregate) {
+      const a = d.aggregate;
+      document.getElementById("agg").innerHTML =
+        `<div class="aggbox"><div class="v">${a.runs}</div><div class="l">runs analysed</div></div>` +
+        `<div class="aggbox"><div class="v">${a.mean_actual_s.toFixed(0)} s</div><div class="l">mean · with green wave</div></div>` +
+        `<div class="aggbox"><div class="v">${a.mean_without_s.toFixed(0)} s</div><div class="l">mean · without (est.)</div></div>` +
+        `<div class="aggbox"><div class="v">−${a.mean_saved_s.toFixed(0)} s (${a.mean_saved_pct}%)</div><div class="l">mean saved at timers</div></div>`;
+    }
+    if (d.runs && d.runs.length) {
+      const maxT = Math.max(...d.runs.map(x => x.est_without_s), 1);
+      document.getElementById("cmp-runs").innerHTML =
+        d.runs.slice().reverse().slice(0, 8).map(x => {
+          const driving = Math.max(0,
+            x.actual_s - x.meas_traffic_wait_s - x.meas_signal_wait_s);
+          const w = v => (100 * v / maxT).toFixed(2) + "%";
+          return `<div class="runrow">
+            <h4>${x.id} <small>· ${x.signals} signals on route ·
+              empty-road bounds: ${x.free_flow_s.toFixed(0)} s with wave /
+              ${x.no_traffic_without_s.toFixed(0)} s without</small></h4>
+            <div class="barlab"><span>WITH green wave (measured)</span>
+              <span>${x.actual_s.toFixed(0)} s</span></div>
+            <div class="bar">
+              <i class="seg-ff" style="width:${w(driving)}"></i>
+              <i class="seg-traffic" style="width:${w(x.meas_traffic_wait_s)}"></i>
+              <i class="seg-signal" style="width:${w(x.meas_signal_wait_s)}"></i>
+            </div>
+            <div class="barlab"><span>WITHOUT green wave (same traffic, est.)</span>
+              <span>${x.est_without_s.toFixed(0)} s
+              (+${x.recovered_s.toFixed(0)} s at timers)</span></div>
+            <div class="bar">
+              <i class="seg-ff" style="width:${w(driving)}"></i>
+              <i class="seg-traffic" style="width:${w(x.meas_traffic_wait_s)}"></i>
+              <i class="seg-signal" style="width:${w(x.meas_signal_wait_s)}"></i>
+              <i class="seg-timer" style="width:${w(x.recovered_s)}"></i>
+            </div>
+          </div>`;
+        }).join("");
+    }
+  } catch (e) { /* retry next tick */ }
 }
 
 function renderPending(pending) {
@@ -217,9 +411,10 @@ for (const b of document.querySelectorAll("#filters button"))
   };
 $("search").oninput = e => { search = e.target.value.toLowerCase(); renderFeed(); };
 
-poll(); pollCases();
+poll(); pollCases(); pollAnalysis();
 setInterval(poll, 1000);
 setInterval(pollCases, 2000);
+setInterval(pollAnalysis, 3000);
 </script>
 </body>
 </html>

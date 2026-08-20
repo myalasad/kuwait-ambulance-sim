@@ -222,6 +222,25 @@ async def api_navigation():
     })
 
 
+@app.get("/api/analysis")
+async def api_analysis():
+    if hub.sim is None or hub.sim.metrics is None:
+        return JSONResponse({"runs": []})
+    runs = hub.sim.metrics.analysis[-30:]
+    agg = None
+    if runs:
+        saved = [r["est_without_s"] - r["actual_s"] for r in runs]
+        agg = {
+            "runs": len(runs),
+            "mean_actual_s": round(sum(r["actual_s"] for r in runs) / len(runs), 1),
+            "mean_without_s": round(sum(r["est_without_s"] for r in runs) / len(runs), 1),
+            "mean_saved_s": round(sum(saved) / len(saved), 1),
+            "mean_saved_pct": round(100 * sum(saved) /
+                                    max(1, sum(r["est_without_s"] for r in runs)), 1),
+        }
+    return JSONResponse({"runs": runs, "aggregate": agg})
+
+
 @app.post("/api/command")
 async def api_command(cmd: dict):
     """Same command surface as the WebSocket, for the auxiliary pages

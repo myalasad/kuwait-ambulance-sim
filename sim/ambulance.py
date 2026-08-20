@@ -80,6 +80,8 @@ class Dispatcher:
         length_m = rows[-1]["dist_m"] if rows else 0
         eta_s = rows[-1]["eta_s"] if rows else 0
         geometry = self.router.route_geometry(route)
+        exp_signal_wait, per_signal = self._expected_signal_wait(rows)
+        free_flow_s = self._free_flow_exempt(route)
 
         self.count += 1
         amb_id = f"AMB_{self.count}"
@@ -105,6 +107,12 @@ class Dispatcher:
             "geometry": geometry,
             "algorithm": algorithm,
             "signals_on_route": sum(1 for r in rows if r["signal"]),
+            # arrival-time analysis inputs
+            "free_flow_s": free_flow_s,
+            "exp_signal_wait_s": exp_signal_wait,
+            "per_signal": per_signal,
+            "signal_wait_s": 0.0,     # measured: stopped at a red signal
+            "traffic_wait_s": 0.0,    # measured: stopped/crawling in traffic
         }
         self.ops.emit(now, "dispatch",
                       f"{amb_id} dispatched ({from_desc} to {to_desc}): "
@@ -116,6 +124,49 @@ class Dispatcher:
                       f"limit, max {self.cfg.ambulance_max_kmh:.0f} km/h)",
                       "info", actor=amb_id, case=case)
         return amb_id
+
+    # ------------------------------------------------- arrival-time analysis
+
+    def _expected_signal_wait(self, rows):
+        """Expected red-light wait per signal on the route WITHOUT preemption,
+        from each junction's real programme: for a vehicle arriving at a
+        uniformly random point of the cycle, E[wait] = r^2 / (2C) with r the
+        red time for its approach and C the cycle — quadratic in the signal
+        timer, which is why the timer is the highest-weight variable in the
+        with/without comparison."""
+        total = 0.0
+        per = []
+        for r in rows:
+            if not r["signal"]:
+                continue
+            try:
+                logics = traci.trafficlight.getAllProgramLogics(r["signal"])
+            except traci.TraCIException:
+                continue
+            if not logics:
+                continue
+            phases = logics[0].phases
+            cycle = sum(p.duration for p in phases)
+            if cycle <= 0:
+                continue
+            green = max((p.duration for p in phases
+                         if "G" in p.state or "g" in p.state), default=0.0)
+            red = max(0.0, cycle - green)
+            e_wait = red * red / (2 * cycle)
+            total += e_wait
+            per.append({"tls": r["signal"], "cycle": round(cycle),
+                        "red": round(red), "exp_wait_s": round(e_wait, 1)})
+        return round(total, 1), per
+
+    def _free_flow_exempt(self, route):
+        """Travel time on an empty road at the exempt speed profile."""
+        t = 0.0
+        cap = self.cfg.ambulance_max_kmh / 3.6
+        for eid in route:
+            edge = self.net.getEdge(eid)
+            v = min(edge.getSpeed() * self.cfg.speed_exemption_factor, cap)
+            t += edge.getLength() / max(v, 1.0)
+        return round(t, 1)
 
     def _resolve(self, spec, kind):
         if spec is None:
@@ -184,6 +235,35 @@ class Dispatcher:
         if rec["departed"] is not None:
             duration = now - rec["departed"]
             metrics.complete(veh_id, duration, rec["planned_length"])
+            # with/without-preemption arrival-time analysis
+            exp = rec.get("exp_signal_wait_s", 0.0)
+            msig = rec.get("signal_wait_s", 0.0)
+            mtraffic = rec.get("traffic_wait_s", 0.0)
+            ff = rec.get("free_flow_s", 0.0)
+            recovered = max(0.0, exp - msig)   # timer delay the wave removed
+            est_without = duration + recovered
+            metrics.analysis.append({
+                "id": veh_id,
+                "actual_s": round(duration, 1),
+                "est_without_s": round(est_without, 1),
+                "free_flow_s": ff,
+                "no_traffic_without_s": round(ff + exp, 1),
+                "exp_signal_wait_s": exp,
+                "meas_signal_wait_s": round(msig, 1),
+                "meas_traffic_wait_s": round(mtraffic, 1),
+                "recovered_s": round(recovered, 1),
+                "signals": rec.get("signals_on_route", 0),
+                "per_signal": rec.get("per_signal", []),
+            })
+            self.ops.emit(now, "analysis",
+                          f"Arrival-time analysis {veh_id}: {duration:.0f} s "
+                          f"measured WITH the green wave; est. "
+                          f"{est_without:.0f} s WITHOUT it in the same "
+                          f"traffic (+{recovered:.0f} s at signal timers, "
+                          f"r²/2C per junction); no-traffic bounds "
+                          f"{ff:.0f} s / {ff + exp:.0f} s. Highest-weight "
+                          f"variable: the signal timer", "info",
+                          actor=veh_id, case=rec["case"])
             self.ops.emit(now, "arrival",
                           f"{veh_id} ARRIVED at its destination and was "
                           f"removed from the map (run complete): "

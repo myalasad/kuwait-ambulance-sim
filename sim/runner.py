@@ -85,11 +85,37 @@ class Simulation:
             self.dispatcher.on_teleport(veh_id, self.time)
         for veh_id in traci.simulation.getArrivedIDList():
             self.dispatcher.on_arrive(veh_id, self.time, self.metrics)
-        if self.dispatcher.active_ambulances(lights_only=False):
+        active = self.dispatcher.active_ambulances(lights_only=False)
+        if active:
             self.dispatcher.check_vanished(set(traci.vehicle.getIDList()),
                                            self.time)
+            self._attribute_delay(active)
         self.controller.update(
             self.dispatcher.active_ambulances(lights_only=True), self.time)
+
+    def _attribute_delay(self, active):
+        """Split each ambulance's lost time between 'waiting at a red signal'
+        and 'stuck in traffic' — the measured side of the with/without
+        arrival-time comparison."""
+        for amb_id in active:
+            rec = self.dispatcher.info.get(amb_id)
+            if rec is None:
+                continue
+            try:
+                speed = traci.vehicle.getSpeed(amb_id)
+                if speed < 0.5:
+                    nxt = traci.vehicle.getNextTLS(amb_id)
+                    if nxt and nxt[0][2] < 60 and nxt[0][3] in "ru":
+                        rec["signal_wait_s"] += self.cfg.step_length
+                    else:
+                        rec["traffic_wait_s"] += self.cfg.step_length
+                else:
+                    limit = traci.lane.getMaxSpeed(
+                        traci.vehicle.getLaneID(amb_id))
+                    if speed < 0.3 * limit:
+                        rec["traffic_wait_s"] += self.cfg.step_length
+            except traci.TraCIException:
+                continue
 
     # ------------------------------------------------------------- snapshots
 

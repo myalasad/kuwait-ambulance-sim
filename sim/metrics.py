@@ -4,6 +4,7 @@
 class Metrics:
     def __init__(self):
         self.completed = []  # dicts: id, duration_s, length_m, kmh
+        self.analysis = []   # per-run with/without arrival-time analysis
 
     def complete(self, amb_id, duration_s, length_m):
         self.completed.append({
