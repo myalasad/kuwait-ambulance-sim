@@ -5,3 +5,6 @@ data/*.osm.xml
 data/background.trips.xml
 replay*.html
 .DS_Store
+data/operations.jsonl
+data/server.log
+data/*.trips.xml
