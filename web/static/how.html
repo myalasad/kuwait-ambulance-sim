@@ -17,11 +17,12 @@
     border-bottom: 1px solid var(--line); background: var(--panel);
     position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
   header h1 { font-size: 16px; }
-  header .flag { display: inline-block; width: 14px; height: 10px;
-    background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
-    border-radius: 2px; margin-right: 6px; }
+  header .flag { display: inline-block; width: 22px; height: 11px;
+    border-radius: 2.5px; margin-right: 8px; vertical-align: -1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 1px 3px rgba(0,0,0,.45);
+    background: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 12%22><rect width=%2224%22 height=%224%22 fill=%22%23007A3D%22/><rect y=%224%22 width=%2224%22 height=%224%22 fill=%22%23ffffff%22/><rect y=%228%22 width=%2224%22 height=%224%22 fill=%22%23CE1126%22/><path d=%22M0 0 L6 4 L6 8 L0 12 Z%22/></svg>') center/cover no-repeat; }
   nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
-  nav a { padding: 6px 12px; font-size: 12px; font-weight: 600;
+  nav a { transition: background .15s, color .15s, border-color .15s; padding: 6px 12px; font-size: 12px; font-weight: 600;
     color: var(--muted); text-decoration: none; border: 1px solid var(--line);
     border-radius: 8px; background: #141a25; }
   nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }

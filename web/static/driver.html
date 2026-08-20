@@ -17,11 +17,12 @@
     border-bottom: 1px solid var(--line); background: var(--panel);
     position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
   header h1 { font-size: 16px; }
-  header .flag { display: inline-block; width: 14px; height: 10px;
-    background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
-    border-radius: 2px; margin-right: 6px; }
+  header .flag { display: inline-block; width: 22px; height: 11px;
+    border-radius: 2.5px; margin-right: 8px; vertical-align: -1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 1px 3px rgba(0,0,0,.45);
+    background: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 12%22><rect width=%2224%22 height=%224%22 fill=%22%23007A3D%22/><rect y=%224%22 width=%2224%22 height=%224%22 fill=%22%23ffffff%22/><rect y=%228%22 width=%2224%22 height=%224%22 fill=%22%23CE1126%22/><path d=%22M0 0 L6 4 L6 8 L0 12 Z%22/></svg>') center/cover no-repeat; }
   nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
-  nav a { padding: 6px 12px; font-size: 12px; font-weight: 600;
+  nav a { transition: background .15s, color .15s, border-color .15s; padding: 6px 12px; font-size: 12px; font-weight: 600;
     color: var(--muted); text-decoration: none; border: 1px solid var(--line);
     border-radius: 8px; background: #141a25; }
   nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
@@ -191,11 +192,63 @@ async function pollNav() {
 $("amb").onchange = e => { selected = e.target.value; };
 pollNav(); setInterval(pollNav, 2500);
 
+// Entity interpolation: snapshots arrive at the simulation rate (~2 Hz at
+// 1x), far below the display rate.  We buffer the last two poses per
+// ambulance with arrival timestamps and render a constant-velocity
+// interpolation between them — buttery at any frame rate, one snapshot of
+// latency behind the sim (imperceptible).
+const poses = new Map();   // amb id -> {A, B, dt}
+const carsBuf = new Map(); // car id -> {A, B, dt}
 let ws = null;
 (function connect() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${scheme}://${location.host}/ws`);
-  ws.onmessage = ev => { const f = JSON.parse(ev.data); if (f.cars) frame = f; };
+  ws.onmessage = ev => {
+    const f = JSON.parse(ev.data);
+    if (!f.cars) return;
+    frame = f;
+    if (!KX) return;
+    const tNow = performance.now();
+    for (const a of f.ambs) {
+      const [x, y] = toM(a.lat, a.lon);
+      let rad = a.angle * Math.PI / 180;
+      const rec = poses.get(a.id);
+      if (!rec) {
+        poses.set(a.id, { A: { x, y, a: rad, t: tNow - 500 },
+                          B: { x, y, a: rad, t: tNow }, dt: 500 });
+        continue;
+      }
+      const prev = rec.B;
+      let d = rad - prev.a;                    // shortest-arc unwrap
+      while (d > Math.PI) { rad -= 2 * Math.PI; d = rad - prev.a; }
+      while (d < -Math.PI) { rad += 2 * Math.PI; d = rad - prev.a; }
+      const step = tNow - prev.t;
+      if (Math.hypot(x - prev.x, y - prev.y) > 120 || step > 3000) {
+        rec.A = { x, y, a: rad, t: tNow - rec.dt };   // teleport: snap
+      } else {
+        rec.A = prev;
+        rec.dt = rec.dt * 0.7 + Math.min(1500, step) * 0.3;
+      }
+      rec.B = { x, y, a: rad, t: tNow };
+    }
+    for (const id of poses.keys())
+      if (!f.ambs.some(a => a.id === id)) poses.delete(id);
+    // nearby traffic gets the same treatment (position only)
+    const seen = new Set();
+    for (const [id, lon, lat] of f.cars) {
+      seen.add(id);
+      const [x, y] = toM(lat, lon);
+      const rec = carsBuf.get(id);
+      if (!rec) { carsBuf.set(id, { A: { x, y, t: tNow - 500 },
+                                    B: { x, y, t: tNow }, dt: 500 }); continue; }
+      const step = tNow - rec.B.t;
+      if (Math.hypot(x - rec.B.x, y - rec.B.y) > 120 || step > 3000)
+        rec.A = { x, y, t: tNow - rec.dt };
+      else { rec.A = rec.B; rec.dt = rec.dt * 0.7 + Math.min(1500, step) * 0.3; }
+      rec.B = { x, y, t: tNow };
+    }
+    for (const id of carsBuf.keys()) if (!seen.has(id)) carsBuf.delete(id);
+  };
   ws.onclose = () => setTimeout(connect, 2000);
 })();
 
@@ -206,7 +259,7 @@ function fit() {
 }
 fit(); new ResizeObserver(fit).observe(cv);
 
-let disp = null;   // smoothed pose {x, y, a}
+let disp = null;   // rendered pose {x, y, a}, from the interpolation buffer
 function tick(now) {
   requestAnimationFrame(tick);
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
@@ -216,15 +269,19 @@ function tick(now) {
   const route = nav && nav.ambulances.find(a => a.id === selected);
   $("nofix").style.display = amb ? "none" : "grid";
   if (frame) $("ph-clock").textContent = (frame.kpi.clock || "").slice(0, 5);
-  if (!amb || !edgesM) return;
+  const rec = poses.get(selected);
+  if (!amb || !edgesM || !rec) return;
 
-  const [ax, ay] = toM(amb.lat, amb.lon);
-  let da = amb.angle * Math.PI / 180;
-  if (!disp) disp = { x: ax, y: ay, a: da };
-  disp.x += (ax - disp.x) * 0.15;
-  disp.y += (ay - disp.y) * 0.15;
-  let diff = ((da - disp.a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-  disp.a += diff * 0.12;
+  // constant-velocity interpolation between the last two snapshots,
+  // with a touch of extrapolation to absorb arrival jitter
+  const u = Math.max(0, Math.min((now - rec.B.t) / Math.max(rec.dt, 16), 1.15));
+  disp = {
+    x: rec.A.x + (rec.B.x - rec.A.x) * u,
+    y: rec.A.y + (rec.B.y - rec.A.y) * u,
+    a: rec.A.a + (rec.B.a - rec.A.a) * u,
+  };
+  const ax = rec.B.x, ay = rec.B.y;   // latest true pose, for HUD lookups
+  window.__pose = disp;               // debug/testing hook
 
   const SCALE = 1.9;                 // px per metre
   const CX = W / 2, CY = H * 0.7;
@@ -294,10 +351,12 @@ function tick(now) {
     }
   }
 
-  // other traffic nearby
+  // other traffic nearby, interpolated like us
   ctx.fillStyle = "#8b98ad";
-  for (const [, lon2, lat2] of frame.cars.map(c => [c[0], c[1], c[2]])) {
-    const [mx, my] = toM(lat2, lon2);
+  for (const rec2 of carsBuf.values()) {
+    const u2 = Math.max(0, Math.min((now - rec2.B.t) / Math.max(rec2.dt, 16), 1.15));
+    const mx = rec2.A.x + (rec2.B.x - rec2.A.x) * u2;
+    const my = rec2.A.y + (rec2.B.y - rec2.A.y) * u2;
     if (Math.abs(mx - disp.x) > R && Math.abs(my - disp.y) > R) continue;
     const [sx, sy] = P(mx, my);
     ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 7); ctx.fill();

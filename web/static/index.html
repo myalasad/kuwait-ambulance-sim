@@ -21,12 +21,13 @@
            background: var(--panel); border-right: 1px solid var(--line);
            padding: 14px; display: flex; flex-direction: column; gap: 12px; }
   #panel h1 { font-size: 16px; line-height: 1.3; }
-  #panel h1 .flag { display: inline-block; width: 14px; height: 10px;
-    background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
-    border-radius: 2px; margin-right: 6px; }
+  #panel h1 .flag { display: inline-block; width: 22px; height: 11px;
+    border-radius: 2.5px; margin-right: 8px; vertical-align: -1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 1px 3px rgba(0,0,0,.45);
+    background: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 12%22><rect width=%2224%22 height=%224%22 fill=%22%23007A3D%22/><rect y=%224%22 width=%2224%22 height=%224%22 fill=%22%23ffffff%22/><rect y=%228%22 width=%2224%22 height=%224%22 fill=%22%23CE1126%22/><path d=%22M0 0 L6 4 L6 8 L0 12 Z%22/></svg>') center/cover no-repeat; }
   #panel .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
   nav { display: flex; gap: 4px; }
-  nav a { flex: 1; text-align: center; padding: 7px 4px; font-size: 12px;
+  nav a { transition: background .15s, color .15s, border-color .15s; flex: 1; text-align: center; padding: 7px 4px; font-size: 12px;
     font-weight: 600; color: var(--muted); text-decoration: none;
     border: 1px solid var(--line); border-radius: 8px; background: #141a25; }
   nav a.on { background: var(--kw-green); border-color: var(--kw-green);
@@ -313,15 +314,33 @@ function onFrame(ev) {
     else carPos.set(id, { lon, lat, tLon: lon, tLat: lat });
   }
   for (const id of carPos.keys()) if (!seen.has(id)) carPos.delete(id);
+  // ambulances: buffer the last two snapshots for constant-velocity
+  // interpolation (smooth at any frame rate; the sim only ticks ~2 Hz at 1x)
+  const tNow = performance.now();
   const seenA = new Set();
   for (const a of f.ambs) {
     seenA.add(a.id);
     const p = ambPos.get(a.id);
-    if (p) { p.tLon = a.lon; p.tLat = a.lat; p.kmh = a.kmh;
-             p.angle = a.angle; p.lights = a.lights; p.limit = a.limit; }
-    else ambPos.set(a.id, { lon: a.lon, lat: a.lat, tLon: a.lon, tLat: a.lat,
-                            kmh: a.kmh, angle: a.angle, lights: a.lights,
-                            limit: a.limit });
+    if (!p) {
+      ambPos.set(a.id, {
+        A: { lon: a.lon, lat: a.lat, ang: a.angle, t: tNow - 500 },
+        B: { lon: a.lon, lat: a.lat, ang: a.angle, t: tNow },
+        dt: 500, kmh: a.kmh, lights: a.lights, limit: a.limit });
+      continue;
+    }
+    let ang = a.angle;
+    let d = ang - p.B.ang;                       // shortest-arc unwrap
+    while (d > 180) { ang -= 360; d = ang - p.B.ang; }
+    while (d < -180) { ang += 360; d = ang - p.B.ang; }
+    const step = tNow - p.B.t;
+    if (Math.hypot(a.lon - p.B.lon, a.lat - p.B.lat) > 0.002 || step > 3000) {
+      p.A = { lon: a.lon, lat: a.lat, ang, t: tNow - p.dt };  // teleport: snap
+    } else {
+      p.A = p.B;
+      p.dt = p.dt * 0.7 + Math.min(1500, step) * 0.3;
+    }
+    p.B = { lon: a.lon, lat: a.lat, ang, t: tNow };
+    p.kmh = a.kmh; p.lights = a.lights; p.limit = a.limit;
   }
   for (const id of ambPos.keys()) if (!seenA.has(id)) ambPos.delete(id);
 
@@ -521,6 +540,7 @@ function drawAmbulance(cx, cy, angleDeg, blue, lightsOn, label) {
   }
 }
 
+let lastRender = 0;
 function render(now) {
   requestAnimationFrame(render);
   const vw = canvas.clientWidth, vh = canvas.clientHeight;
@@ -528,7 +548,10 @@ function render(now) {
   ctx.clearRect(0, 0, vw, vh);
   if (!frame) return;
   const zoom = map.getZoom();
-  const k = 0.18;
+  // frame-rate-independent smoothing factor for the car dots
+  const dtf = Math.min(0.1, (now - lastRender) / 1000 || 0.016);
+  lastRender = now;
+  const k = 1 - Math.exp(-12 * dtf);
 
   // planned routes (Dijkstra corridors), marching toward the destination
   let ci = 0;
@@ -611,12 +634,14 @@ function render(now) {
     ctx.fill();
   }
 
-  // ambulances
+  // ambulances: constant-velocity interpolation between snapshots
   const blue = Math.floor(now / 260) % 2 === 0;
   for (const [id, p] of ambPos) {
-    p.lon += (p.tLon - p.lon) * k;
-    p.lat += (p.tLat - p.lat) * k;
-    const c = map.latLngToContainerPoint([p.lat, p.lon]);
+    const u = Math.max(0, Math.min((now - p.B.t) / Math.max(p.dt, 16), 1.15));
+    const iLon = p.A.lon + (p.B.lon - p.A.lon) * u;
+    const iLat = p.A.lat + (p.B.lat - p.A.lat) * u;
+    const iAng = p.A.ang + (p.B.ang - p.A.ang) * u;
+    const c = map.latLngToContainerPoint([iLat, iLon]);
     if (p.lights) {
       const grad = ctx.createRadialGradient(c.x, c.y, 3, c.x, c.y, 22);
       grad.addColorStop(0, blue ? "rgba(59,130,246,.55)" : "rgba(255,45,45,.55)");
@@ -630,7 +655,7 @@ function render(now) {
       if (p.limit && p.kmh > p.limit) label += ` (limit ${p.limit} · EXEMPT)`;
       if (!p.lights) label += " · lights OFF";
     }
-    drawAmbulance(c.x, c.y, p.angle || 0, blue, p.lights, label);
+    drawAmbulance(c.x, c.y, iAng || 0, blue, p.lights, label);
   }
 }
 requestAnimationFrame(render);
