@@ -44,6 +44,17 @@ class SimConfig:
     clearance_after_pass_s: float = 2.0  # corridor held briefly after the
     #                                      ambulance clears the junction
 
+    # --- arbitration & operator referral ---
+    arbitration_tie_m: float = 20.0      # two fresh requests closer than this
+    #                                      are a tie: refer to the operator
+    operator_timeout_s: float = 8.0      # no operator decision within this ->
+    #                                      default policy applies (nearest)
+
+    # --- demand calendar ---
+    start_hour: int = 7                  # simulated clock at t=0 (07:00,
+    #                                      Kuwait morning peak)
+    demand_hours: float = 2.0            # hours of background demand to build
+
     # --- vehicles ---
     ambulance_type: str = "ambulance"
 

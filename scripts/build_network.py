@@ -16,12 +16,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from sim.sumo_env import ensure_sumo_home, tool_binary, tools_dir  # noqa: E402
+from sim.traffic_profile import hourly_profile, period_for_hour  # noqa: E402
+from sim.config import SimConfig  # noqa: E402
 
 DATA = os.path.join(ROOT, "data")
 OSM = os.path.join(DATA, "kuwait_downtown.osm.xml")
 NET = os.path.join(DATA, "kuwait_downtown.net.xml")
-TRIPS = os.path.join(DATA, "background.trips.xml")
-ROUTES = os.path.join(DATA, "background.rou.xml")
 VTYPES = os.path.join(DATA, "vtypes.add.xml")
 SUMOCFG = os.path.join(DATA, "scenario.sumocfg")
 
@@ -41,7 +41,7 @@ VTYPES_XML = """<additional>
 SUMOCFG_XML = """<configuration>
     <input>
         <net-file value="kuwait_downtown.net.xml"/>
-        <route-files value="background.rou.xml"/>
+        <route-files value="{routes}"/>
         <additional-files value="vtypes.add.xml"/>
     </input>
     <time>
@@ -89,25 +89,37 @@ def main() -> None:
         "--no-warnings",
     ])
 
-    run([
-        sys.executable, os.path.join(tools_dir(), "randomTrips.py"),
-        "-n", NET,
-        "-o", TRIPS,
-        "-r", ROUTES,
-        "-b", "0", "-e", "7200",
-        "--period", "1.3",
-        "--fringe-factor", "5",
-        "--seed", "42",
-        "--validate",
-        "--vehicle-class", "passenger",
-        "--prefix", "bg",
-        "--trip-attributes", 'departLane="best" departSpeed="max"',
-    ])
+    # Background demand: one slice per clock hour, insertion rate from the
+    # calibrated Kuwaiti profile (see sim/traffic_profile.py for provenance).
+    cfg = SimConfig()
+    profile = hourly_profile(ROOT)
+    route_files = []
+    for i in range(int(cfg.demand_hours)):
+        hour = (cfg.start_hour + i) % 24
+        period = period_for_hour(profile, hour)
+        routes = os.path.join(DATA, f"background_h{hour:02d}.rou.xml")
+        print(f"  hour {hour:02d}:00  multiplier {profile[hour]:.2f}  "
+              f"period {period:.2f} s/veh")
+        run([
+            sys.executable, os.path.join(tools_dir(), "randomTrips.py"),
+            "-n", NET,
+            "-o", os.path.join(DATA, f"background_h{hour:02d}.trips.xml"),
+            "-r", routes,
+            "-b", str(i * 3600), "-e", str((i + 1) * 3600),
+            "--period", f"{period:.3f}",
+            "--fringe-factor", "5",
+            "--seed", str(42 + i),
+            "--validate",
+            "--vehicle-class", "passenger",
+            "--prefix", f"bg{hour:02d}_",
+            "--trip-attributes", 'departLane="best" departSpeed="max"',
+        ])
+        route_files.append(os.path.basename(routes))
 
     with open(VTYPES, "w") as f:
         f.write(VTYPES_XML)
     with open(SUMOCFG, "w") as f:
-        f.write(SUMOCFG_XML)
+        f.write(SUMOCFG_XML.format(routes=",".join(route_files)))
     print(f"\nScenario ready: {SUMOCFG}")
 
 

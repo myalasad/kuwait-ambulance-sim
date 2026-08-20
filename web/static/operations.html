@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations — Kuwait Ambulance Green Wave</title>
+<style>
+  :root {
+    --bg: #10141c; --panel: #171d29; --panel2: #1e2634; --line: #2a3547;
+    --text: #e8edf6; --muted: #8b98ad;
+    --kw-green: #009a4e; --kw-red: #ce1126; --amber: #f0b429;
+    --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
+  header h1 { font-size: 16px; }
+  header .flag { display: inline-block; width: 14px; height: 10px;
+    background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
+    border-radius: 2px; margin-right: 6px; }
+  nav { display: flex; gap: 4px; margin-left: auto; }
+  nav a { padding: 6px 14px; font-size: 12px; font-weight: 600;
+    color: var(--muted); text-decoration: none; border: 1px solid var(--line);
+    border-radius: 8px; background: #141a25; }
+  nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
+  #clock { font-weight: 700; font-variant-numeric: tabular-nums; }
+  #clock small { color: var(--muted); font-weight: 400; }
+
+  main { display: grid; grid-template-columns: 1fr 380px; gap: 14px;
+         padding: 14px 20px; align-items: start; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel2); border: 1px solid var(--line);
+          border-radius: 10px; padding: 12px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--muted); margin-bottom: 9px; }
+
+  #filters { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  #filters button { padding: 4px 12px; font-size: 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: #141a25; color: var(--muted);
+    cursor: pointer; font-weight: 600; }
+  #filters button.on { background: var(--kw-green); border-color: var(--kw-green);
+    color: #fff; }
+  #filters input { flex: 1; min-width: 140px; padding: 4px 12px;
+    border-radius: 999px; border: 1px solid var(--line); background: #141a25;
+    color: var(--text); font-size: 12px; }
+
+  #feed { font: 12px/1.6 ui-monospace, Menlo, monospace; max-height: 72vh;
+          overflow-y: auto; background: #0d1119; border-radius: 8px;
+          padding: 10px; display: flex; flex-direction: column; }
+  #feed .t { color: var(--muted); margin-right: 8px; }
+  #feed .badge { display: inline-block; min-width: 46px; text-align: center;
+    border-radius: 4px; font-size: 10px; font-weight: 700; padding: 0 5px;
+    margin-right: 8px; vertical-align: 1px; }
+  #feed .b-info { background: #1d2a3f; color: #9db4d8; }
+  #feed .b-warn { background: #3a2f10; color: var(--amber); }
+  #feed .b-error { background: #3a1414; color: #ff6b6b; }
+  #feed .b-decision { background: #2a2143; color: var(--purple); }
+  #feed .case { color: #5eead4; margin-right: 6px; }
+  #feed .error { color: #ff9b9b; }
+  #feed .decision { color: #cdbdfa; }
+
+  .pendcard { background: #2a2113; border: 2px solid var(--amber);
+    border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .pendcard h3 { font-size: 13px; color: var(--amber); margin-bottom: 4px; }
+  .pendcard p { font-size: 12px; margin-bottom: 8px; }
+  .pendcard button { padding: 6px 10px; margin-right: 6px; font-size: 12px;
+    font-weight: 700; border-radius: 8px; border: 0; cursor: pointer;
+    background: var(--kw-green); color: #fff; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 5px 6px; text-align: left; border-bottom: 1px solid #232d3f; }
+  th { color: var(--muted); font-weight: 600; font-size: 10.5px;
+       text-transform: uppercase; letter-spacing: .05em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; border-radius: 999px; padding: 1px 9px;
+    font-size: 10.5px; font-weight: 700; }
+  .p-open { background: #123a20; color: #4ade80; }
+  .p-closed { background: #232d3f; color: var(--muted); }
+  .p-error { background: #3a1414; color: #ff6b6b; }
+  .kind-P { color: #4ade80; } .kind-A { color: #93c5fd; } .kind-D { color: var(--purple); }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="flag"></span>Operations Centre</h1>
+  <span id="clock">--:--:--<small> Kuwait time (sim)</small></span>
+  <nav>
+    <a href="/">Live Map</a>
+    <a href="/navigation">Navigation</a>
+    <a class="on" href="/operations">Operations</a>
+    <a href="/protocol">Protocol</a>
+  </nav>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Real-time operations feed — every event, as it happens</h2>
+    <div id="filters">
+      <button data-f="all" class="on">All</button>
+      <button data-f="warn">Warnings</button>
+      <button data-f="error">Errors</button>
+      <button data-f="decision">Decisions</button>
+      <input id="search" placeholder="filter text: AMB_1, junction id, case…">
+    </div>
+    <div id="feed"></div>
+  </section>
+
+  <aside style="display:flex;flex-direction:column;gap:14px">
+    <section class="card" id="pending-card" style="display:none">
+      <h2>⚠ Awaiting supervisor decision</h2>
+      <div id="pending"></div>
+    </section>
+    <section class="card">
+      <h2>Cases — every purposely-enabled junction, ambulance run and
+          referred decision</h2>
+      <table>
+        <thead><tr><th>case</th><th>subject</th><th>status</th>
+          <th class="num">held/ran</th><th>outcome</th></tr></thead>
+        <tbody id="cases"></tbody>
+      </table>
+    </section>
+  </aside>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let seq = 0, filter = "all", search = "";
+const events = [];
+
+function fmt(t) {
+  return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+}
+
+function renderFeed() {
+  const feed = $("feed");
+  const stick = feed.scrollTop + feed.clientHeight > feed.scrollHeight - 40;
+  feed.innerHTML = events.filter(e => {
+    if (filter === "warn" && e.sev !== "warn") return false;
+    if (filter === "error" && e.sev !== "error") return false;
+    if (filter === "decision" && e.sev !== "decision") return false;
+    if (search && !(`${e.msg} ${e.case || ""} ${e.actor || ""}`
+        .toLowerCase().includes(search))) return false;
+    return true;
+  }).map(e => {
+    const div = document.createElement("div");
+    div.innerHTML = `<span class="t">${fmt(e.t)}</span>` +
+      `<span class="badge b-${e.sev}">${e.sev.toUpperCase()}</span>` +
+      (e.case ? `<span class="case">${e.case}</span>` : "") +
+      `<span class="${e.sev}"></span>`;
+    div.lastChild.textContent = e.msg;
+    return div.outerHTML;
+  }).join("");
+  if (stick) feed.scrollTop = feed.scrollHeight;
+}
+
+async function poll() {
+  try {
+    const r = await fetch(`/api/operations?since=${seq}`);
+    const d = await r.json();
+    if (d.clock) $("clock").firstChild.textContent = d.clock;
+    for (const e of d.events) events.push(e);
+    while (events.length > 1500) events.shift();
+    seq = d.seq || seq;
+    if (d.events.length) renderFeed();
+    renderPending(d.pending || []);
+  } catch (e) { /* server restarting; keep polling */ }
+}
+
+function renderPending(pending) {
+  $("pending-card").style.display = pending.length ? "" : "none";
+  $("pending").innerHTML = pending.map(p =>
+    `<div class="pendcard"><h3>${p.case} — junction ${p.tls}</h3>` +
+    `<p>Controller unable to decide between converging corridors; junction ` +
+    `held on its normal programme.</p>` +
+    p.candidates.map(c =>
+      `<button onclick="decide('${p.tls}','${c.amb}')">Grant ${c.amb} (${c.dist} m)</button>`
+    ).join("") + `</div>`).join("");
+}
+
+async function decide(tls, amb) {
+  await fetch("/api/command", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cmd: "decide", tls, amb, who: "supervisor" }) });
+}
+
+async function pollCases() {
+  try {
+    const r = await fetch("/api/cases");
+    const d = await r.json();
+    $("cases").innerHTML = d.cases.slice(0, 60).map(c => {
+      const dur = c.closed_t != null ? (c.closed_t - c.opened_t).toFixed(0) + " s"
+                : ((c.status === "open") ? "…" : "-");
+      const pill = c.status === "open" ? "p-open"
+                 : c.status === "error" ? "p-error" : "p-closed";
+      return `<tr><td class="kind-${c.kind}"><b>${c.id}</b></td>` +
+        `<td>${c.subject.length > 22 ? c.subject.slice(0, 21) + "…" : c.subject}</td>` +
+        `<td><span class="pill ${pill}">${c.status}</span></td>` +
+        `<td class="num">${dur}</td>` +
+        `<td>${c.outcome || c.summary || ""}</td></tr>`;
+    }).join("");
+  } catch (e) { /* retry next tick */ }
+}
+
+for (const b of document.querySelectorAll("#filters button"))
+  b.onclick = () => {
+    document.querySelectorAll("#filters button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    filter = b.dataset.f;
+    renderFeed();
+  };
+$("search").oninput = e => { search = e.target.value.toLowerCase(); renderFeed(); };
+
+poll(); pollCases();
+setInterval(poll, 1000);
+setInterval(pollCases, 2000);
+</script>
+</body>
+</html>

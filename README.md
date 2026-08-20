@@ -57,17 +57,29 @@ python scripts/build_network.py      # netconvert + 2 h background traffic
 
 ## Run
 
-**Live website** (Leaflet map of Kuwait City, moving traffic, per-approach
-signal states, dispatch controls, KPIs, control-centre event log):
+**Live website** (four pages, all served from one local server):
 
 ```bash
 python run_live.py                   # open http://127.0.0.1:8642
 ```
 
-- Pick an origin (Amiri Hospital by default), click **Dispatch**, then click a
-  destination on the map — or use **random destination**.
-- Toggle **Signal preemption** off to watch the same city without the green
-  wave; the event log narrates every camera detection and junction preemption.
+| Page | What it does |
+|---|---|
+| `/` **Live Map** | Kuwait City map with 3D-look signal housings and ambulance sprites, Dijkstra route overlays, per-approach signal heads, "PURPOSELY ENABLED / BACK TO NORMAL" junction labels, per-ambulance lights toggles, dispatch controls, Kuwait sim clock, priority-conflict banner with supervisor grant buttons |
+| `/navigation` | The Dijkstra corridor per ambulance: route on the network, node-by-node analysis (distance, ETA, signals, live preemption state) |
+| `/operations` | Real-time typed operations feed with severity filters and search, the full case ledger (P/A/D cases with durations and outcomes), pending supervisor decisions |
+| `/protocol` | The complete operating rulebook: dual-ambulance arbitration, operator referral, error fail-safes, why-did-it-disappear guarantees, data provenance, scope-of-use |
+
+Every operation also persists to `data/operations.jsonl` for after-action
+review.
+
+**Keep it running forever** (independent of any Claude session or usage
+limits — this is a plain local application):
+
+```bash
+./scripts/run_forever.sh             # restart-on-crash watchdog
+./scripts/install_autostart.sh       # macOS LaunchAgent: start at login, keep alive
+```
 
 **Headless comparison** (same seed, same dispatches, preemption on vs off):
 
@@ -100,6 +112,38 @@ ready-made launch configurations in the Run & Debug panel.
 | `web/static/index.html` | live dashboard (Leaflet + canvas overlay) |
 | `web/replay_export.py`, `web/static/replay_template.html` | self-contained replay page generator |
 | `run_live.py`, `run_headless.py` | entry points |
+
+## Routing
+
+Dispatch computes each route with our own **Dijkstra** over the network's
+edge graph ([sim/router.py](sim/router.py)) — one-way streets and OSM turn
+restrictions respected, edges weighted by **live travel times** — and assigns
+it to the vehicle via TraCI. The signal controller reads the same route
+(via `getNextTLS`), which is how a junction knows the ambulance is coming
+before its camera sees it: detection confirms, the route predicts.
+
+## Demand calibration ("real Kuwaiti traffic")
+
+Background traffic follows an hourly profile calibrated to published Kuwaiti
+weekday patterns (07:00 morning peak by default; see
+[sim/traffic_profile.py](sim/traffic_profile.py) for the full provenance
+statement). Kuwait exposes no public live traffic feed; when MOI/Municipality
+counts are available, put them in `data/real_counts.csv` (`hour,multiplier`)
+and rebuild — they override the calibrated profile. Change `start_hour` /
+`demand_hours` in [sim/config.py](sim/config.py) to simulate other times of
+day.
+
+## Versions
+
+- `v1.0` — green-wave core: camera detection, ETA-based wave, phase-hold
+  preemption, live map, replay export, validated comparison harness.
+- `v2.0` — operations & cases system, dual-priority arbitration with operator
+  referral and supervisor override, own Dijkstra router + navigation page,
+  protocol page, Kuwait demand calendar, 3D map visuals, lights control,
+  watchdog/autostart.
+
+To push to GitHub (needs your login once):
+`brew install gh && gh auth login && gh repo create kuwait-ambulance-sim --private --source . --push && git push --tags`
 
 ## Notes & realism caveats
 

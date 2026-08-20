@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protocol — Kuwait Ambulance Green Wave</title>
+<style>
+  :root {
+    --bg: #10141c; --panel: #171d29; --panel2: #1e2634; --line: #2a3547;
+    --text: #e8edf6; --muted: #8b98ad;
+    --kw-green: #009a4e; --kw-red: #ce1126; --amber: #f0b429;
+    --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14.5px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
+  header h1 { font-size: 16px; }
+  header .flag { display: inline-block; width: 14px; height: 10px;
+    background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
+    border-radius: 2px; margin-right: 6px; }
+  nav { display: flex; gap: 4px; margin-left: auto; }
+  nav a { padding: 6px 14px; font-size: 12px; font-weight: 600;
+    color: var(--muted); text-decoration: none; border: 1px solid var(--line);
+    border-radius: 8px; background: #141a25; }
+  nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
+
+  main { max-width: 880px; margin: 0 auto; padding: 24px 20px 60px; }
+  h2 { font-size: 15px; margin: 28px 0 10px; padding-bottom: 6px;
+       border-bottom: 1px solid var(--line); color: #cdd8ea; }
+  h2 .no { color: var(--kw-green); margin-right: 8px;
+           font-variant-numeric: tabular-nums; }
+  p { margin: 8px 0; }
+  .scenario { background: var(--panel2); border: 1px solid var(--line);
+    border-left: 4px solid var(--kw-green); border-radius: 8px;
+    padding: 10px 14px; margin: 10px 0; }
+  .scenario.warn { border-left-color: var(--amber); }
+  .scenario.error { border-left-color: var(--kw-red); }
+  .scenario.decision { border-left-color: var(--purple); }
+  .scenario h3 { font-size: 13.5px; margin-bottom: 4px; }
+  .scenario p { font-size: 13px; color: #c6d0e0; margin: 4px 0; }
+  .scenario .tag { font-size: 10.5px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--muted); }
+  code { background: #0d1119; border-radius: 4px; padding: 1px 6px;
+         font-size: 12.5px; color: #8be9b6; }
+  .disclaimer { background: #2a1616; border: 1px solid #5b2020;
+    border-radius: 10px; padding: 14px 16px; margin-top: 30px; }
+  .disclaimer h3 { color: #ff9b9b; font-size: 13.5px; margin-bottom: 6px; }
+  .disclaimer p { font-size: 13px; color: #e8c8c8; }
+  ul { margin: 6px 0 6px 22px; }
+  li { margin: 3px 0; font-size: 13.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="flag"></span>Operating Protocol</h1>
+  <nav>
+    <a href="/">Live Map</a>
+    <a href="/navigation">Navigation</a>
+    <a href="/operations">Operations</a>
+    <a class="on" href="/protocol">Protocol</a>
+  </nav>
+</header>
+
+<main>
+  <p>This is the complete rulebook the control system follows. Every rule here
+  is implemented in the simulation and every application of a rule is recorded
+  as a structured operation with a case id — visible live on the
+  <a href="/operations" style="color:#4ade80">Operations</a> page and persisted
+  to <code>data/operations.jsonl</code> for after-action review.</p>
+
+  <h2><span class="no">1</span>Normal corridor operation</h2>
+  <div class="scenario">
+    <h3>Camera detection → confirmation → green corridor</h3>
+    <p>Each signalized junction has a virtual camera that recognises an
+    ambulance with active emergency lights up to <code>200 m</code> along its
+    approaches. The first detection confirms the vehicle to the control
+    centre, which knows its planned route (the same Dijkstra route the driver
+    navigates — see <a href="/navigation" style="color:#4ade80">Navigation</a>).
+    Signals along the route are then <b>purposely enabled</b> in sequence when
+    the ambulance's ETA drops below <code>25 s</code>: amber to conflicting
+    traffic (3 s), all-red clearance (2 s), then the junction's own programme
+    phase serving the ambulance's approach is held. The queue in front of the
+    ambulance discharges through the green — cars ahead get priority, exactly
+    as intended. Signals are never switched dark: a dark signal causes
+    collisions.</p>
+    <p class="tag">Case P-nnn opens at enablement, closes at restoration; the
+    map labels the junction "PURPOSELY ENABLED" and then "BACK TO NORMAL".</p>
+  </div>
+
+  <h2><span class="no">2</span>Two priority vehicles — ambulance vs ambulance</h2>
+  <div class="scenario warn">
+    <h3>2a. Clear margin — automatic arbitration</h3>
+    <p>When two corridors request the same junction and one ambulance is
+    clearly nearer (margin &gt; <code>20 m</code>), the <b>nearest is granted</b>
+    and the second queues behind the decision. The arbitration is logged as a
+    warning-level operation naming both vehicles and both distances.</p>
+  </div>
+  <div class="scenario decision">
+    <h3>2b. Tie — unable to decide → refer to operator</h3>
+    <p>If the margin is under <code>20 m</code>, the controller declares itself
+    unable to decide. The junction is <b>held on its normal programme — the
+    safe state</b> — a D-case opens, and the conflict is pushed to the
+    operator on the Live Map and the Operations page with one-click
+    <b>supervisor grant buttons</b>. If no human decides within
+    <code>8 s</code>, the default policy (nearest) is applied automatically
+    and logged as a policy decision.</p>
+  </div>
+  <div class="scenario">
+    <h3>2c. Continuity rule</h3>
+    <p>A junction already serving a corridor keeps serving it until that
+    ambulance passes — switching allegiance mid-approach would trap both
+    streams in the box. The follower is served immediately after.</p>
+  </div>
+  <div class="scenario">
+    <h3>2d. Same approach — shared corridor</h3>
+    <p>Two ambulances on the same approach share the same green; the second
+    re-arms the junction during its clearing window if needed.</p>
+  </div>
+
+  <h2><span class="no">3</span>Errors and fail-safes</h2>
+  <div class="scenario error">
+    <h3>3a. Signal command failure</h3>
+    <p>If any command to a junction fails (communication/state error), the
+    junction is immediately <b>reverted to its normal programme</b> — never
+    left frozen in a corridor state — the P-case closes with status
+    <code>error</code>, and an error-severity operation is emitted for the
+    operator.</p>
+  </div>
+  <div class="scenario error">
+    <h3>3b. Simulation/server failure</h3>
+    <p>If the simulation loop dies, the server broadcasts the error to every
+    connected dashboard (no silent freeze), keeps serving, and offers Reset.
+    The <code>run_forever.sh</code> watchdog restarts the whole server if the
+    process itself dies. In a real deployment the analogous fail-safe is the
+    local junction controller falling back to its fixed-time plan when the
+    centre stops responding.</p>
+  </div>
+  <div class="scenario warn">
+    <h3>3c. Over-held junction (starvation guard)</h3>
+    <p>A single hold is capped at <code>90 s</code>. Beyond it, cross traffic
+    is guaranteed a normal cycle (<code>20 s</code> cooldown) unless the
+    ambulance is already at the stop line. Both the release and the re-arm
+    are logged on the case.</p>
+  </div>
+  <div class="scenario warn">
+    <h3>3d. Ambulance physically inside the junction</h3>
+    <p>A junction is never restored while the ambulance is inside its box —
+    restoring early would give cross traffic green into a box the ambulance
+    still occupies.</p>
+  </div>
+
+  <h2><span class="no">4</span>Why did the ambulance disappear / lose its
+      lights?</h2>
+  <p>Nothing leaves the map silently. Every ambulance has an A-case from
+  dispatch to close, and the close reason is always one of these logged
+  operations:</p>
+  <div class="scenario">
+    <h3>4a. Arrived (normal)</h3>
+    <p><code>AMB_n ARRIVED at its destination and was removed from the map
+    (run complete)</code> — with travel time, distance, average speed and the
+    planned ETA for comparison.</p>
+  </div>
+  <div class="scenario warn">
+    <h3>4b. Teleported by the congestion resolver</h3>
+    <p>SUMO teleports any vehicle physically stuck for &gt; 180 s. If that
+    happens to an ambulance its position jumps; the operation says so
+    explicitly and flags it as a simulation artefact, not a comms loss.</p>
+  </div>
+  <div class="scenario warn">
+    <h3>4c. Lights switched off (operator action)</h3>
+    <p>The operator can switch an ambulance's emergency lights off/on from the
+    Live Map (per-ambulance toggle). Lights off means it stops requesting
+    priority: its junctions restore to normal, its route overlay dims, and the
+    who/when/why is logged on its case. Switching back on resumes corridor
+    requests.</p>
+  </div>
+  <div class="scenario error">
+    <h3>4d. Unexpected removal</h3>
+    <p>If an active ambulance vanishes from the vehicle list without an
+    arrival event, an <b>error operation</b> fires immediately
+    (<code>LEFT THE SIMULATION UNEXPECTEDLY</code>) and the case closes with
+    status <code>error</code> for investigation.</p>
+  </div>
+  <div class="scenario error">
+    <h3>4e. Reset</h3>
+    <p>A dashboard Reset restarts the world; open cases from the previous run
+    remain in <code>data/operations.jsonl</code> with their last state.</p>
+  </div>
+
+  <h2><span class="no">5</span>Operator &amp; supervisor powers</h2>
+  <ul>
+    <li><b>Grant priority</b> in a referred conflict (2b) — one click, logged
+        by name ("supervisor").</li>
+    <li><b>Arm/disarm the whole preemption system</b> — disarming releases
+        every junction through the normal amber-down sequence and is logged.</li>
+    <li><b>Lights on/off</b> per ambulance (4c).</li>
+    <li><b>Pause / resume / reset</b> the simulation; every state change is
+        broadcast to all connected screens so no operator sees a stale
+        picture.</li>
+  </ul>
+
+  <h2><span class="no">6</span>Routing (navigation = corridor)</h2>
+  <div class="scenario">
+    <h3>One route object, two consumers</h3>
+    <p>Dispatch computes the route with <b>Dijkstra</b> over the network's
+    edge graph — one-way streets and OSM turn restrictions respected, edges
+    weighted by <b>live travel times</b> so the route avoids congestion at
+    dispatch time. The same route is assigned to the driver (vehicle
+    navigation) and read by the control centre (which junction comes next, at
+    what ETA). That is how a junction knows the ambulance is coming before its
+    camera ever sees it: detection confirms; the route predicts. Full
+    node-by-node analysis is on the
+    <a href="/navigation" style="color:#4ade80">Navigation</a> page.</p>
+  </div>
+
+  <h2><span class="no">7</span>Data provenance — what is real here</h2>
+  <ul>
+    <li><b>Real:</b> the downtown Kuwait City road network, one-way system,
+        turn restrictions and signal locations (OpenStreetMap), simulated at
+        microscopic fidelity (SUMO 1.27, sublane model, rescue-lane
+        behaviour).</li>
+    <li><b>Calibrated, not measured:</b> background demand follows the
+        published shape of Kuwaiti weekday traffic (07:00 morning peak by
+        default; afternoon and evening peaks in the profile) — Kuwait exposes
+        no public live traffic feed. When MOI/Municipality counts are
+        available, drop them in <code>data/real_counts.csv</code>
+        (<code>hour,multiplier</code>) and rebuild: they override the
+        calibrated profile.</li>
+    <li><b>Synthetic:</b> individual signal timing plans (static 72–90 s
+        cycles generated per junction; the real KMoI plans can be substituted
+        in the network file when obtained).</li>
+  </ul>
+
+  <div class="disclaimer">
+    <h3>Scope of use</h3>
+    <p>This is a planning, evaluation and training simulator. It is not a
+    certified life-safety control system and must not be connected to live
+    signal hardware without the full engineering, redundancy and regulatory
+    review that real emergency-vehicle-preemption deployments require
+    (conflict-monitor hardware, fail-to-normal guarantees, MOI approval).
+    Decisions about real dispatch or real signal control must not be made on
+    simulation output alone.</p>
+  </div>
+</main>
+</body>
+</html>

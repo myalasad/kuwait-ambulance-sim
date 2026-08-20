@@ -10,24 +10,32 @@
     --bg: #10141c; --panel: #171d29; --panel2: #1e2634; --line: #2a3547;
     --text: #e8edf6; --muted: #8b98ad;
     --kw-green: #009a4e; --kw-red: #ce1126; --amber: #f0b429; --blue: #3b82f6;
+    --purple: #a78bfa;
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { height: 100%; }
   body { font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
          background: var(--bg); color: var(--text); display: flex; }
 
-  #panel { width: 330px; min-width: 330px; height: 100vh; overflow-y: auto;
+  #panel { width: 340px; min-width: 340px; height: 100vh; overflow-y: auto;
            background: var(--panel); border-right: 1px solid var(--line);
-           padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-  #panel h1 { font-size: 17px; line-height: 1.3; }
+           padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  #panel h1 { font-size: 16px; line-height: 1.3; }
   #panel h1 .flag { display: inline-block; width: 14px; height: 10px;
     background: linear-gradient(#009a4e 33%, #fff 33% 66%, #ce1126 66%);
     border-radius: 2px; margin-right: 6px; }
-  #panel .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #panel .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  nav { display: flex; gap: 4px; }
+  nav a { flex: 1; text-align: center; padding: 7px 4px; font-size: 12px;
+    font-weight: 600; color: var(--muted); text-decoration: none;
+    border: 1px solid var(--line); border-radius: 8px; background: #141a25; }
+  nav a.on { background: var(--kw-green); border-color: var(--kw-green);
+    color: #fff; }
+  nav a:hover:not(.on) { border-color: #46586f; color: var(--text); }
   .card { background: var(--panel2); border: 1px solid var(--line);
-          border-radius: 10px; padding: 12px; }
+          border-radius: 10px; padding: 11px; }
   .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
-             color: var(--muted); margin-bottom: 9px; }
+             color: var(--muted); margin-bottom: 8px; }
   label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
   select, button { width: 100%; padding: 8px 10px; border-radius: 8px;
     border: 1px solid var(--line); background: #141a25; color: var(--text);
@@ -36,7 +44,6 @@
   button:hover { border-color: #46586f; }
   button.primary { background: var(--kw-green); border-color: var(--kw-green); }
   button.primary:hover { filter: brightness(1.1); }
-  button.armed { background: var(--kw-red); border-color: var(--kw-red); }
   .row { display: flex; gap: 8px; }
   .row > * { flex: 1; }
   .stack { display: flex; flex-direction: column; gap: 8px; }
@@ -46,24 +53,39 @@
   input[type=range] { width: 100%; accent-color: var(--kw-green); }
 
   #kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .kpi { background: #141a25; border-radius: 8px; padding: 8px 10px; }
-  .kpi .v { font-size: 20px; font-weight: 700; }
-  .kpi .l { font-size: 10.5px; color: var(--muted); text-transform: uppercase;
+  .kpi { background: #141a25; border-radius: 8px; padding: 7px 10px; }
+  .kpi .v { font-size: 19px; font-weight: 700;
+            font-variant-numeric: tabular-nums; }
+  .kpi .l { font-size: 10px; color: var(--muted); text-transform: uppercase;
             letter-spacing: .06em; }
-  #runs { font-size: 12px; width: 100%; border-collapse: collapse; }
-  #runs td, #runs th { padding: 3px 4px; text-align: right; color: var(--text); }
+  #runs { font-size: 12px; width: 100%; border-collapse: collapse;
+          margin-top: 6px; }
+  #runs td, #runs th { padding: 3px 4px; text-align: right; }
   #runs th { color: var(--muted); font-weight: 500; }
   #runs td:first-child, #runs th:first-child { text-align: left; }
 
-  #log { font: 11.5px/1.5 ui-monospace, Menlo, monospace; height: 190px;
+  #amblist { display: flex; flex-direction: column; gap: 6px; }
+  .ambrow { display: flex; align-items: center; gap: 8px; background: #141a25;
+    border-radius: 8px; padding: 6px 9px; font-size: 12.5px; }
+  .ambrow .dotp { width: 9px; height: 9px; border-radius: 50%;
+    background: var(--kw-red); box-shadow: 0 0 6px var(--blue);
+    animation: blink 0.6s infinite alternate; }
+  .ambrow .dotp.off { background: #5b6675; box-shadow: none; animation: none; }
+  @keyframes blink { from { background: var(--kw-red); }
+                     to { background: var(--blue); } }
+  .ambrow b { flex: 1; }
+  .ambrow button { width: auto; padding: 3px 9px; font-size: 11px; }
+
+  #log { font: 11px/1.5 ui-monospace, Menlo, monospace; height: 170px;
          overflow-y: auto; background: #0d1119; border-radius: 8px;
          padding: 8px; }
   #log .t { color: var(--muted); }
-  #log .cam { color: var(--amber); }
-  #log .amb { color: #ff6b6b; }
-  #log .tls { color: #5eead4; }
+  #log .info { color: #aab7cc; }
+  #log .warn { color: var(--amber); }
+  #log .error { color: #ff6b6b; font-weight: 700; }
+  #log .decision { color: var(--purple); font-weight: 600; }
 
-  .legend { font-size: 11.5px; color: var(--muted); display: grid;
+  .legend { font-size: 11px; color: var(--muted); display: grid;
             grid-template-columns: 1fr 1fr; gap: 4px 10px; }
   .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
               margin-right: 5px; vertical-align: -1px; }
@@ -73,13 +95,28 @@
   #mapwrap { position: relative; flex: 1; }
   #status { position: absolute; top: 10px; right: 10px; z-index: 1000;
     background: rgba(13,17,25,.85); border: 1px solid var(--line);
-    border-radius: 8px; padding: 5px 10px; font-size: 12px; }
+    border-radius: 8px; padding: 5px 10px; font-size: 12px; max-width: 340px; }
   #status .dot { display: inline-block; width: 8px; height: 8px;
     border-radius: 50%; background: var(--kw-red); margin-right: 6px; }
   #status.on .dot { background: var(--kw-green); }
+  #clockchip { position: absolute; top: 10px; left: 56px; z-index: 1000;
+    background: rgba(13,17,25,.85); border: 1px solid var(--line);
+    border-radius: 8px; padding: 5px 12px; font-size: 14px; font-weight: 700;
+    font-variant-numeric: tabular-nums; }
+  #clockchip small { color: var(--muted); font-weight: 400; margin-left: 6px; }
   #pickhint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
     z-index: 1000; background: var(--kw-green); color: #fff; font-weight: 600;
     padding: 6px 14px; border-radius: 999px; font-size: 13px; display: none; }
+  #decisions { position: absolute; top: 48px; left: 50%;
+    transform: translateX(-50%); z-index: 1100; display: flex;
+    flex-direction: column; gap: 8px; width: min(560px, 90%); }
+  .decision-card { background: #2a2113; border: 2px solid var(--amber);
+    border-radius: 12px; padding: 10px 14px; box-shadow: 0 4px 24px rgba(0,0,0,.5); }
+  .decision-card h3 { font-size: 13px; color: var(--amber); margin-bottom: 4px; }
+  .decision-card p { font-size: 12px; color: var(--text); margin-bottom: 8px; }
+  .decision-card .row button { background: var(--kw-green);
+    border-color: var(--kw-green); color: #fff; font-size: 12px; padding: 6px; }
+  .decision-card .count { color: var(--muted); font-size: 11px; }
   .leaflet-container { background: #0b0e14; }
 </style>
 </head>
@@ -87,9 +124,16 @@
 <div id="panel">
   <div>
     <h1><span class="flag"></span>Kuwait City — Ambulance Green Wave</h1>
-    <div class="sub">SUMO microsimulation · downtown network from OpenStreetMap ·
-      camera detection → route green-wave signal preemption</div>
+    <div class="sub">SUMO microsimulation · real downtown network (OSM) ·
+      camera detection → Dijkstra corridor → phase-hold preemption</div>
   </div>
+
+  <nav>
+    <a class="on" href="/">Live Map</a>
+    <a href="/navigation">Navigation</a>
+    <a href="/operations">Operations</a>
+    <a href="/protocol">Protocol</a>
+  </nav>
 
   <div class="card stack">
     <h2>Dispatch</h2>
@@ -124,17 +168,22 @@
   <div class="card">
     <h2>Live KPIs</h2>
     <div id="kpis">
-      <div class="kpi"><div class="v" id="k-time">0:00</div><div class="l">sim time</div></div>
+      <div class="kpi"><div class="v" id="k-clock">--:--</div><div class="l">Kuwait clock</div></div>
       <div class="kpi"><div class="v" id="k-veh">0</div><div class="l">vehicles</div></div>
       <div class="kpi"><div class="v" id="k-amb">0</div><div class="l">ambulances</div></div>
-      <div class="kpi"><div class="v" id="k-pre">0</div><div class="l">preempted signals</div></div>
+      <div class="kpi"><div class="v" id="k-pre">0</div><div class="l">purposely enabled</div></div>
     </div>
     <table id="runs"><thead><tr><th>run</th><th>time</th><th>km</th><th>km/h</th></tr></thead>
       <tbody></tbody></table>
   </div>
 
   <div class="card">
-    <h2>Event log</h2>
+    <h2>Active ambulances</h2>
+    <div id="amblist"><span style="color:var(--muted);font-size:12px">none</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Operations feed <a href="/operations" style="float:right;color:var(--kw-green);font-size:10px">full log →</a></h2>
     <div id="log"></div>
   </div>
 
@@ -144,7 +193,7 @@
       <span><i style="background:#22c55e"></i>approach green</span>
       <span><i style="background:#ef4444"></i>approach red</span>
       <span><i style="background:#f0b429"></i>amber transition</span>
-      <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>preempted junction</span>
+      <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>purposely enabled</span>
       <span><i style="background:#9aa7bb"></i>car</span>
       <span><i style="background:#ff2d2d;box-shadow:0 0 6px #3b82f6"></i>ambulance</span>
     </div>
@@ -154,8 +203,10 @@
 <div id="mapwrap">
   <div id="map"></div>
   <canvas id="overlay"></canvas>
+  <div id="clockchip"><span id="clock2">--:--:--</span><small>Kuwait time (sim)</small></div>
   <div id="status"><span class="dot"></span><span id="status-text">connecting…</span></div>
   <div id="pickhint"></div>
+  <div id="decisions"></div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -163,6 +214,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const SPEEDS = [0.5, 1, 2, 4, 8, 16];
+const ROUTE_COLORS = ["#22c55e", "#22d3ee", "#f472b6", "#facc15", "#a78bfa"];
 
 // ---------------------------------------------------------------- map setup
 const map = L.map("map", { zoomControl: true, preferCanvas: true })
@@ -184,8 +236,9 @@ fitCanvas();
 new ResizeObserver(fitCanvas).observe(map.getContainer());
 
 // ------------------------------------------------------------ network layer
-let tlsStatic = [];           // [{id, lat, lon, heads:[[lat,lon]|null,...]}]
+let tlsStatic = [];
 fetch("/api/network").then(r => r.json()).then(net => {
+  if (net.error) return;
   const major = [], minor = [];
   for (const e of net.edges)
     (e.prio >= 9 || e.lanes >= 3 ? major : minor).push(e.pts);
@@ -198,8 +251,6 @@ fetch("/api/network").then(r => r.json()).then(net => {
       html: '<div style="font-size:20px;filter:drop-shadow(0 0 3px #000)">🏥</div>',
       iconSize: [20, 20], iconAnchor: [10, 10] }) })
       .addTo(map).bindTooltip(h.name)
-      // in picking mode a click on the hospital icon should count as a map
-      // click at the hospital's position, not be swallowed by the marker
       .on("click", e => map.fire("click", { latlng: e.latlng }));
     const o = document.createElement("option");
     o.value = "H:" + h.name; o.textContent = h.name;
@@ -210,14 +261,9 @@ fetch("/api/network").then(r => r.json()).then(net => {
     o.value = v; o.textContent = t; sel.appendChild(o);
   }
   if (net.bounds) {
-    // Fit synchronously: an animated invalidateSize/fitBounds pair cancel
-    // each other, and a zero-size viewport (hidden tab, early load) pins the
-    // zoom at maxZoom — so gate on size, apply without animation, verify.
     let verifyTries = 0;
     const tryFit = () => {
       const s = map.getSize();
-      // wait indefinitely for a real viewport: a page loaded in a hidden or
-      // background tab reports size 0 until it is first shown
       if (s.x < 100 || s.y < 100) { setTimeout(tryFit, 300); return; }
       map.invalidateSize(false);
       map.fitBounds(net.bounds, { padding: [20, 20], animate: false });
@@ -231,9 +277,10 @@ fetch("/api/network").then(r => r.json()).then(net => {
 });
 
 // -------------------------------------------------------------- live frames
-let frame = null;                 // latest snapshot from the server
-const carPos = new Map();         // id -> {lon, lat, tLon, tLat}
+let frame = null;
+const carPos = new Map();
 const ambPos = new Map();
+const restoredBadges = new Map();   // tls id -> hide-at wall time
 let lastFollowPan = 0;
 
 let ws = null;
@@ -249,14 +296,15 @@ function connect() {
   ws.onmessage = onFrame;
 }
 connect();
+
 function onFrame(ev) {
   const f = JSON.parse(ev.data);
   syncControls(f);
   if (f.error) { $("status").classList.remove("on"); $("status-text").textContent = f.error; }
-  if (!f.cars) return;             // heartbeat frame (paused / error state only)
+  if (!f.cars) return;              // heartbeat frame
   frame = f;
   const seen = new Set();
-  for (const [id, lon, lat] of frame.cars) {
+  for (const [id, lon, lat] of f.cars) {
     seen.add(id);
     const p = carPos.get(id);
     if (p) { p.tLon = lon; p.tLat = lat; }
@@ -264,25 +312,28 @@ function onFrame(ev) {
   }
   for (const id of carPos.keys()) if (!seen.has(id)) carPos.delete(id);
   const seenA = new Set();
-  for (const a of frame.ambs) {
+  for (const a of f.ambs) {
     seenA.add(a.id);
     const p = ambPos.get(a.id);
-    if (p) { p.tLon = a.lon; p.tLat = a.lat; p.kmh = a.kmh; }
-    else ambPos.set(a.id, { lon: a.lon, lat: a.lat, tLon: a.lon, tLat: a.lat, kmh: a.kmh });
+    if (p) { p.tLon = a.lon; p.tLat = a.lat; p.kmh = a.kmh;
+             p.angle = a.angle; p.lights = a.lights; }
+    else ambPos.set(a.id, { lon: a.lon, lat: a.lat, tLon: a.lon, tLat: a.lat,
+                            kmh: a.kmh, angle: a.angle, lights: a.lights });
   }
   for (const id of ambPos.keys()) if (!seenA.has(id)) ambPos.delete(id);
 
-  updatePanel(frame);
-  if ($("follow").checked && frame.ambs.length && Date.now() - lastFollowPan > 900) {
+  updatePanel(f);
+  updateDecisions(f);
+  if ($("follow").checked && f.ambs.length && Date.now() - lastFollowPan > 900) {
     lastFollowPan = Date.now();
-    const a = frame.ambs[0];
+    const a = f.ambs[0];
     map.panTo([a.lat, a.lon], { animate: true, duration: .8 });
   }
-};
+}
 
 function updatePanel(f) {
-  const m = Math.floor(f.t / 60), s = Math.floor(f.t % 60);
-  $("k-time").textContent = `${m}:${String(s).padStart(2, "0")}`;
+  $("k-clock").textContent = (f.kpi.clock || "--:--").slice(0, 5);
+  $("clock2").textContent = f.kpi.clock || "--:--:--";
   $("k-veh").textContent = f.kpi.vehicles;
   $("k-amb").textContent = f.kpi.ambulances;
   $("k-pre").textContent = f.kpi.preempted_tls;
@@ -290,16 +341,30 @@ function updatePanel(f) {
   tb.innerHTML = f.kpi.runs.map(r =>
     `<tr><td>${r.id}</td><td>${r.duration_s.toFixed(0)} s</td>` +
     `<td>${(r.length_m / 1000).toFixed(1)}</td><td>${r.kmh.toFixed(0)}</td></tr>`).join("");
+
+  // ambulance list with lights toggles
+  const list = $("amblist");
+  if (!f.ambs.length) list.innerHTML =
+    '<span style="color:var(--muted);font-size:12px">none</span>';
+  else list.innerHTML = f.ambs.map(a =>
+    `<div class="ambrow"><span class="dotp${a.lights ? "" : " off"}"></span>` +
+    `<b>${a.id}</b><span>${a.kmh} km/h</span>` +
+    `<button data-amb="${a.id}" data-on="${a.lights ? 0 : 1}">` +
+    `${a.lights ? "Lights OFF" : "Lights ON"}</button></div>`).join("");
+  for (const b of list.querySelectorAll("button"))
+    b.onclick = () => send({ cmd: "lights", amb: b.dataset.amb,
+                             on: b.dataset.on === "1", who: "operator" });
+
   for (const ev of f.events) {
+    if (ev.type === "restore") {
+      const m = ev.msg.match(/^Junction (\S+) BACK TO NORMAL/);
+      if (m) restoredBadges.set(m[1], Date.now() + 6000);
+    }
     const div = document.createElement("div");
     const mm = Math.floor(ev.t / 60), ss = Math.floor(ev.t % 60);
-    let cls = "";
-    if (ev.msg.startsWith("Camera") || ev.msg.startsWith("Control")) cls = "cam";
-    else if (ev.msg.includes("AMB")) cls = "amb";
-    else if (ev.msg.startsWith("Junction")) cls = "tls";
     div.innerHTML = `<span class="t">${mm}:${String(ss).padStart(2, "0")}</span> ` +
-      `<span class="${cls}"></span>`;
-    div.lastChild.textContent = ev.msg;
+      `<span class="${ev.sev}"></span>`;
+    div.lastChild.textContent = (ev.case ? `[${ev.case}] ` : "") + ev.msg;
     const log = $("log");
     log.appendChild(div);
     while (log.childNodes.length > 250) log.removeChild(log.firstChild);
@@ -323,45 +388,210 @@ function syncControls(f) {
   }
 }
 
+// operator decision banner
+function updateDecisions(f) {
+  const box = $("decisions");
+  const pending = f.pending || [];
+  box.innerHTML = pending.map(p => {
+    const left = Math.max(0, p.deadline - f.t).toFixed(0);
+    const btns = p.candidates.map(c =>
+      `<button data-tls="${p.tls}" data-amb="${c.amb}">Grant ${c.amb} (${c.dist} m)</button>`
+    ).join("");
+    return `<div class="decision-card"><h3>⚠ PRIORITY CONFLICT — ${p.case}</h3>` +
+      `<p>Two corridors need junction <b>${p.tls}</b> at the same time. ` +
+      `Junction is held on its normal programme until decided.</p>` +
+      `<div class="row">${btns}</div>` +
+      `<div class="count">Supervisor decision window: ${left} s — then policy grants the nearest.</div></div>`;
+  }).join("");
+  for (const b of box.querySelectorAll("button"))
+    b.onclick = () => send({ cmd: "decide", tls: b.dataset.tls,
+                             amb: b.dataset.amb, who: "supervisor" });
+}
+
 // ------------------------------------------------------------ canvas render
-const COLORS = { G: "#22c55e", g: "#22c55e", y: "#f0b429", Y: "#f0b429",
-                 r: "#ef4444", R: "#ef4444", u: "#ef4444", o: "#6b7280",
-                 O: "#6b7280", s: "#6b7280" };
+const SIG = { G: "#22c55e", g: "#22c55e", y: "#f0b429", Y: "#f0b429",
+              r: "#ef4444", R: "#ef4444", u: "#ef4444", o: "#6b7280",
+              O: "#6b7280", s: "#6b7280" };
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
+// pseudo-3D traffic light: dark housing on a pole shadow, three lamps
+function drawSignalHousing(cx, cy, mode, aggState, label, now) {
+  const w = 12, h = 26;
+  ctx.save();
+  ctx.translate(cx, cy);
+  // ground shadow gives the 3D standing feel
+  ctx.beginPath();
+  ctx.ellipse(0, h / 2 + 4, 9, 3.2, 0, 0, 7);
+  ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fill();
+  // housing with a lit edge
+  const grad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+  grad.addColorStop(0, "#3a4454"); grad.addColorStop(.5, "#181d27");
+  grad.addColorStop(1, "#0c0f15");
+  roundRect(ctx, -w / 2, -h / 2, w, h, 4);
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.strokeStyle = "#4a586d"; ctx.lineWidth = 1; ctx.stroke();
+  // lamps
+  const lamps = [["#ef4444", "#3a1414"], ["#f0b429", "#3a2f10"], ["#22c55e", "#123a20"]];
+  const lit = mode === "preempted" || mode === "clearing" ? 2
+            : mode === "transition" || mode === "restoring" ? 1
+            : /[Gg]/.test(aggState) ? 2 : 0;
+  for (let i = 0; i < 3; i++) {
+    const ly = -h / 2 + 6 + i * 7.2;
+    ctx.beginPath(); ctx.arc(0, ly, 2.8, 0, 7);
+    if (i === lit) {
+      ctx.fillStyle = lamps[i][0];
+      ctx.shadowColor = lamps[i][0]; ctx.shadowBlur = 8;
+      ctx.fill(); ctx.shadowBlur = 0;
+    } else { ctx.fillStyle = lamps[i][1]; ctx.fill(); }
+  }
+  ctx.restore();
+  if (mode !== "normal") {
+    const pulse = 15 + 4 * Math.sin(now / 170);
+    ctx.beginPath(); ctx.arc(cx, cy, pulse, 0, 7);
+    ctx.strokeStyle = mode === "preempted" || mode === "clearing"
+      ? "rgba(34,197,94,.9)" : "rgba(240,180,41,.9)";
+    ctx.lineWidth = 2.5; ctx.stroke();
+  }
+  if (label) {
+    ctx.font = "700 10.5px -apple-system, sans-serif";
+    ctx.strokeStyle = "rgba(0,0,0,.8)"; ctx.lineWidth = 3;
+    ctx.fillStyle = label.color;
+    ctx.strokeText(label.text, cx + 14, cy - 8);
+    ctx.fillText(label.text, cx + 14, cy - 8);
+  }
+}
+
+// pseudo-3D ambulance: shadowed van body, red stripe, flashing light bar
+function drawAmbulance(cx, cy, angleDeg, blue, lightsOn, label) {
+  const rot = (angleDeg - 90) * Math.PI / 180;
+  ctx.save();
+  ctx.translate(cx, cy);
+  // ground shadow
+  ctx.save();
+  ctx.rotate(rot);
+  ctx.beginPath(); ctx.ellipse(1.5, 2.5, 13, 8, 0, 0, 7);
+  ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fill();
+  ctx.restore();
+  ctx.rotate(rot);
+  // body
+  const grad = ctx.createLinearGradient(0, -7, 0, 7);
+  grad.addColorStop(0, "#ffffff"); grad.addColorStop(.55, "#e8ecf2");
+  grad.addColorStop(1, "#c3cbd8");
+  roundRect(ctx, -11, -6.5, 22, 13, 3.5);
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.strokeStyle = "#7d8aa0"; ctx.lineWidth = 1; ctx.stroke();
+  // red stripe + star
+  ctx.fillStyle = "#ce1126";
+  ctx.fillRect(-11, -1.4, 22, 2.8);
+  // windshield (front = +x)
+  roundRect(ctx, 5.5, -5, 4.4, 10, 1.5);
+  ctx.fillStyle = "#233043"; ctx.fill();
+  // light bar
+  if (lightsOn) {
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = blue ? "#3b82f6" : "#ff2d2d";
+    ctx.fillStyle = blue ? "#3b82f6" : "#ff2d2d";
+    ctx.fillRect(blue ? -3.5 : 0.5, -2.2, 3, 4.4);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = blue ? "#7f1d1d" : "#1e3a8a";
+    ctx.fillRect(blue ? 0.5 : -3.5, -2.2, 3, 4.4);
+  } else {
+    ctx.fillStyle = "#5b6675";
+    ctx.fillRect(-3.5, -2.2, 7, 4.4);
+  }
+  ctx.restore();
+  if (label) {
+    ctx.font = "600 11px ui-monospace, monospace";
+    ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.lineWidth = 3;
+    ctx.fillStyle = "#fff";
+    ctx.strokeText(label, cx + 14, cy - 10);
+    ctx.fillText(label, cx + 14, cy - 10);
+  }
+}
 
 function render(now) {
   requestAnimationFrame(render);
-  const vw = canvas.clientWidth, vh = canvas.clientHeight;  // CSS pixels
+  const vw = canvas.clientWidth, vh = canvas.clientHeight;
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.clearRect(0, 0, vw, vh);
   if (!frame) return;
   const zoom = map.getZoom();
-  const k = 0.18;   // smoothing factor toward the latest server position
+  const k = 0.18;
 
-  // signal heads: one dot per controlled approach, colored by its state char
+  // planned routes (Dijkstra corridors), marching toward the destination
+  let ci = 0;
+  for (const [amb, r] of Object.entries(frame.routes || {})) {
+    const color = ROUTE_COLORS[ci++ % ROUTE_COLORS.length];
+    ctx.beginPath();
+    let first = true;
+    for (const [lat, lon] of r.pts) {
+      const p = map.latLngToContainerPoint([lat, lon]);
+      if (first) { ctx.moveTo(p.x, p.y); first = false; }
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = r.lights ? 0.85 : 0.3;
+    ctx.lineWidth = 3.5;
+    ctx.setLineDash([10, 8]);
+    ctx.lineDashOffset = -(now / 40) % 18;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    const last = r.pts[r.pts.length - 1];
+    if (last) {
+      const p = map.latLngToContainerPoint(last);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 7);
+      ctx.fillStyle = color; ctx.fill();
+      ctx.fillStyle = "#0b0e14";
+      ctx.font = "700 8px sans-serif";
+      ctx.fillText("×", p.x - 2.5, p.y + 3);
+    }
+  }
+
+  // per-approach signal heads
   if (zoom >= 13.5) {
     const rHead = zoom >= 16 ? 3.5 : 2.5;
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st) continue;
-      if (st.m !== "normal") {            // preemption halo on the junction
-        const c = map.latLngToContainerPoint([t.lat, t.lon]);
-        const pulse = 10 + 4 * Math.sin(now / 180);
-        ctx.beginPath();
-        ctx.arc(c.x, c.y, pulse, 0, 7);
-        ctx.strokeStyle = st.m === "preempted" || st.m === "clearing"
-          ? "rgba(34,197,94,.85)" : "rgba(240,180,41,.85)";
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-      }
       for (let i = 0; i < t.heads.length; i++) {
         const h = t.heads[i];
         if (!h) continue;
         const p = map.latLngToContainerPoint(h);
         ctx.beginPath();
         ctx.arc(p.x, p.y, rHead, 0, 7);
-        ctx.fillStyle = COLORS[st.s[i]] || "#6b7280";
+        ctx.fillStyle = SIG[st.s[i]] || "#6b7280";
         ctx.fill();
       }
+    }
+  }
+
+  // 3D signal housings + purposely-enabled labels
+  if (zoom >= 14.5) {
+    for (const t of tlsStatic) {
+      const st = frame.tls[t.id];
+      if (!st) continue;
+      const c = map.latLngToContainerPoint([t.lat, t.lon]);
+      if (c.x < -30 || c.y < -30 || c.x > vw + 30 || c.y > vh + 30) continue;
+      let label = null;
+      if (st.m === "preempted" || st.m === "clearing")
+        label = { text: `PURPOSELY ENABLED · ${st.case} · ${st.amb}`, color: "#22c55e" };
+      else if (st.m === "transition")
+        label = { text: `ENABLING · ${st.case}`, color: "#f0b429" };
+      else if (st.m === "restoring")
+        label = { text: `RESTORING · ${st.case}`, color: "#f0b429" };
+      else if (restoredBadges.get(t.id) > Date.now())
+        label = { text: "BACK TO NORMAL ✓", color: "#8be9b6" };
+      drawSignalHousing(c.x, c.y, st.m, st.s, label, now);
     }
   }
 
@@ -378,36 +608,29 @@ function render(now) {
     ctx.fill();
   }
 
-  // ambulances: pulsing red/blue emergency lights
+  // ambulances
   const blue = Math.floor(now / 260) % 2 === 0;
   for (const [id, p] of ambPos) {
     p.lon += (p.tLon - p.lon) * k;
     p.lat += (p.tLat - p.lat) * k;
     const c = map.latLngToContainerPoint([p.lat, p.lon]);
-    const grad = ctx.createRadialGradient(c.x, c.y, 2, c.x, c.y, 16);
-    grad.addColorStop(0, blue ? "rgba(59,130,246,.9)" : "rgba(239,68,68,.9)");
-    grad.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.beginPath(); ctx.arc(c.x, c.y, 16, 0, 7);
-    ctx.fillStyle = grad; ctx.fill();
-    ctx.beginPath(); ctx.arc(c.x, c.y, 5.5, 0, 7);
-    ctx.fillStyle = "#fff"; ctx.fill();
-    ctx.beginPath(); ctx.arc(c.x, c.y, 4, 0, 7);
-    ctx.fillStyle = blue ? "#3b82f6" : "#ef4444"; ctx.fill();
-    if (zoom >= 14) {
-      ctx.font = "bold 11px -apple-system, sans-serif";
-      ctx.fillStyle = "#fff";
-      ctx.strokeStyle = "rgba(0,0,0,.7)"; ctx.lineWidth = 3;
-      ctx.strokeText(`${id} · ${p.kmh} km/h`, c.x + 10, c.y - 8);
-      ctx.fillText(`${id} · ${p.kmh} km/h`, c.x + 10, c.y - 8);
+    if (p.lights) {
+      const grad = ctx.createRadialGradient(c.x, c.y, 3, c.x, c.y, 22);
+      grad.addColorStop(0, blue ? "rgba(59,130,246,.55)" : "rgba(255,45,45,.55)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.beginPath(); ctx.arc(c.x, c.y, 22, 0, 7);
+      ctx.fillStyle = grad; ctx.fill();
     }
+    const label = zoom >= 14 ? `${id} · ${p.kmh} km/h${p.lights ? "" : " · lights OFF"}` : null;
+    drawAmbulance(c.x, c.y, p.angle || 0, blue, p.lights, label);
   }
 }
 requestAnimationFrame(render);
 
 // ----------------------------------------------------------------- controls
-const send = obj => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); };
+const send = obj => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); };
 
-let picking = null;   // null | {origin: value, stage: "origin"|"dest", from?}
+let picking = null;
 function setPickHint(text) {
   const el = $("pickhint");
   if (text) { el.textContent = text; el.style.display = "block"; }
@@ -416,7 +639,7 @@ function setPickHint(text) {
 }
 
 function beginDispatch(randomDest) {
-  picking = null;           // cancel any stale picking session
+  picking = null;
   setPickHint(null);
   const val = $("origin").value;
   if (randomDest) {

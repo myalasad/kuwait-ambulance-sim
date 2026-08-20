@@ -1,0 +1,90 @@
+"""Structured operations log and case tracking.
+
+Every consequential thing that happens in the system — a camera detection, a
+junction being purposely enabled, an arbitration between two ambulances, an
+error, an ambulance leaving the map — is recorded as a typed *operation*, and
+grouped into *cases* with an open/close lifecycle:
+
+  P-nnn  preemption case: one junction purposely enabled for one corridor,
+         closed when the junction is back on its normal programme
+  A-nnn  ambulance case: dispatch to arrival (or teleport/removal), so an
+         ambulance can never "just disappear" — the close reason says why
+  D-nnn  decision case: a conflict the controller referred to the operator
+
+Operations stream to the dashboards in real time (WS frames + /api/operations)
+and persist to data/operations.jsonl for after-action review.
+"""
+import json
+import os
+import time
+from collections import deque
+
+SEVERITIES = ("info", "warn", "error", "decision")
+
+
+class OperationsLog:
+    RING = 3000
+
+    def __init__(self, root):
+        self.seq = 0
+        self.ring = deque(maxlen=self.RING)
+        self.path = os.path.join(root, "data", "operations.jsonl")
+        self._fh = open(self.path, "a", encoding="utf-8")
+        self.cases = {}
+        self._case_counters = {"P": 0, "A": 0, "D": 0}
+
+    # ---------------------------------------------------------------- events
+
+    def emit(self, t, ev_type, msg, sev="info", actor=None, case=None,
+             data=None):
+        self.seq += 1
+        event = {
+            "seq": self.seq,
+            "t": round(t, 1),
+            "wall": round(time.time(), 1),
+            "type": ev_type,
+            "sev": sev if sev in SEVERITIES else "info",
+            "actor": actor,
+            "case": case,
+            "msg": msg,
+        }
+        if data:
+            event["data"] = data
+        self.ring.append(event)
+        if case and case in self.cases:
+            self.cases[case]["events"].append(self.seq)
+        self._fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        self._fh.flush()
+        return event
+
+    def since(self, seq):
+        return [e for e in self.ring if e["seq"] > seq]
+
+    # ----------------------------------------------------------------- cases
+
+    def open_case(self, kind, subject, t, summary):
+        self._case_counters[kind] += 1
+        case_id = f"{kind}-{self._case_counters[kind]:03d}"
+        self.cases[case_id] = {
+            "id": case_id, "kind": kind, "subject": subject,
+            "opened_t": round(t, 1), "closed_t": None,
+            "status": "open", "summary": summary, "outcome": None,
+            "events": [],
+        }
+        return case_id
+
+    def close_case(self, case_id, t, outcome, status="closed"):
+        c = self.cases.get(case_id)
+        if c is None or c["status"] != "open":
+            return
+        c["closed_t"] = round(t, 1)
+        c["status"] = status
+        c["outcome"] = outcome
+
+    def case_list(self, limit=200):
+        cases = sorted(self.cases.values(),
+                       key=lambda c: c["opened_t"], reverse=True)
+        return cases[:limit]
+
+    def open_cases(self):
+        return [c for c in self.cases.values() if c["status"] == "open"]

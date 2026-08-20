@@ -39,6 +39,7 @@ def run(minutes, seed, preemption, record_frames=False, frame_every_s=1.0):
     pending = list(SCENARIO)
     frames = []
     network = sim.network_payload() if record_frames else None
+    printed_seq = 0
     try:
         for step_no in range(total_steps):
             sim.step()
@@ -51,9 +52,9 @@ def run(minutes, seed, preemption, record_frames=False, frame_every_s=1.0):
             if record_frames and step_no % frame_every == 0:
                 frames.append(sim.snapshot())
             elif not record_frames:
-                for ev in sim.events:
+                for ev in sim.ops.since(printed_seq):
                     print(f"  [{ev['t']:7.1f}s] {ev['msg']}")
-                sim.events = []
+                    printed_seq = ev["seq"]
         completed = list(sim.metrics.completed)
     finally:
         sim.close()

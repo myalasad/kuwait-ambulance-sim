@@ -104,6 +104,14 @@ class Hub:
             self.sim.dispatch(origin, dest)
         elif kind == "preemption":
             self.sim.set_preemption(bool(cmd.get("on", True)))
+        elif kind == "decide":
+            self.sim.controller.decide(cmd.get("tls"), cmd.get("amb"),
+                                       who=cmd.get("who", "operator"))
+        elif kind == "lights":
+            self.sim.dispatcher.set_lights(cmd.get("amb"),
+                                           bool(cmd.get("on", True)),
+                                           self.sim.time,
+                                           who=cmd.get("who", "operator"))
         elif kind == "speed":
             self.speed = min(16.0, max(0.25, float(cmd.get("value", 1.0))))
         elif kind == "pause":
@@ -150,10 +158,66 @@ async def _startup():
         if not t.cancelled() and t.exception() else None)
 
 
+def _page(name):
+    return FileResponse(os.path.join(STATIC, name),
+                        headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(STATIC, "index.html"),
-                        headers={"Cache-Control": "no-cache"})
+    return _page("index.html")
+
+
+@app.get("/operations")
+async def operations_page():
+    return _page("operations.html")
+
+
+@app.get("/navigation")
+async def navigation_page():
+    return _page("navigation.html")
+
+
+@app.get("/protocol")
+async def protocol_page():
+    return _page("protocol.html")
+
+
+@app.get("/api/operations")
+async def api_operations(since: int = 0):
+    if hub.sim is None or hub.sim.ops is None:
+        return JSONResponse({"events": [], "seq": 0})
+    events = hub.sim.ops.since(since)
+    seq = hub.sim.ops.seq
+    return JSONResponse({"events": events, "seq": seq,
+                         "pending": hub.sim.controller.pending_decisions(),
+                         "clock": hub.sim.clock()})
+
+
+@app.get("/api/cases")
+async def api_cases():
+    if hub.sim is None or hub.sim.ops is None:
+        return JSONResponse({"cases": []})
+    return JSONResponse({"cases": hub.sim.ops.case_list()})
+
+
+@app.get("/api/navigation")
+async def api_navigation():
+    if hub.sim is None:
+        return JSONResponse({"ambulances": []})
+    return JSONResponse({
+        "ambulances": hub.sim.dispatcher.navigation(),
+        "tls_status": hub.sim.controller.status(),
+        "clock": hub.sim.clock(),
+    })
+
+
+@app.post("/api/command")
+async def api_command(cmd: dict):
+    """Same command surface as the WebSocket, for the auxiliary pages
+    (operator decisions, lights toggles)."""
+    await hub.commands.put(cmd)
+    return JSONResponse({"queued": True})
 
 
 @app.get("/api/network")
