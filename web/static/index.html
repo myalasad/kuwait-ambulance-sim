@@ -144,8 +144,8 @@
       <label for="origin">Origin</label>
       <select id="origin"></select>
     </div>
-    <button class="primary" id="btn-pick">🚑 Dispatch — pick destination on map</button>
-    <button id="btn-random">Dispatch to random destination</button>
+    <button class="primary" id="btn-pick">🚑 Dispatch — pick incident scene on map</button>
+    <button id="btn-random">Dispatch to random incident</button>
   </div>
 
   <div class="card stack">
@@ -370,7 +370,7 @@ function updatePanel(f) {
     '<span style="color:var(--muted);font-size:12px">none</span>';
   else list.innerHTML = f.ambs.map(a =>
     `<div class="ambrow"><span class="dotp${a.lights ? "" : " off"}"></span>` +
-    `<b>${a.id}</b><span>${a.kmh} km/h</span>` +
+    `<b>${a.id}</b><span>${a.kmh} km/h · ${({to_scene:"→ scene",loading:"loading",to_hospital:"→ hospital"})[a.mission]||""}</span>` +
     `<button data-amb="${a.id}" data-on="${a.lights ? 0 : 1}">` +
     `${a.lights ? "Lights OFF" : "Lights ON"}</button></div>`).join("");
   for (const b of list.querySelectorAll("button"))
@@ -681,7 +681,7 @@ function beginDispatch(randomDest) {
     return;
   }
   if (val === "pick") { picking = { stage: "origin", randomDest: false }; setPickHint("Click the ambulance ORIGIN"); }
-  else { picking = { stage: "dest", origin: originSpec(val) }; setPickHint("Click the DESTINATION"); }
+  else { picking = { stage: "dest", origin: originSpec(val) }; setPickHint("Click the INCIDENT SCENE"); }
 }
 const originSpec = v => v === "random" ? null : v.startsWith("H:") ? v.slice(2) : null;
 
@@ -690,7 +690,7 @@ map.on("click", e => {
   const ll = [e.latlng.lat, e.latlng.lng];
   if (picking.stage === "origin") {
     if (picking.randomDest) { send({ cmd: "dispatch", origin: ll, dest: null }); picking = null; setPickHint(null); }
-    else { picking = { stage: "dest", origin: ll }; setPickHint("Click the DESTINATION"); }
+    else { picking = { stage: "dest", origin: ll }; setPickHint("Click the INCIDENT SCENE"); }
   } else {
     send({ cmd: "dispatch", origin: picking.origin, dest: ll });
     picking = null; setPickHint(null);

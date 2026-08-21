@@ -218,6 +218,18 @@
     node-by-node analysis is on the
     <a href="/navigation" style="color:#4ade80">Navigation</a> page.</p>
   </div>
+  <div class="scenario">
+    <h3>Automatic reroute to the nearest hospital</h3>
+    <p>On reaching the incident scene the ambulance stops for
+    <code>40 s</code> of patient loading — during which its corridor is
+    <b>paused</b> so cross streets are not held for a stationary vehicle —
+    then it is automatically rerouted to the <b>nearest hospital by Dijkstra
+    travel time</b> (not straight-line distance: one-way streets and current
+    congestion decide). The signal corridor follows the new route
+    immediately, and the whole second leg is logged on the same A-case.
+    Amiri Hospital is inside the modelled area; Al-Sabah and Dar Al Shifa
+    are represented by in-map anchor points on the corridors toward them.</p>
+  </div>
 
   <h2><span class="no">7</span>Speed-limit exemption — no fines</h2>
   <div class="scenario">

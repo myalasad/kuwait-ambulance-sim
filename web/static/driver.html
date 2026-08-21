@@ -393,8 +393,10 @@ function tick(now) {
     const here = route.rows[best];
     const next = route.rows[Math.min(best + 1, route.rows.length - 1)];
     $("i-street").textContent = next.street;
+    const mtxt = ({ to_scene: "TO SCENE", loading: "LOADING PATIENT",
+      to_hospital: `TO ${(route.hospital || "HOSPITAL").toUpperCase()}` })[route.mission] || "";
     $("i-dist").textContent =
-      `${Math.max(0, route.length_m - here.dist_m).toFixed(0)} m to destination · next:`;
+      `${mtxt} · ${Math.max(0, route.length_m - here.dist_m).toFixed(0)} m remaining · next:`;
     const remM = Math.max(0, route.length_m - here.dist_m);
     $("eta-d").textContent = (remM / 1000).toFixed(1) + " km";
     const remS = Math.max(0, route.eta_s - here.eta_s);

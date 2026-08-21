@@ -59,6 +59,11 @@ class SimConfig:
     route_live_weights: bool = True      # Dijkstra uses live travel times;
     #                                      the comparison harness sets False
     #                                      so both runs route identically
+    reroute_to_hospital: bool = True     # on reaching the incident scene the
+    #                                      ambulance auto-reroutes to the
+    #                                      nearest hospital by travel time
+    patient_load_s: float = 40.0         # loading stop at the scene; the
+    #                                      corridor is paused while loading
 
     # --- vehicles ---
     ambulance_type: str = "ambulance"
@@ -70,11 +75,13 @@ class SimConfig:
     ambulance_max_kmh: float = 140.0     # absolute cap regardless of road
 
 
-# Dispatch origins inside the simulated area (lat, lon).  Amiri Hospital is the
-# real MoH hospital on Arabian Gulf Street; the others are handy staging points
-# at the western and eastern edges of the downtown network.
+# Hospitals (lat, lon): dispatch origins AND the candidate destinations for
+# the automatic return leg.  Amiri Hospital is the real MoH hospital on
+# Arabian Gulf Street inside the modelled cutout; Al-Sabah and Dar Al Shifa
+# lie outside it, so they are represented by in-map anchor points on the
+# corridors leading toward them (stated plainly: anchors, not the buildings).
 HOSPITALS = {
     "Amiri Hospital": (29.3857, 47.9931),
-    "West edge (Shuwaikh side)": (29.3630, 47.9560),
-    "East edge (Sharq side)": (29.3745, 48.0025),
+    "Al-Sabah Hospital (west anchor)": (29.3630, 47.9560),
+    "Dar Al Shifa Hospital (east anchor)": (29.3745, 48.0025),
 }

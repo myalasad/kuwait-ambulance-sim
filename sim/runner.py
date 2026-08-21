@@ -89,6 +89,8 @@ class Simulation:
         if active:
             self.dispatcher.check_vanished(set(traci.vehicle.getIDList()),
                                            self.time)
+            if self.cfg.reroute_to_hospital:
+                self.dispatcher.check_scene_reached(self.time)
             self._attribute_delay(active)
         self.controller.update(
             self.dispatcher.active_ambulances(lights_only=True), self.time)
@@ -99,8 +101,8 @@ class Simulation:
         arrival-time comparison."""
         for amb_id in active:
             rec = self.dispatcher.info.get(amb_id)
-            if rec is None:
-                continue
+            if rec is None or rec.get("mission") == "loading":
+                continue     # the loading stop is neither traffic nor signal
             try:
                 speed = traci.vehicle.getSpeed(amb_id)
                 if speed < 0.5:
@@ -146,6 +148,7 @@ class Simulation:
                     "limit": limit,
                     "lights": rec.get("lights", True),
                     "case": rec.get("case"),
+                    "mission": rec.get("mission", "to_scene"),
                 })
             else:
                 cars.append([veh_id, round(lon, 6), round(lat, 6), angle])

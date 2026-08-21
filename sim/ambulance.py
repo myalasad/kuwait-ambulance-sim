@@ -113,6 +113,9 @@ class Dispatcher:
             "per_signal": per_signal,
             "signal_wait_s": 0.0,     # measured: stopped at a red signal
             "traffic_wait_s": 0.0,    # measured: stopped/crawling in traffic
+            "mission": "to_scene",    # to_scene -> loading -> to_hospital
+            "hospital": None,
+            "loading_started": False,
         }
         self.ops.emit(now, "dispatch",
                       f"{amb_id} dispatched ({from_desc} to {to_desc}): "
@@ -184,6 +187,123 @@ class Dispatcher:
         if not edges:
             raise ValueError(f"No road near {kind} ({lat:.4f}, {lon:.4f})")
         return edges, f"({lat:.4f}, {lon:.4f})"
+
+    # ------------------------------------------------ scene -> hospital leg
+
+    def check_scene_reached(self, now):
+        """Drive the mission state machine: when an ambulance reaches the
+        incident scene it is rerouted to the NEAREST hospital by Dijkstra
+        travel time, after a patient-loading stop during which the corridor
+        is paused."""
+        for amb_id, rec in self.info.items():
+            if rec["departed"] is None or rec["arrived"] is not None:
+                continue
+            mission = rec.get("mission")
+            if mission == "to_scene":
+                try:
+                    idx = traci.vehicle.getRouteIndex(amb_id)
+                except traci.TraCIException:
+                    continue
+                if 0 <= idx >= len(rec["route_edges"]) - 2:
+                    try:
+                        self._begin_return_leg(amb_id, rec, idx, now)
+                    except traci.TraCIException as exc:
+                        rec["mission"] = "to_hospital"
+                        self.ops.emit(now, "error",
+                                      f"{amb_id} hospital reroute failed "
+                                      f"({exc}) — continuing to scene only",
+                                      "error", actor=amb_id, case=rec["case"])
+            elif mission == "loading":
+                try:
+                    stopped = traci.vehicle.isStopped(amb_id)
+                except traci.TraCIException:
+                    continue
+                if stopped:
+                    rec["loading_started"] = True
+                elif rec.get("loading_started"):
+                    rec["mission"] = "to_hospital"
+                    self.ops.emit(now, "reroute",
+                                  f"{amb_id} patient aboard — hot return to "
+                                  f"{rec['hospital']}, lights ON, corridor "
+                                  f"resumes along the new route", "warn",
+                                  actor=amb_id, case=rec["case"])
+
+    def _begin_return_leg(self, amb_id, rec, idx, now):
+        scene_edge = rec["route_edges"][-1]
+        # nearest hospital by actual routed travel time (one-ways respected)
+        best = None
+        for name, (lat, lon) in HOSPITALS.items():
+            for cand in self.nearest_edges(lat, lon, k=3):
+                if cand.getID() == scene_edge:
+                    break                      # scene is at this hospital
+                leg = self.router.route(scene_edge, cand.getID(),
+                                        live=self.cfg.route_live_weights)
+                if leg and len(leg) >= 2:
+                    rows = self.router.nodal_analysis(
+                        leg, live=self.cfg.route_live_weights)
+                    if best is None or rows[-1]["eta_s"] < best[3]:
+                        best = (name, leg, rows, rows[-1]["eta_s"])
+                    break
+        if best is None:
+            rec["mission"] = "to_hospital"
+            self.ops.emit(now, "error",
+                          f"{amb_id}: no reachable hospital from the scene — "
+                          f"mission ends at the scene", "error",
+                          actor=amb_id, case=rec["case"])
+            return
+        name, leg, rows, eta2 = best
+
+        cur = traci.vehicle.getRoadID(amb_id)
+        if cur.startswith(":"):
+            cur = rec["route_edges"][idx]
+        new_route = leg if cur == leg[0] else [cur] + leg
+        traci.vehicle.setRoute(amb_id, new_route)
+
+        # patient-loading stop at the scene
+        stopped = False
+        try:
+            length = self.net.getEdge(scene_edge).getLength()
+            pos = max(2.0, length - 3.0)
+            if cur == scene_edge:
+                lane_pos = traci.vehicle.getLanePosition(amb_id)
+                pos = min(length - 1.0, max(pos, lane_pos + 12.0))
+                if pos <= lane_pos + 3.0:
+                    raise traci.TraCIException("already past the stop point")
+            traci.vehicle.setStop(amb_id, scene_edge, pos=pos, laneIndex=0,
+                                  duration=self.cfg.patient_load_s)
+            stopped = True
+        except traci.TraCIException:
+            pass
+
+        exp2, per2 = self._expected_signal_wait(rows)
+        ff2 = self._free_flow_exempt(new_route)
+        load = self.cfg.patient_load_s if stopped else 0.0
+        rec.update({
+            "mission": "loading" if stopped else "to_hospital",
+            "loading_started": False,
+            "hospital": name,
+            "route_edges": new_route,
+            "nav_rows": rows,
+            "geometry": self.router.route_geometry(new_route),
+            "planned_length": rec["planned_length"] + rows[-1]["dist_m"],
+            "eta_s": rec["eta_s"] + eta2 + load,
+            "exp_signal_wait_s": round(rec["exp_signal_wait_s"] + exp2, 1),
+            "free_flow_s": round(rec["free_flow_s"] + ff2 + load, 1),
+            "signals_on_route": rec["signals_on_route"]
+                                + sum(1 for r in rows if r["signal"]),
+            "per_signal": rec["per_signal"] + per2,
+            "desc": rec["desc"] + f" -> {name}",
+        })
+        loading_txt = (f"loading patient ({load:.0f} s, corridor paused); "
+                       if stopped else "")
+        self.ops.emit(now, "reroute",
+                      f"{amb_id} reached the incident scene — {loading_txt}"
+                      f"REROUTED to the nearest hospital by travel time: "
+                      f"{name} (Dijkstra, {rows[-1]['dist_m'] / 1000:.1f} km, "
+                      f"ETA {eta2:.0f} s, "
+                      f"{sum(1 for r in rows if r['signal'])} signals) — "
+                      f"the signal corridor follows the new route", "warn",
+                      actor=amb_id, case=rec["case"])
 
     # ---------------------------------------------------------------- lights
 
@@ -264,8 +384,9 @@ class Dispatcher:
                           f"{ff:.0f} s / {ff + exp:.0f} s. Highest-weight "
                           f"variable: the signal timer", "info",
                           actor=veh_id, case=rec["case"])
+            where = rec.get("hospital") or "its destination"
             self.ops.emit(now, "arrival",
-                          f"{veh_id} ARRIVED at its destination and was "
+                          f"{veh_id} ARRIVED at {where} and was "
                           f"removed from the map (run complete): "
                           f"{duration:.0f} s for "
                           f"{rec['planned_length'] / 1000:.1f} km (avg "
@@ -294,9 +415,12 @@ class Dispatcher:
     # -------------------------------------------------------------- queries
 
     def active_ambulances(self, lights_only=True):
+        """lights_only=True yields the corridor consumers: lights on and not
+        paused at the scene loading a patient."""
         return [amb_id for amb_id, rec in self.info.items()
                 if rec["departed"] is not None and rec["arrived"] is None
-                and (rec["lights"] or not lights_only)]
+                and (not lights_only
+                     or (rec["lights"] and rec.get("mission") != "loading"))]
 
     def navigation(self):
         """Payload for the navigation page and route overlays."""
@@ -308,6 +432,8 @@ class Dispatcher:
                 "case": rec["case"],
                 "lights": rec["lights"],
                 "active": rec["departed"] is not None and rec["arrived"] is None,
+                "mission": rec.get("mission", "to_scene"),
+                "hospital": rec.get("hospital"),
                 "algorithm": rec["algorithm"],
                 "length_m": rec["planned_length"],
                 "eta_s": rec["eta_s"],
