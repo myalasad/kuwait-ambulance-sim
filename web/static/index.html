@@ -46,6 +46,9 @@
   button.primary { background: var(--kw-green); border-color: var(--kw-green); }
   button.primary:hover { filter: brightness(1.1); }
   .row { display: flex; gap: 8px; }
+  #levels button.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
+  #profbar i { flex: 1; background: #2a3547; border-radius: 2px; align-self: flex-end; }
+  #profbar i.now { background: var(--kw-green); }
   .row > * { flex: 1; }
   .stack { display: flex; flex-direction: column; gap: 8px; }
   .switch { display: flex; align-items: center; justify-content: space-between;
@@ -181,10 +184,26 @@
       <select id="model"></select>
     </div>
     <div>
+      <label for="daytype">Day</label>
+      <select id="daytype">
+        <option value="weekday">Weekday (Sun–Thu)</option>
+        <option value="weekend">Weekend (Fri–Sat)</option>
+      </select>
+    </div>
+    <div>
+      <label>Traffic level</label>
+      <div class="row" id="levels">
+        <button data-l="easy">Easy</button>
+        <button data-l="medium" class="on">Medium</button>
+        <button data-l="extreme">Extreme</button>
+      </div>
+    </div>
+    <div>
       <label>Kuwait clock start: <span id="hourval">07:00</span>
-        <span style="float:right;color:var(--muted)">01–05 ≈ empty streets</span></label>
+        <span id="hourword" style="float:right;color:var(--muted)"></span></label>
       <input type="range" id="hour" min="0" max="23" step="1" value="7">
-      <button id="btn-applytime">Apply time &amp; model (restarts)</button>
+      <div id="profbar" style="display:flex;gap:1px;height:16px;margin:4px 0 8px"></div>
+      <button id="btn-applytime">Apply day, traffic, time &amp; model (restarts)</button>
     </div>
   </div>
 
@@ -195,6 +214,8 @@
       <div class="kpi"><div class="v" id="k-veh">0</div><div class="l">vehicles</div></div>
       <div class="kpi"><div class="v" id="k-amb">0</div><div class="l">ambulances</div></div>
       <div class="kpi"><div class="v" id="k-pre">0</div><div class="l">purposely enabled</div></div>
+      <div class="kpi" style="grid-column:1 / -1"><div class="v" id="k-fair" style="font-size:15px">—</div>
+        <div class="l">junctions on fair timers (several approaches occupied) · lone-approach · early greens</div></div>
     </div>
     <table id="runs"><thead><tr><th>run</th><th>time</th><th>km</th><th>km/h</th></tr></thead>
       <tbody></tbody></table>
@@ -227,7 +248,7 @@
 <div id="mapwrap">
   <div id="map"></div>
   <canvas id="overlay"></canvas>
-  <div id="clockchip"><span id="clock2">--:--:--</span><small>Kuwait time (sim)</small></div>
+  <div id="clockchip"><span id="clock2">--:--:--</span><small id="trafficchip">Kuwait time (sim)</small></div>
   <div id="status"><span class="dot"></span><span id="status-text">connecting…</span></div>
   <div id="pickhint"></div>
   <div id="zoomhint">🔍 Zoom in — junctions, signal heads and cars turn 3D</div>
@@ -321,6 +342,11 @@ fetch("/api/network").then(r => r.json()).then(net => {
     $("hour").value = net.start_hour;
     $("hourval").textContent = String(net.start_hour).padStart(2, "0") + ":00";
   }
+  if (net.day_type) $("daytype").value = net.day_type;
+  if (net.traffic_level) setLevel(net.traffic_level);
+  PROFILES = net.profiles || {};
+  LEVELS = net.levels || { easy: 0.45, medium: 1, extreme: 1.8 };
+  drawProfile();
   const msel = $("model");
   for (const [key, lbl] of Object.entries(net.scenarios || {})) {
     const o = document.createElement("option");
@@ -438,6 +464,16 @@ function updatePanel(f) {
   $("k-veh").textContent = f.kpi.vehicles;
   $("k-amb").textContent = f.kpi.ambulances;
   $("k-pre").textContent = f.kpi.preempted_tls;
+  if (f.kpi.occupied_junctions !== undefined)
+    $("k-fair").textContent =
+      `${f.kpi.fair_timer_junctions} of ${f.kpi.occupied_junctions} · ` +
+      `${f.kpi.lone_junctions} · ${f.kpi.early_greens}`;
+  if (f.kpi.traffic) {
+    const t = f.kpi.traffic;
+    $("trafficchip").textContent =
+      `${t.day === "weekend" ? "Weekend" : "Weekday"} · ${t.level} traffic · ${t.word}` +
+      (f.kpi.occupied_junctions ? ` · ${Math.round(100 * f.kpi.fair_timer_junctions / f.kpi.occupied_junctions)}% of busy junctions on fair timers` : "");
+  }
   const tb = $("runs").querySelector("tbody");
   tb.innerHTML = f.kpi.runs.map(r =>
     `<tr><td>${r.id}</td><td>${r.duration_s.toFixed(0)} s</td>` +
@@ -952,13 +988,41 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && picking) { picking = null; setPickHint(null); }
 });
 
-$("hour").oninput = e =>
+let PROFILES = {}, LEVELS = { easy: 0.45, medium: 1, extreme: 1.8 };
+let level = "medium";
+function setLevel(l) {
+  level = l;
+  for (const b of document.querySelectorAll("#levels button"))
+    b.classList.toggle("on", b.dataset.l === l);
+  drawProfile();
+}
+for (const b of document.querySelectorAll("#levels button"))
+  b.onclick = () => setLevel(b.dataset.l);
+$("daytype").onchange = drawProfile;
+function demandWord(m) {
+  return m < 0.15 ? "near-empty" : m < 0.45 ? "light" : m < 0.8 ? "moderate"
+       : m < 1.3 ? "heavy" : "saturated";
+}
+function drawProfile() {
+  const prof = PROFILES[$("daytype").value] || [];
+  const h = +$("hour").value, mult = LEVELS[level] || 1;
+  const bar = $("profbar");
+  bar.innerHTML = prof.map((v, i) =>
+    `<i class="${i === h ? "now" : ""}" title="${String(i).padStart(2,"0")}:00 · ${demandWord(v * mult)}" style="height:${Math.max(8, Math.min(100, v * mult * 55))}%"></i>`
+  ).join("");
+  const m = (prof[h] || 0) * mult;
+  $("hourword").textContent = prof.length ? `${demandWord(m)} · ${m.toFixed(2)} × peak` : "";
+}
+$("hour").oninput = e => {
   $("hourval").textContent = String(e.target.value).padStart(2, "0") + ":00";
+  drawProfile();
+};
 $("btn-applytime").onclick = () => {
   const h = +$("hour").value;
   const m = $("model").value;
-  if (confirm(`Restart at ${String(h).padStart(2, "0")}:00 on "${$("model").selectedOptions[0].textContent}"?`)) {
-    send({ cmd: "reset", hour: h, scenario: m });
+  const day = $("daytype").value;
+  if (confirm(`Restart: ${day === "weekend" ? "Weekend" : "Weekday"} ${String(h).padStart(2, "0")}:00, ${level} traffic, on "${$("model").selectedOptions[0].textContent}"?`)) {
+    send({ cmd: "reset", hour: h, scenario: m, day_type: day, traffic_level: level });
     carPos.clear(); ambPos.clear();
     setTimeout(() => location.reload(), 4000);  // new network layers
   }

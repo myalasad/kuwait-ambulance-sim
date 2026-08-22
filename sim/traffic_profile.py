@@ -1,43 +1,65 @@
-"""Kuwait traffic demand calibration.
+"""Kuwait traffic demand calendar and traffic-level presets.
 
 Data provenance — stated plainly because decisions may lean on this:
 
 * The **road network, signal locations and turn restrictions are real**
-  (OpenStreetMap, downtown Kuwait City).
-* There is **no public live traffic feed for Kuwait** (no open MOI/
-  Municipality API).  Background demand is therefore *calibrated*, not
-  measured: the hourly shape below reflects the published pattern of
-  Kuwaiti weekday traffic — a sharp 06:30–08:30 work/school peak, a
-  13:00–15:00 afternoon peak when schools and ministries let out, and a
-  long evening peak 17:00–21:00 — scaled so the downtown cutout carries
-  realistic volumes without gridlocking the simulation.
+  (OpenStreetMap).
+* There is **no public live traffic feed for Kuwait**.  Background demand is
+  therefore *calibrated*, not measured.  Two hourly shapes capture the
+  Kuwaiti week as it is actually lived:
+
+  - **Weekday (Sunday–Thursday)**: a sharp 06:30–08:30 work/school peak,
+    then a long congested stretch from 13:00 (schools and ministries let
+    out) through the evening to about 21:00; streets near-empty 01:00–05:00.
+  - **Weekend (Friday–Saturday)**: quiet from 01:00 until noon, then heavy
+    from 13:00 right through to midnight (malls, the Gulf Road corniche,
+    family traffic).
+
+* On top of the hour-of-day shape, a **traffic level** sets the overall
+  intensity: easy, medium (the calibrated baseline) or extreme.  Under
+  extreme traffic most signalized approaches are occupied at once, so the
+  early-green rule for ordinary drivers rarely applies and junctions run
+  their fair fixed timers — exactly as they should (Protocol D4).
+
 * When real counts are available (MOI loop detectors, Municipality
-  studies), drop them in ``data/real_counts.csv`` as ``hour,multiplier``
-  rows (0-23, relative to the daily peak = 1.0) and rebuild; the file
-  overrides the calibrated shape below.
+  studies, the licensed xMap Kuwait catalog), drop them in
+  ``data/real_counts.csv`` as ``hour,multiplier`` rows (0-23, relative to the
+  daily peak = 1.0); they override the weekday shape.
 """
 import csv
 import os
 
-# Relative demand per starting hour, typical Kuwaiti working day (Sun-Thu).
-HOURLY = {
-    0: 0.15, 1: 0.10, 2: 0.08, 3: 0.08, 4: 0.12, 5: 0.30,
-    6: 0.65, 7: 1.00, 8: 0.90, 9: 0.70, 10: 0.60, 11: 0.65,
-    12: 0.80, 13: 0.95, 14: 0.85, 15: 0.75, 16: 0.80, 17: 0.95,
-    18: 1.00, 19: 0.95, 20: 0.85, 21: 0.70, 22: 0.50, 23: 0.30,
+# Relative demand per clock hour (daily peak = 1.0).
+WEEKDAY = {
+    0: 0.15, 1: 0.08, 2: 0.06, 3: 0.05, 4: 0.06, 5: 0.25,
+    6: 0.65, 7: 1.00, 8: 0.90, 9: 0.65, 10: 0.60, 11: 0.65,
+    12: 0.80, 13: 0.95, 14: 0.95, 15: 0.90, 16: 0.90, 17: 0.95,
+    18: 1.00, 19: 0.95, 20: 0.90, 21: 0.70, 22: 0.50, 23: 0.30,
 }
+WEEKEND = {
+    0: 0.35, 1: 0.20, 2: 0.12, 3: 0.08, 4: 0.06, 5: 0.06,
+    6: 0.08, 7: 0.12, 8: 0.18, 9: 0.25, 10: 0.35, 11: 0.45,
+    12: 0.60, 13: 0.85, 14: 0.95, 15: 1.00, 16: 1.00, 17: 1.00,
+    18: 1.00, 19: 1.00, 20: 1.00, 21: 0.95, 22: 0.80, 23: 0.60,
+}
+PROFILES = {"weekday": WEEKDAY, "weekend": WEEKEND}
+DAY_LABEL = {"weekday": "Weekday (Sun–Thu)", "weekend": "Weekend (Fri–Sat)"}
 
-# randomTrips insertion period (seconds/vehicle) at the daily peak for this
-# downtown cutout: ~2770 veh/h inserted network-wide, which reproduces the
-# queue lengths the corridor work is calibrated against.
+# Traffic-level presets: multiplier on the calibrated baseline.
+LEVELS = {"easy": 0.45, "medium": 1.0, "extreme": 1.8}
+LEVEL_LABEL = {"easy": "Easy", "medium": "Medium", "extreme": "Extreme"}
+
+# Kept for backwards compatibility with earlier imports.
+HOURLY = WEEKDAY
 PEAK_PERIOD_S = 1.3
 
 
-def hourly_profile(root):
-    """The calibrated profile, overridden by data/real_counts.csv if given."""
-    profile = dict(HOURLY)
+def hourly_profile(root, day_type="weekday"):
+    """The calibrated shape for the day type; data/real_counts.csv (if
+    present) overrides the weekday shape with measured multipliers."""
+    profile = dict(PROFILES.get(day_type, WEEKDAY))
     path = os.path.join(root, "data", "real_counts.csv")
-    if os.path.exists(path):
+    if day_type == "weekday" and os.path.exists(path):
         with open(path) as f:
             for row in csv.reader(f):
                 if len(row) >= 2 and row[0].strip().isdigit():
@@ -46,6 +68,20 @@ def hourly_profile(root):
     return profile
 
 
+def demand_multiplier(root, day_type, level, hour):
+    """Effective scale on the flat peak-rate demand base."""
+    prof = hourly_profile(root, day_type)
+    return LEVELS.get(level, 1.0) * prof.get(hour % 24, 0.3)
+
+
+def describe(day_type, level, hour):
+    """Plain words for the UI: 'Weekday 15:00 — heavy'."""
+    m = PROFILES.get(day_type, WEEKDAY).get(hour % 24, 0.3) * LEVELS.get(level, 1.0)
+    word = ("near-empty" if m < 0.15 else "light" if m < 0.45
+            else "moderate" if m < 0.8 else "heavy" if m < 1.3 else "saturated")
+    return {"multiplier": round(m, 2), "word": word}
+
+
 def period_for_hour(profile, hour):
-    """randomTrips --period for the given clock hour."""
+    """randomTrips --period for the given clock hour (legacy helper)."""
     return PEAK_PERIOD_S / max(profile.get(hour % 24, 0.3), 0.02)

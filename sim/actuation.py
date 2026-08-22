@@ -40,7 +40,15 @@ class DemandResponsiveController:
         self.cooldown = {}      # tls -> sim time until next grant allowed
         self.pending = {}       # tls -> (edge, first seen lone) confirmation
         self.granted_total = 0
+        self._modes = {"fair": 0, "lone": 0, "occupied": 0}
+        self._last_seen = {}    # tls -> {edge: last sim time it had traffic}
         self._build()
+
+    def mode_counts(self):
+        """How many junctions currently have several approaches occupied
+        (fair timers by design), a single occupied approach (early-green
+        candidates), and any traffic at all."""
+        return {**self._modes, "early": self.granted_total}
 
     # ------------------------------------------------------------- topology
 
@@ -101,6 +109,7 @@ class DemandResponsiveController:
             self.pending.clear()
             return
         lane_res = traci.lane.getAllSubscriptionResults()
+        fair = lone = occ_n = 0
         for tls_id, info in self.tls_info.items():
             if tls_id in excluded:
                 # preemption outranks us; drop any claim without touching
@@ -113,13 +122,28 @@ class DemandResponsiveController:
                              for lane in lanes)
                    for edge, lanes in info["approach"].items()}
             occupied = [e for e, n in occ.items() if n > 0]
+            seen = self._last_seen.setdefault(tls_id, {})
+            for e in occupied:
+                seen[e] = now
+            # approaches that carried traffic within the quiet window count
+            # as "in use" even if momentarily empty between platoons
+            in_use = [e for e, t in seen.items()
+                      if now - t <= self.cfg.lone_quiet_s]
+            if len(in_use) >= 2:
+                fair += 1
+            elif len(in_use) == 1:
+                lone += 1
+            if in_use:
+                occ_n += 1
             claim = self.claims.get(tls_id)
             if claim is not None:
                 self._advance(tls_id, claim, occ, occupied, now)
-            elif len(occupied) == 1 and now >= self.cooldown.get(tls_id, 0.0):
+            elif (len(occupied) == 1 and len(in_use) == 1
+                  and now >= self.cooldown.get(tls_id, 0.0)):
                 self._consider(tls_id, info, occupied[0], now)
             else:
                 self.pending.pop(tls_id, None)
+        self._modes = {"fair": fair, "lone": lone, "occupied": occ_n}
 
     def _consider(self, tls_id, info, edge, now):
         serve_idx = info["serve"].get(edge)

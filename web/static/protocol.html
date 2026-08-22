@@ -117,7 +117,7 @@
     <a href="#A"><b>A</b><span>Green corridor for ambulances</span><small>5 rules</small></a>
     <a href="#B"><b>B</b><span>Priority conflicts</span><small>4 rules</small></a>
     <a href="#C"><b>C</b><span>Ambulance mission lifecycle</span><small>7 rules</small></a>
-    <a href="#D"><b>D</b><span>Ordinary traffic — early green</span><small>3 rules</small></a>
+    <a href="#D"><b>D</b><span>Ordinary traffic — early green</span><small>4 rules</small></a>
     <a href="#E"><b>E</b><span>Routing &amp; prediction</span><small>3 rules</small></a>
     <a href="#F"><b>F</b><span>Enforcement</span><small>1 rule</small></a>
     <a href="#G"><b>G</b><span>Safety &amp; fail-safes</span><small>4 rules</small></a>
@@ -294,11 +294,11 @@
 
     <div class="sc info"><h3><span class="id">D1</span>Early green for the only occupied approach</h3>
       <dl class="f">
-        <dt>Trigger</dt><dd>Exactly one approach occupied; every other approach empty for the confirmation window; no ambulance involved.</dd>
+        <dt>Trigger</dt><dd>Exactly one approach occupied; every other approach empty for the confirmation window <b>and</b> carrying no traffic at all within the quiet window; no ambulance involved.</dd>
         <dt>Action</dt><dd>Through the junction's own amber, move to the phase serving that approach and hold it (or extend it if already green).</dd>
         <dt>Ends when</dt><dd>Rule D2.</dd>
         <dt>Logged as</dt><dd><span class="tag">actuation</span>. Map label <b>EARLY GREEN</b>.</dd>
-        <dt>Parameters</dt><dd><code>lone_confirm_s = 3</code> <code>lone_min_green_s = 5</code></dd>
+        <dt>Parameters</dt><dd><code>lone_confirm_s = 3</code> <code>lone_quiet_s = 20</code> <code>lone_min_green_s = 5</code></dd>
       </dl></div>
 
     <div class="sc info"><h3><span class="id">D2</span>Fairness returns instantly</h3>
@@ -317,6 +317,15 @@
         <dt>Ends when</dt><dd>Cooldown elapses.</dd>
         <dt>Logged as</dt><dd>—</dd>
         <dt>Parameters</dt><dd><code>actuation_cooldown_s = 10</code></dd>
+      </dl></div>
+
+    <div class="sc warn"><h3><span class="id">D4</span>Saturation — fair timers by design</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Heavy traffic: several approaches of a junction are occupied at once — the normal condition on Kuwaiti weekdays 13:00–21:00, on weekends 13:00–24:00, and throughout the Extreme traffic level.</dd>
+        <dt>Action</dt><dd>The early-green rule does not apply; the junction runs its normal fixed-time cycle so every approach gets its fair turn. This is not a failure of the priority system — it is the rule working as intended, and the system counts it.</dd>
+        <dt>Ends when</dt><dd>Traffic thins to a single occupied approach (D1 becomes possible again).</dd>
+        <dt>Logged as</dt><dd>A five-minute <span class="tag">actuation</span> traffic check ("N of M occupied junctions have several approaches occupied — fair timers by design"); the Live Map shows the live share of busy junctions on fair timers.</dd>
+        <dt>Parameters</dt><dd><code>traffic_level</code> <code>day_type</code> <code>start_hour</code></dd>
       </dl></div>
   </section>
 
@@ -435,10 +444,11 @@
         <dt>Downtown</dt><dd>Kuwait City core, every street, sublane model with rescue-lane behaviour.</dd>
         <dt>Metro</dt><dd>All six governorates at arterial level (motorways, trunks, primary and secondary roads; residential side streets not modelled), a real MoH hospital per governorate, ~100 named areas.</dd>
       </dl></div>
-    <div class="sc"><h3><span class="id">I3</span>Time of day</h3>
+    <div class="sc"><h3><span class="id">I3</span>Calendar and traffic scenarios</h3>
       <dl class="f">
-        <dt>Action</dt><dd>One flat peak-rate demand base is scaled live each hour by the calibrated profile; any start hour 0–23 is selectable on the Live Map.</dd>
-        <dt>Parameters</dt><dd><code>start_hour</code> <code>demand_hours = 3</code></dd>
+        <dt>Day type</dt><dd><b>Weekday (Sun–Thu)</b>: 06:30–08:30 peak, congested 13:00–21:00, near-empty 01:00–05:00. <b>Weekend (Fri–Sat)</b>: quiet 01:00–12:00, congested 13:00–24:00.</dd>
+        <dt>Traffic level</dt><dd><b>Easy</b> ×0.45, <b>Medium</b> ×1.0 (calibrated baseline), <b>Extreme</b> ×1.8 — on top of the hourly shape. One flat peak-rate demand base is scaled live each hour; any start hour 0–23 is selectable on the Live Map.</dd>
+        <dt>Parameters</dt><dd><code>day_type</code> <code>traffic_level</code> <code>start_hour</code> <code>demand_hours = 3</code></dd>
       </dl></div>
     <div class="sc"><h3><span class="id">I4</span>Names and codes</h3>
       <dl class="f">
@@ -460,7 +470,7 @@
         <tr><td>arbitration_tie_m</td><td class="v">20 m</td><td>Tie margin for operator referral</td><td>B2 B3</td></tr>
         <tr><td>operator_timeout_s</td><td class="v">8 s</td><td>Default policy applies after this</td><td>B3</td></tr>
         <tr><td>patient_load_s</td><td class="v">40 s</td><td>Loading stop at the scene</td><td>C2</td></tr>
-        <tr><td>lone_confirm_s / lone_min_green_s / lone_max_hold_s</td><td class="v">3 s / 5 s / 30 s</td><td>Early green: confirmation, minimum, cap</td><td>D1 D2</td></tr>
+        <tr><td>lone_confirm_s / lone_quiet_s / lone_min_green_s / lone_max_hold_s</td><td class="v">3 s / 20 s / 5 s / 30 s</td><td>Early green: confirmation, quiet window on other approaches, minimum, cap</td><td>D1 D2 D4</td></tr>
         <tr><td>actuation_cooldown_s</td><td class="v">10 s</td><td>Between early greens per junction</td><td>D3</td></tr>
         <tr><td>speed_exemption_factor / ambulance_max_kmh</td><td class="v">1.5 / 140 km/h</td><td>Exemption above the posted limit; absolute cap</td><td>F1</td></tr>
         <tr><td>markov_sample_s / markov_min_obs / markov_max_edges</td><td class="v">30 s / 40 / 160</td><td>Observation period; history needed; corridors monitored</td><td>E2 E3</td></tr>

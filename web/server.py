@@ -44,6 +44,10 @@ class Hub:
             cfg = SimConfig(scenario=self.scenario)
             if getattr(self, "hour", None) is not None:
                 cfg.start_hour = int(self.hour) % 24
+        if getattr(self, "day_type", None) in ("weekday", "weekend"):
+            cfg.day_type = self.day_type
+        if getattr(self, "traffic_level", None) in ("easy", "medium", "extreme"):
+            cfg.traffic_level = self.traffic_level
         sim = Simulation(ROOT, cfg, preemption=preemption)
         sim.start()                # raises on failure; self.sim stays valid
         self.sim = sim
@@ -134,6 +138,10 @@ class Hub:
                 self.hour = int(cmd["hour"]) % 24
             if cmd.get("scenario"):
                 self.scenario = str(cmd["scenario"])
+            if cmd.get("day_type"):
+                self.day_type = str(cmd["day_type"])
+            if cmd.get("traffic_level"):
+                self.traffic_level = str(cmd["traffic_level"])
             keep = self.sim.controller.enabled if self.sim else True
             if self.sim is not None:
                 self.sim.close()

@@ -211,12 +211,22 @@ signal timer, the timer is the highest-weight variable; no-traffic bounds
 isolate it. First measured run: 165 s with the wave vs 308 s estimated
 without — 143 s recovered at signal timers across 8 junctions.
 
-## Time of day and demand
-One flat peak-rate demand base is scaled live each hour by a calibrated
-Kuwaiti weekday profile (sharp 06:30–08:30 peak, 13:00–15:00 afternoon peak,
-17:00–21:00 evening peak, near-empty 01:00–05:00). The Kuwait clock start
-hour is selectable on the Live Map; the simulation restarts at that hour.
-Verified: 14 vehicles on the downtown grid at 03:00 versus 202 at 07:00.
+## Traffic scenarios: day type, traffic level and time of day
+Demand is one flat peak-rate base scaled live each hour by a calendar and a
+traffic level, both chosen on the Live Map (the simulation restarts at the
+chosen hour):
+- **Day type.** Weekday (Sunday–Thursday): a sharp 06:30–08:30 work/school
+  peak, then congested from 13:00 through about 21:00, near-empty
+  01:00–05:00. Weekend (Friday–Saturday): quiet from 01:00 until noon, then
+  congested from 13:00 right through to midnight.
+- **Traffic level.** Easy (×0.45 of the calibrated baseline), Medium (×1.0),
+  Extreme (×1.8). Under Extreme traffic several approaches of most junctions
+  are occupied at once, so the early-green rule for ordinary drivers rarely
+  applies and junctions run their fair fixed timers — by design (Protocol
+  D4). The Live Map shows the live share of busy junctions on fair timers,
+  and a traffic check is logged every five minutes.
+Verified: 14 vehicles on the downtown grid at a weekday 03:00 versus 202 at
+07:00 (medium level).
 
 ## Network models and places
 Two models: Downtown Kuwait City (detailed; every street; sublane model and

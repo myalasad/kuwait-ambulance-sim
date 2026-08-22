@@ -22,7 +22,7 @@ SCENARIOS = {
         "routes": "background_base.rou.xml",
         "sumocfg": "scenario.sumocfg",
         "query": "overpass_query.txt",
-        "peak_period_s": 1.3,     # randomTrips insertion period at peak
+        "peak_period_s": 0.8,     # ~4,500 veh/h in the core at peak (medium)
         "lateral_resolution": 0.8,
         "snap_radius_m": 400.0,
         "hospitals": {
@@ -205,6 +205,11 @@ class SimConfig:
     start_hour: int = 7                  # simulated clock at t=0; choose any
     #                                      hour 0-23 (01:00-05:00 gives the
     #                                      near-empty Kuwaiti night streets).
+    day_type: str = "weekday"            # "weekday" (Sun-Thu) | "weekend"
+    #                                      (Fri-Sat): different hourly shapes
+    traffic_level: str = "medium"        # "easy" | "medium" | "extreme":
+    #                                      intensity on top of the hourly
+    #                                      shape (x0.45 / x1.0 / x1.8)
     demand_hours: float = 3.0            # hours of base demand to build
 
     # --- routing ---
@@ -221,6 +226,11 @@ class SimConfig:
     actuation_enabled: bool = True
     lone_confirm_s: float = 3.0       # all other approaches must be empty
     #                                   this long before an early green
+    lone_quiet_s: float = 45.0        # ...and must not have carried ANY
+    #                                   traffic within this window: a junction
+    #                                   in use from several directions stays
+    #                                   on its fair timer even between
+    #                                   platoons (Protocol D4)
     lone_min_green_s: float = 5.0     # minimum served green once granted
     lone_max_hold_s: float = 30.0     # early-green cap; then fair timers
     actuation_cooldown_s: float = 10.0  # between early greens per junction

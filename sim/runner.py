@@ -15,7 +15,7 @@ from .ambulance import Dispatcher
 from .metrics import Metrics
 from .operations import OperationsLog
 from .router import Router
-from .traffic_profile import hourly_profile
+from .traffic_profile import hourly_profile, LEVELS, DAY_LABEL, LEVEL_LABEL, describe
 from .markov import TrafficMarkov
 from .places import Places
 
@@ -59,9 +59,10 @@ class Simulation:
             cmd += ["--lateral-resolution", str(self.cfg.lateral_resolution)]
         # time-of-day realism: the flat peak-rate demand base is scaled to
         # the chosen clock hour (01:00-05:00 -> near-empty Kuwaiti streets)
-        self._profile = hourly_profile(self.root)
+        self._profile = hourly_profile(self.root, self.cfg.day_type)
+        self._level = LEVELS.get(self.cfg.traffic_level, 1.0)
         self._scale_hour = self.cfg.start_hour % 24
-        cmd += ["--scale", f"{self._profile.get(self._scale_hour, 0.3):.3f}"]
+        cmd += ["--scale", f"{self._level * self._profile.get(self._scale_hour, 0.3):.3f}"]
         cmd += self.extra_args
         traci.start(cmd)
         self.ops = OperationsLog(self.root)
@@ -75,6 +76,7 @@ class Simulation:
             self.cfg, self.ops, enabled=self.cfg.actuation_enabled)
         self.markov = TrafficMarkov(self.net, self.cfg, self.root, self.ops)
         self._markov_next_save = self.cfg.markov_save_every_s
+        self._fair_next_report = 300.0
         if self.cfg.markov_routing:
             self.router.predictor = self.markov
         if self.markov._loaded_obs:
@@ -108,10 +110,15 @@ class Simulation:
             d = self.places.describe(t["id"])
             t["code"], t["name"] = d["code"], d["name"]
             t["category"], t["area"] = d["category"], d["area"]
+        d0 = describe(self.cfg.day_type, self.cfg.traffic_level,
+                      self.cfg.start_hour)
         self.ops.emit(0.0, "system",
-                      f"Simulation started: downtown Kuwait City, "
+                      f"Simulation started: {self.cfg.label()}, "
                       f"{len(self._tls_static)} signalized junctions, "
-                      f"clock {self.clock()}, preemption "
+                      f"{DAY_LABEL[self.cfg.day_type]} "
+                      f"{self.clock()}, {LEVEL_LABEL[self.cfg.traffic_level]} "
+                      f"traffic (demand {d0['word']}, {d0['multiplier']} x "
+                      f"peak), preemption "
                       f"{'ARMED' if self._preemption_wanted else 'DISARMED'}",
                       "info")
 
@@ -134,15 +141,30 @@ class Simulation:
         hour = int(self.cfg.start_hour + self.time / 3600) % 24
         if hour != self._scale_hour:
             self._scale_hour = hour
-            mult = self._profile.get(hour, 0.3)
+            mult = self._level * self._profile.get(hour, 0.3)
+            d = describe(self.cfg.day_type, self.cfg.traffic_level, hour)
             try:
                 traci.simulation.setScale(mult)
                 self.ops.emit(self.time, "system",
-                              f"Clock reached {hour:02d}:00 — background "
-                              f"demand multiplier now {mult:.2f} of peak "
-                              f"(calibrated Kuwaiti profile)", "info")
+                              f"Clock reached {hour:02d}:00 — "
+                              f"{DAY_LABEL[self.cfg.day_type]}, "
+                              f"{LEVEL_LABEL[self.cfg.traffic_level]} traffic: "
+                              f"demand now {d['word']} ({mult:.2f} x peak)",
+                              "info")
             except traci.TraCIException:
                 pass
+        if self.time >= self._fair_next_report:
+            self._fair_next_report = self.time + 300.0
+            fm = self.actuation.mode_counts()
+            if fm["occupied"] >= 5:
+                pct = round(100 * fm["fair"] / max(fm["occupied"], 1))
+                self.ops.emit(self.time, "actuation",
+                              f"Traffic check: {fm['fair']} of {fm['occupied']} "
+                              f"occupied junctions have several approaches "
+                              f"occupied — early green cannot apply there, fair "
+                              f"timers by design ({pct}%); {fm['lone']} junctions "
+                              f"have a lone approach; {fm['early']} early greens "
+                              f"granted so far", "info")
         for veh_id in traci.simulation.getDepartedIDList():
             traci.vehicle.subscribe(veh_id, VEH_VARS)
             self.dispatcher.on_depart(veh_id, self.time)
@@ -257,6 +279,14 @@ class Simulation:
         kpi["open_cases"] = len(self.ops.open_cases())
         kpi["early_greens"] = self.actuation.granted_total
         kpi["demand_serving"] = self.actuation.active_count()
+        fm = self.actuation.mode_counts()
+        kpi["fair_timer_junctions"] = fm["fair"]
+        kpi["lone_junctions"] = fm["lone"]
+        kpi["occupied_junctions"] = fm["occupied"]
+        kpi["traffic"] = {"day": self.cfg.day_type,
+                          "level": self.cfg.traffic_level,
+                          **describe(self.cfg.day_type, self.cfg.traffic_level,
+                                     self._scale_hour)}
 
         return {
             "t": self.time,
@@ -293,6 +323,12 @@ class Simulation:
             "areas": [{"name": name, "lat": lat, "lon": lon}
                       for name, (lat, lon) in self.dispatcher.areas.items()],
             "start_hour": self.cfg.start_hour,
+            "day_type": self.cfg.day_type,
+            "traffic_level": self.cfg.traffic_level,
+            "profiles": {k: [round(LEVELS["medium"] * v[h], 2) for h in range(24)]
+                         for k, v in __import__("sim.traffic_profile",
+                                                fromlist=["PROFILES"]).PROFILES.items()},
+            "levels": LEVELS,
             "scenario": self.cfg.scenario,
             "scenarios": {k: v["label"] for k, v in SCENARIOS.items()},
             "bounds": [[lat0, lon0], [lat1, lon1]],
