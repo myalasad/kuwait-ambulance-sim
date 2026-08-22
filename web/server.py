@@ -40,6 +40,10 @@ class Hub:
         cfg = SimConfig()
         if getattr(self, "hour", None) is not None:
             cfg.start_hour = int(self.hour) % 24
+        if getattr(self, "scenario", None):
+            cfg = SimConfig(scenario=self.scenario)
+            if getattr(self, "hour", None) is not None:
+                cfg.start_hour = int(self.hour) % 24
         sim = Simulation(ROOT, cfg, preemption=preemption)
         sim.start()                # raises on failure; self.sim stays valid
         self.sim = sim
@@ -123,6 +127,8 @@ class Hub:
         elif kind == "reset":
             if cmd.get("hour") is not None:
                 self.hour = int(cmd["hour"]) % 24
+            if cmd.get("scenario"):
+                self.scenario = str(cmd["scenario"])
             keep = self.sim.controller.enabled if self.sim else True
             if self.sim is not None:
                 self.sim.close()

@@ -1,48 +1,136 @@
 """Central configuration for the Kuwait ambulance-preemption simulation.
 
+Two selectable network models (``SimConfig(scenario=...)``):
+
+* ``downtown`` — the detailed Kuwait City core: every street, sublane model,
+  rescue lanes.  Best for close-up demos of the signal mechanics.
+* ``metro``    — ALL SIX GOVERNORATES (Capital, Hawalli, Farwaniya,
+  Mubarak Al-Kabeer, Ahmadi, Jahra) at arterial level: motorways, trunks,
+  primary and secondary roads.  Real hospitals in every governorate,
+  cross-governorate missions.  Sublane off for speed.
+
 Everything tunable lives here so the control-room parameters (camera range,
 green-wave reach, amber times) can be changed in one place.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+SCENARIOS = {
+    "downtown": {
+        "label": "Downtown Kuwait City (detailed)",
+        "osm": "kuwait_downtown.osm.xml",
+        "net": "kuwait_downtown.net.xml",
+        "routes": "background_base.rou.xml",
+        "sumocfg": "scenario.sumocfg",
+        "query": "overpass_query.txt",
+        "peak_period_s": 1.3,     # randomTrips insertion period at peak
+        "lateral_resolution": 0.8,
+        "snap_radius_m": 400.0,
+        "hospitals": {
+            "Amiri Hospital": (29.3857, 47.9931),
+            "Al-Sabah Hospital (west anchor)": (29.3630, 47.9560),
+            "Dar Al Shifa Hospital (east anchor)": (29.3745, 48.0025),
+        },
+        "areas": {
+            "Mirqab (Capital)": (29.3719, 47.9852),
+            "Salhiya (Capital)": (29.3701, 47.9723),
+            "Qibla — Old Souq (Capital)": (29.3762, 47.9682),
+            "Souq Al-Mubarakiya (Capital)": (29.3737, 47.9767),
+            "Sharq — Souq Sharq (Capital)": (29.3853, 47.9880),
+            "Dasman (Capital)": (29.3868, 48.0007),
+            "Kuwait Towers area (Capital)": (29.3880, 48.0040),
+            "Grand Mosque / Seif (Capital)": (29.3800, 47.9740),
+            "Liberation Tower (Capital)": (29.3787, 47.9902),
+            "Ministries area (south)": (29.3625, 47.9705),
+            "Jibla waterfront (Capital)": (29.3845, 47.9660),
+            "Bneid Al-Qar edge (Capital)": (29.3700, 48.0080),
+        },
+    },
+    "metro": {
+        "label": "All governorates (metro arterials)",
+        "osm": "kuwait_metro.osm.xml",
+        "net": "kuwait_metro.net.xml",
+        "routes": "background_metro.rou.xml",
+        "sumocfg": "scenario_metro.sumocfg",
+        "query": "overpass_query_metro.txt",
+        "peak_period_s": 0.55,
+        "lateral_resolution": 0.0,   # sublane off: 6-governorate network
+        "snap_radius_m": 1500.0,     # arterials only -> snap further
+        "hospitals": {
+            # one MoH general hospital per governorate (real locations)
+            "Amiri Hospital (Capital)": (29.3857, 47.9931),
+            "Al-Sabah Hospital (Capital)": (29.3486, 47.9247),
+            "Mubarak Al-Kabeer Hospital (Hawalli)": (29.3126, 48.0192),
+            "Farwaniya Hospital (Farwaniya)": (29.2739, 47.9410),
+            "Al-Adan Hospital (Mubarak Al-Kabeer)": (29.1707, 48.0993),
+            "Al-Jahra Hospital (Jahra)": (29.3402, 47.6589),
+        },
+        "areas": {
+            # Capital
+            "Sharq (Capital)": (29.3853, 47.9880),
+            "Mirqab (Capital)": (29.3719, 47.9852),
+            "Shamiya (Capital)": (29.3510, 47.9550),
+            "Qadsiya (Capital)": (29.3450, 47.9660),
+            "Surra (Capital)": (29.3140, 47.9850),
+            # Hawalli
+            "Hawalli (Hawalli)": (29.3320, 48.0280),
+            "Salmiya (Hawalli)": (29.3330, 48.0760),
+            "Jabriya (Hawalli)": (29.3120, 48.0300),
+            "Mishref (Hawalli)": (29.2780, 48.0700),
+            "Bayan (Hawalli)": (29.3030, 48.0490),
+            # Farwaniya
+            "Farwaniya (Farwaniya)": (29.2770, 47.9580),
+            "Khaitan (Farwaniya)": (29.2860, 47.9720),
+            "Jleeb Al-Shuyoukh (Farwaniya)": (29.2680, 47.9300),
+            "Ardiya (Farwaniya)": (29.2920, 47.8980),
+            # Mubarak Al-Kabeer
+            "Mubarak Al-Kabeer (Mubarak Al-Kabeer)": (29.2270, 48.0790),
+            "Qurain (Mubarak Al-Kabeer)": (29.2380, 48.0800),
+            "Sabah Al-Salem (Mubarak Al-Kabeer)": (29.2570, 48.0860),
+            "Messila (Mubarak Al-Kabeer)": (29.2710, 48.0960),
+            # Ahmadi
+            "Fintas (Ahmadi)": (29.1730, 48.1200),
+            "Mangaf (Ahmadi)": (29.0960, 48.1270),
+            "Fahaheel (Ahmadi)": (29.0820, 48.1300),
+            "Ahmadi City (Ahmadi)": (29.0830, 48.0840),
+            # Jahra
+            "Jahra (Jahra)": (29.3370, 47.6750),
+            "Saad Al-Abdullah (Jahra)": (29.3100, 47.7780),
+            "Sulaibiya (Jahra)": (29.2700, 47.8270),
+        },
+    },
+}
 
 
 @dataclass
 class SimConfig:
-    # --- scenario files (relative to the project root) ---
-    net_file: str = "data/kuwait_downtown.net.xml"
-    route_file: str = "data/background.rou.xml"
+    # --- network model ---
+    scenario: str = "downtown"        # "downtown" | "metro" (all governorates)
+
+    # --- scenario files (set from SCENARIOS in __post_init__) ---
+    net_file: str = ""
+    sumocfg: str = ""
     vtype_file: str = "data/vtypes.add.xml"
-    sumocfg: str = "data/scenario.sumocfg"
 
     # --- simulation engine ---
     step_length: float = 0.5          # seconds of simulated time per step
-    lateral_resolution: float = 0.8   # sublane model: cars form rescue lanes
-    #                                   for the blue-light device (set 0.0 to
-    #                                   disable if simulation feels slow)
+    lateral_resolution: float = 0.8   # set per scenario in __post_init__
     seed: int = 42
+    snap_radius_m: float = 400.0      # geocoding snap radius (per scenario)
 
     # --- detection & green-wave preemption ---
     preemption_enabled: bool = True
     camera_range_m: float = 200.0        # a junction camera "sees" the flashing
     #                                      lights this far up its approaches
-    greenwave_distance_m: float = 800.0  # hard cap on the corridor look-ahead
-    greenwave_lead_s: float = 25.0       # a signal is switched when the
-    #                                      ambulance's ETA drops below this —
-    #                                      so a crawling ambulance doesn't hold
-    #                                      junctions far ahead for minutes
+    greenwave_lead_s: float = 25.0       # switch a signal when the ambulance's
+    #                                      ETA to it drops below this
     greenwave_min_m: float = 160.0       # ...but never later than this far out
-    max_hold_s: float = 90.0             # safety cap on one preemption hold;
-    #                                      cross traffic is starving beyond it
-    preempt_cooldown_s: float = 20.0     # normal cycling guaranteed after a
-    #                                      hold-limit release, unless the
-    #                                      ambulance is at the stop line
+    greenwave_distance_m: float = 800.0  # and never earlier than this far out
     yellow_time_s: float = 3.0           # amber shown to conflicting traffic
-    #                                      before it is forced to red
-    allred_time_s: float = 2.0           # all-red clearance after the amber so
-    #                                      vehicles trapped mid-junction can
-    #                                      leave before the corridor green
-    clearance_after_pass_s: float = 2.0  # corridor held briefly after the
-    #                                      ambulance clears the junction
+    allred_time_s: float = 2.0           # all-red clearance before the corridor
+    clearance_after_pass_s: float = 2.0  # corridor held briefly after passing
+    max_hold_s: float = 90.0             # cap on a single continuous hold
+    preempt_cooldown_s: float = 20.0     # cross traffic gets at least this
+    #                                      much normal cycling after a long hold
 
     # --- arbitration & operator referral ---
     arbitration_tie_m: float = 20.0      # two fresh requests closer than this
@@ -54,9 +142,6 @@ class SimConfig:
     start_hour: int = 7                  # simulated clock at t=0; choose any
     #                                      hour 0-23 (01:00-05:00 gives the
     #                                      near-empty Kuwaiti night streets).
-    #                                      Demand is one flat peak-rate base
-    #                                      scaled at runtime by the hourly
-    #                                      profile, so no rebuild is needed.
     demand_hours: float = 3.0            # hours of base demand to build
 
     # --- routing ---
@@ -86,32 +171,26 @@ class SimConfig:
     #                                      issue no citation)
     ambulance_max_kmh: float = 140.0     # absolute cap regardless of road
 
+    def __post_init__(self):
+        sc = SCENARIOS.get(self.scenario)
+        if sc is None:
+            raise ValueError(f"Unknown scenario: {self.scenario!r} "
+                             f"(choose from {sorted(SCENARIOS)})")
+        self.net_file = f"data/{sc['net']}"
+        self.sumocfg = f"data/{sc['sumocfg']}"
+        self.lateral_resolution = sc["lateral_resolution"]
+        self.snap_radius_m = sc["snap_radius_m"]
 
-# Hospitals (lat, lon): dispatch origins AND the candidate destinations for
-# the automatic return leg.  Amiri Hospital is the real MoH hospital on
-# Arabian Gulf Street inside the modelled cutout; Al-Sabah and Dar Al Shifa
-# lie outside it, so they are represented by in-map anchor points on the
-# corridors leading toward them (stated plainly: anchors, not the buildings).
-HOSPITALS = {
-    "Amiri Hospital": (29.3857, 47.9931),
-    "Al-Sabah Hospital (west anchor)": (29.3630, 47.9560),
-    "Dar Al Shifa Hospital (east anchor)": (29.3745, 48.0025),
-}
+    def hospitals_d(self):
+        return SCENARIOS[self.scenario]["hospitals"]
 
-# Named incident areas inside the downtown cutout (lat, lon) — real
-# localities and landmarks, snapped to the nearest drivable edge at dispatch.
-# Ambulances always ORIGINATE at a hospital; these are where incidents occur.
-AREAS = {
-    "Mirqab": (29.3719, 47.9852),
-    "Salhiya": (29.3701, 47.9723),
-    "Qibla (Old Souq)": (29.3762, 47.9682),
-    "Souq Al-Mubarakiya": (29.3737, 47.9767),
-    "Sharq (Souq Sharq)": (29.3853, 47.9880),
-    "Dasman": (29.3868, 48.0007),
-    "Kuwait Towers area": (29.3880, 48.0040),
-    "Grand Mosque / Seif": (29.3800, 47.9740),
-    "Liberation Tower": (29.3787, 47.9902),
-    "Ministries area (south)": (29.3625, 47.9705),
-    "Jibla waterfront": (29.3845, 47.9660),
-    "Bneid Al-Qar edge": (29.3700, 48.0080),
-}
+    def areas_d(self):
+        return SCENARIOS[self.scenario]["areas"]
+
+    def label(self):
+        return SCENARIOS[self.scenario]["label"]
+
+
+# Backwards-compatible module-level names (downtown model).
+HOSPITALS = SCENARIOS["downtown"]["hospitals"]
+AREAS = SCENARIOS["downtown"]["areas"]

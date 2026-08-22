@@ -1,0 +1,8 @@
+[out:xml][timeout:600];
+way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link)$"](29.05,47.60,29.40,48.16)->.roads;
+(
+  .roads;
+  node(w.roads);
+  rel(bw.roads)["type"="restriction"];
+);
+out body;

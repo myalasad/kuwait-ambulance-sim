@@ -12,7 +12,6 @@ import random
 
 import traci
 
-from .config import HOSPITALS, AREAS
 
 
 class Dispatcher:
@@ -22,6 +21,8 @@ class Dispatcher:
         self.ops = ops
         self.router = router
         self.count = 0
+        self.hospitals = cfg.hospitals_d()
+        self.areas = cfg.areas_d()
         self.info = {}  # amb_id -> lifecycle + navigation record
         self._edges = [e for e in net.getEdges()
                        if e.allows("passenger") and e.getLength() > 30]
@@ -29,9 +30,11 @@ class Dispatcher:
 
     # ------------------------------------------------------------- geocoding
 
-    def nearest_edges(self, lat, lon, k=4, radius=350):
+    def nearest_edges(self, lat, lon, k=4, radius=None):
         """The k closest passenger edges — the caller tries them in order,
         because the very nearest can be an unreachable one-way stub."""
+        if radius is None:
+            radius = self.cfg.snap_radius_m
         x, y = self.net.convertLonLat2XY(lon, lat)
         candidates = [(e, d) for e, d in
                       self.net.getNeighboringEdges(x, y, radius)
@@ -50,8 +53,8 @@ class Dispatcher:
         incident scene by Dijkstra travel time.  destination None picks a
         random named incident area.  Returns the new ambulance id."""
         if destination is None:
-            area = self._rng.choice(sorted(AREAS))
-            lat, lon = AREAS[area]
+            area = self._rng.choice(sorted(self.areas))
+            lat, lon = self.areas[area]
             to_edges = self.nearest_edges(lat, lon)
             to_desc = f"{area} (random area)"
             if not to_edges:
@@ -63,7 +66,7 @@ class Dispatcher:
         live = self.cfg.route_live_weights
         if origin in (None, "auto"):
             best = None
-            for name, (lat, lon) in HOSPITALS.items():
+            for name, (lat, lon) in self.hospitals.items():
                 for cand in self.nearest_edges(lat, lon, k=3):
                     r = None
                     for to_edge in to_edges:
@@ -207,10 +210,10 @@ class Dispatcher:
         if spec is None:
             return [self.random_edge()], f"random {kind}"
         if isinstance(spec, str):
-            if spec in HOSPITALS:
-                lat, lon = HOSPITALS[spec]
-            elif spec in AREAS:
-                lat, lon = AREAS[spec]
+            if spec in self.hospitals:
+                lat, lon = self.hospitals[spec]
+            elif spec in self.areas:
+                lat, lon = self.areas[spec]
             else:
                 raise ValueError(f"Unknown place: {spec}")
             edges = self.nearest_edges(lat, lon)
@@ -267,7 +270,7 @@ class Dispatcher:
         scene_edge = rec["route_edges"][-1]
         # nearest hospital by actual routed travel time (one-ways respected)
         best = None
-        for name, (lat, lon) in HOSPITALS.items():
+        for name, (lat, lon) in self.hospitals.items():
             for cand in self.nearest_edges(lat, lon, k=3):
                 if cand.getID() == scene_edge:
                     break                      # scene is at this hospital

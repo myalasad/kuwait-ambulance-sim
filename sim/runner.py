@@ -6,7 +6,7 @@ import traci
 import traci.constants as tc
 import sumolib
 
-from .config import SimConfig, HOSPITALS, AREAS
+from .config import SimConfig, SCENARIOS
 from .sumo_env import ensure_sumo_home, sumo_binary
 from .preemption import GreenWaveController
 from .actuation import DemandResponsiveController
@@ -249,10 +249,13 @@ class Simulation:
             "edges": edges,
             "tls": self._tls_static,
             "hospitals": [{"name": name, "lat": lat, "lon": lon}
-                          for name, (lat, lon) in HOSPITALS.items()],
+                          for name, (lat, lon) in
+                          self.cfg.hospitals_d().items()],
             "areas": [{"name": name, "lat": lat, "lon": lon}
-                      for name, (lat, lon) in AREAS.items()],
+                      for name, (lat, lon) in self.cfg.areas_d().items()],
             "start_hour": self.cfg.start_hour,
+            "scenario": self.cfg.scenario,
+            "scenarios": {k: v["label"] for k, v in SCENARIOS.items()},
             "bounds": [[lat0, lon0], [lat1, lon1]],
         }
 

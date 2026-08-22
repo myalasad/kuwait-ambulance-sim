@@ -171,10 +171,14 @@
       <button id="btn-reset">Reset</button>
     </div>
     <div>
+      <label for="model">Network model</label>
+      <select id="model"></select>
+    </div>
+    <div>
       <label>Kuwait clock start: <span id="hourval">07:00</span>
         <span style="float:right;color:var(--muted)">01–05 ≈ empty streets</span></label>
       <input type="range" id="hour" min="0" max="23" step="1" value="7">
-      <button id="btn-applytime">Apply time of day (restarts)</button>
+      <button id="btn-applytime">Apply time &amp; model (restarts)</button>
     </div>
   </div>
 
@@ -292,6 +296,13 @@ fetch("/api/network").then(r => r.json()).then(net => {
   if (net.start_hour !== undefined) {
     $("hour").value = net.start_hour;
     $("hourval").textContent = String(net.start_hour).padStart(2, "0") + ":00";
+  }
+  const msel = $("model");
+  for (const [key, lbl] of Object.entries(net.scenarios || {})) {
+    const o = document.createElement("option");
+    o.value = key; o.textContent = lbl;
+    if (key === net.scenario) o.selected = true;
+    msel.appendChild(o);
   }
   if (net.bounds) {
     let verifyTries = 0;
@@ -741,9 +752,11 @@ $("hour").oninput = e =>
   $("hourval").textContent = String(e.target.value).padStart(2, "0") + ":00";
 $("btn-applytime").onclick = () => {
   const h = +$("hour").value;
-  if (confirm(`Restart the simulation at ${String(h).padStart(2, "0")}:00 Kuwait time?`)) {
-    send({ cmd: "reset", hour: h });
+  const m = $("model").value;
+  if (confirm(`Restart at ${String(h).padStart(2, "0")}:00 on "${$("model").selectedOptions[0].textContent}"?`)) {
+    send({ cmd: "reset", hour: h, scenario: m });
     carPos.clear(); ambPos.clear();
+    setTimeout(() => location.reload(), 4000);  // new network layers
   }
 };
 $("preemption").onchange = e => send({ cmd: "preemption", on: e.target.checked });

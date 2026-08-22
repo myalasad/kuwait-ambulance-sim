@@ -19,11 +19,18 @@ from sim.sumo_env import ensure_sumo_home, tool_binary, tools_dir  # noqa: E402
 from sim.traffic_profile import hourly_profile, period_for_hour  # noqa: E402
 from sim.config import SimConfig  # noqa: E402
 
+from sim.config import SCENARIOS  # noqa: E402
+
+import argparse
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--scenario", default="downtown", choices=sorted(SCENARIOS))
+_SC = SCENARIOS[_ap.parse_args().scenario]
+
 DATA = os.path.join(ROOT, "data")
-OSM = os.path.join(DATA, "kuwait_downtown.osm.xml")
-NET = os.path.join(DATA, "kuwait_downtown.net.xml")
+OSM = os.path.join(DATA, _SC["osm"])
+NET = os.path.join(DATA, _SC["net"])
 VTYPES = os.path.join(DATA, "vtypes.add.xml")
-SUMOCFG = os.path.join(DATA, "scenario.sumocfg")
+SUMOCFG = os.path.join(DATA, _SC["sumocfg"])
 
 VTYPES_XML = """<additional>
     <!-- Kuwait MoH ambulance: emergency class + blue-light device.  Other
@@ -40,7 +47,7 @@ VTYPES_XML = """<additional>
 
 SUMOCFG_XML = """<configuration>
     <input>
-        <net-file value="kuwait_downtown.net.xml"/>
+        <net-file value="{net}"/>
         <route-files value="{routes}"/>
         <additional-files value="vtypes.add.xml"/>
     </input>
@@ -95,17 +102,17 @@ def main() -> None:
     # start hour 0-23 works without rebuilding — 03:00 gives the near-empty
     # night grid, 07:00 the full morning peak.
     cfg = SimConfig()
-    from sim.traffic_profile import PEAK_PERIOD_S
-    routes = os.path.join(DATA, "background_base.rou.xml")
-    print(f"  flat peak-rate base: period {PEAK_PERIOD_S:.2f} s/veh for "
+    peak_period = _SC["peak_period_s"]
+    routes = os.path.join(DATA, _SC["routes"])
+    print(f"  flat peak-rate base: period {peak_period:.2f} s/veh for "
           f"{cfg.demand_hours:.0f} h (scaled live by the hourly profile)")
     run([
         sys.executable, os.path.join(tools_dir(), "randomTrips.py"),
         "-n", NET,
-        "-o", os.path.join(DATA, "background_base.trips.xml"),
+        "-o", os.path.join(DATA, _SC["routes"].replace(".rou.", ".trips.")),
         "-r", routes,
         "-b", "0", "-e", str(int(cfg.demand_hours * 3600)),
-        "--period", f"{PEAK_PERIOD_S:.3f}",
+        "--period", f"{peak_period:.3f}",
         "--fringe-factor", "5",
         "--seed", "42",
         "--validate",
@@ -117,7 +124,8 @@ def main() -> None:
     with open(VTYPES, "w") as f:
         f.write(VTYPES_XML)
     with open(SUMOCFG, "w") as f:
-        f.write(SUMOCFG_XML.format(routes=os.path.basename(routes)))
+        f.write(SUMOCFG_XML.format(routes=os.path.basename(routes),
+                                   net=_SC["net"]))
     print(f"\nScenario ready: {SUMOCFG}")
 
 

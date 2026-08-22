@@ -9,8 +9,16 @@ import os
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QUERY_FILE = os.path.join(ROOT, "scripts", "overpass_query.txt")
-OUT_FILE = os.path.join(ROOT, "data", "kuwait_downtown.osm.xml")
+import sys
+sys.path.insert(0, ROOT)
+from sim.config import SCENARIOS
+
+import argparse
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--scenario", default="downtown", choices=sorted(SCENARIOS))
+_SC = SCENARIOS[_ap.parse_args().scenario]
+QUERY_FILE = os.path.join(ROOT, "scripts", _SC["query"])
+OUT_FILE = os.path.join(ROOT, "data", _SC["osm"])
 OVERPASS = "https://overpass-api.de/api/interpreter"
 
 
