@@ -1,5 +1,6 @@
 """Core simulation wrapper: owns the TraCI connection, the preemption
 controller, the dispatcher, the operations log and per-step snapshots."""
+import math
 import os
 
 import traci
@@ -273,12 +274,21 @@ class Simulation:
                     continue
                 in_lane = group[0][0]
                 try:
-                    x, y = traci.lane.getShape(in_lane)[-1]
+                    shape = traci.lane.getShape(in_lane)
+                    x, y = shape[-1]
                 except traci.TraCIException:
                     heads.append(None)
                     continue
+                # approach bearing (deg, 0=N clockwise) so the map can draw
+                # the stop bar perpendicular and the head facing traffic
+                if len(shape) >= 2:
+                    px, py = shape[-2]
+                    bearing = round(math.degrees(
+                        math.atan2(x - px, y - py)) % 360)
+                else:
+                    bearing = 0
                 lon, lat = self.net.convertXY2LonLat(x, y)
-                heads.append([round(lat, 6), round(lon, 6)])
+                heads.append([round(lat, 6), round(lon, 6), bearing])
                 xs.append(x)
                 ys.append(y)
             if xs:

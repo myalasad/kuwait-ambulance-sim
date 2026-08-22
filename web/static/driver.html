@@ -198,7 +198,18 @@ pollNav(); setInterval(pollNav, 2500);
 // interpolation between them — buttery at any frame rate, one snapshot of
 // latency behind the sim (imperceptible).
 const poses = new Map();   // amb id -> {A, B, dt}
-const carsBuf = new Map(); // car id -> {A, B, dt}
+const carsBuf = new Map(); // car id -> {A, B, dt, ang, col}
+const CAR_COLORS = ["#8fa3bd", "#a08f6e", "#6e8fa0", "#7a6a9c", "#4f8f7a",
+                    "#a37f8a", "#b7bdc7", "#5b7ea8"];
+function roundRect2(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
 let ws = null;
 (function connect() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
@@ -233,18 +244,30 @@ let ws = null;
     }
     for (const id of poses.keys())
       if (!f.ambs.some(a => a.id === id)) poses.delete(id);
-    // nearby traffic gets the same treatment (position only)
+    // nearby traffic gets the same treatment (position + motion bearing)
     const seen = new Set();
     for (const [id, lon, lat] of f.cars) {
       seen.add(id);
       const [x, y] = toM(lat, lon);
       const rec = carsBuf.get(id);
-      if (!rec) { carsBuf.set(id, { A: { x, y, t: tNow - 500 },
-                                    B: { x, y, t: tNow }, dt: 500 }); continue; }
+      if (!rec) {
+        let hsh = 0;
+        for (let i = 0; i < id.length; i++) hsh = (hsh * 31 + id.charCodeAt(i)) | 0;
+        carsBuf.set(id, { A: { x, y, t: tNow - 500 },
+                          B: { x, y, t: tNow }, dt: 500, ang: 0,
+                          col: CAR_COLORS[Math.abs(hsh) % CAR_COLORS.length] });
+        continue;
+      }
       const step = tNow - rec.B.t;
-      if (Math.hypot(x - rec.B.x, y - rec.B.y) > 120 || step > 3000)
+      const dxm = x - rec.B.x, dym = y - rec.B.y;
+      if (Math.hypot(dxm, dym) > 120 || step > 3000)
         rec.A = { x, y, t: tNow - rec.dt };
-      else { rec.A = rec.B; rec.dt = rec.dt * 0.7 + Math.min(1500, step) * 0.3; }
+      else {
+        rec.A = rec.B;
+        rec.dt = rec.dt * 0.7 + Math.min(1500, step) * 0.3;
+        if (Math.hypot(dxm, dym) > 1.5)
+          rec.ang = Math.atan2(dxm, dym);   // world bearing, rad, 0=N CW
+      }
       rec.B = { x, y, t: tNow };
     }
     for (const id of carsBuf.keys()) if (!seen.has(id)) carsBuf.delete(id);
@@ -351,15 +374,29 @@ function tick(now) {
     }
   }
 
-  // other traffic nearby, interpolated like us
-  ctx.fillStyle = "#8b98ad";
+  // other traffic nearby: little 3D cars, interpolated like us
   for (const rec2 of carsBuf.values()) {
     const u2 = Math.max(0, Math.min((now - rec2.B.t) / Math.max(rec2.dt, 16), 1.15));
     const mx = rec2.A.x + (rec2.B.x - rec2.A.x) * u2;
     const my = rec2.A.y + (rec2.B.y - rec2.A.y) * u2;
     if (Math.abs(mx - disp.x) > R && Math.abs(my - disp.y) > R) continue;
     const [sx, sy] = P(mx, my);
-    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 7); ctx.fill();
+    const rel = rec2.ang - disp.a;   // heading relative to our camera
+    const CL = 4.6 * SCALE, CW = 2.1 * SCALE;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(rel);
+    ctx.beginPath();
+    ctx.ellipse(0.8, 1.2, CW * 0.85, CL * 0.6, 0, 0, 7);
+    ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fill();
+    roundRect2(ctx, -CW / 2, -CL / 2, CW, CL, CW * 0.32);
+    ctx.fillStyle = rec2.col || "#8b98ad"; ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.25)";
+    roundRect2(ctx, -CW / 2, -CL / 2, CW * 0.48, CL, CW * 0.32); ctx.fill();
+    ctx.fillStyle = "#1b2433";
+    roundRect2(ctx, -CW * 0.36, -CL * 0.38, CW * 0.72, CL * 0.2, 1.2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // us: fixed chevron, heading up

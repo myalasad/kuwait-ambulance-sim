@@ -108,6 +108,11 @@
   #pickhint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
     z-index: 1000; background: var(--kw-green); color: #fff; font-weight: 600;
     padding: 6px 14px; border-radius: 999px; font-size: 13px; display: none; }
+  #zoomhint { position: absolute; bottom: 14px; left: 50%;
+    transform: translateX(-50%); z-index: 1000; display: none;
+    background: rgba(13,17,25,.85); border: 1px solid var(--line);
+    color: var(--muted); padding: 5px 14px; border-radius: 999px;
+    font-size: 12px; }
   #decisions { position: absolute; top: 48px; left: 50%;
     transform: translateX(-50%); z-index: 1100; display: flex;
     flex-direction: column; gap: 8px; width: min(560px, 90%); }
@@ -212,7 +217,7 @@
       <span><i style="background:#f0b429"></i>amber transition</span>
       <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>purposely enabled</span>
       <span><i style="background:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>early green (lone traffic)</span>
-      <span><i style="background:#9aa7bb"></i>car</span>
+      <span><i style="background:#9aa7bb"></i>car (3D up close)</span>
       <span><i style="background:#ff2d2d;box-shadow:0 0 6px #3b82f6"></i>ambulance</span>
     </div>
   </div>
@@ -224,6 +229,7 @@
   <div id="clockchip"><span id="clock2">--:--:--</span><small>Kuwait time (sim)</small></div>
   <div id="status"><span class="dot"></span><span id="status-text">connecting…</span></div>
   <div id="pickhint"></div>
+  <div id="zoomhint">🔍 Zoom in — junctions, signal heads and cars turn 3D</div>
   <div id="decisions"></div>
 </div>
 
@@ -348,11 +354,19 @@ function onFrame(ev) {
   if (!f.cars) return;              // heartbeat frame
   frame = f;
   const seen = new Set();
-  for (const [id, lon, lat] of f.cars) {
+  for (const [id, lon, lat, ang] of f.cars) {
     seen.add(id);
     const p = carPos.get(id);
-    if (p) { p.tLon = lon; p.tLat = lat; }
-    else carPos.set(id, { lon, lat, tLon: lon, tLat: lat });
+    if (p) {
+      p.tLon = lon; p.tLat = lat;
+      if (ang !== undefined) p.tAng = ang;
+    } else {
+      let h = 0;
+      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+      carPos.set(id, { lon, lat, tLon: lon, tLat: lat,
+                       ang: ang || 0, tAng: ang || 0,
+                       col: CAR_COLORS[Math.abs(h) % CAR_COLORS.length] });
+    }
   }
   for (const id of carPos.keys()) if (!seen.has(id)) carPos.delete(id);
   // ambulances: buffer the last two snapshots for constant-velocity
@@ -475,6 +489,54 @@ function updateDecisions(f) {
 const SIG = { G: "#22c55e", g: "#22c55e", y: "#f0b429", Y: "#f0b429",
               r: "#ef4444", R: "#ef4444", u: "#ef4444", o: "#6b7280",
               O: "#6b7280", s: "#6b7280" };
+const CAR_COLORS = ["#8fa3bd", "#a08f6e", "#6e8fa0", "#7a6a9c", "#4f8f7a",
+                    "#a37f8a", "#b7bdc7", "#5b7ea8", "#8a8f66", "#7d94ab"];
+
+// pseudo-3D car: shadowed rounded body, roof highlight, windows — heading
+// along its travel direction.  mode 1 = simple, mode 2 = full detail.
+function drawMiniCar(x, y, angDeg, color, mode, zoom) {
+  const rot = (angDeg - 90) * Math.PI / 180;
+  const L = zoom >= 17 ? 16 : zoom >= 16 ? 13 : 10.5;
+  const W = L * 0.52;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  if (mode === 2 && zoom >= 16) {
+    ctx.beginPath();
+    ctx.ellipse(1, 1.6, L * 0.6, W * 0.72, 0, 0, 7);
+    ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fill();
+  }
+  roundRect(ctx, -L / 2, -W / 2, L, W, W * 0.35);
+  ctx.fillStyle = color; ctx.fill();
+  if (mode === 2) {
+    ctx.fillStyle = "rgba(255,255,255,.26)";
+    roundRect(ctx, -L / 2, -W / 2, L, W * 0.45, W * 0.35); ctx.fill();
+    ctx.fillStyle = "#1b2433";
+    roundRect(ctx, L * 0.12, -W * 0.36, L * 0.22, W * 0.72, 1.5); ctx.fill();
+    roundRect(ctx, -L * 0.34, -W * 0.33, L * 0.14, W * 0.66, 1.2); ctx.fill();
+  } else {
+    ctx.fillStyle = "#1b2433";
+    roundRect(ctx, L * 0.1, -W * 0.35, L * 0.22, W * 0.7, 1.2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// standing per-approach signal head: pole, casing, lit lamp
+function drawHeadLollipop(x, y, color, zoom) {
+  const s = zoom >= 17 ? 1.25 : zoom >= 16 ? 1.0 : 0.8;
+  ctx.beginPath();
+  ctx.ellipse(x + 1, y + 3 * s, 3.5 * s, 1.6 * s, 0, 0, 7);
+  ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.fill();
+  ctx.fillStyle = "#2b3345";
+  ctx.fillRect(x - 0.9 * s, y - 6 * s, 1.8 * s, 8 * s);
+  ctx.beginPath(); ctx.arc(x, y - 8 * s, 3.2 * s, 0, 7);
+  ctx.fillStyle = "#171c26"; ctx.fill();
+  ctx.strokeStyle = "#4a586d"; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x, y - 8 * s, 1.9 * s, 0, 7);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color; ctx.shadowBlur = 5;
+  ctx.fill(); ctx.shadowBlur = 0;
+}
 
 function roundRect(c, x, y, w, h, r) {
   c.beginPath();
@@ -487,10 +549,11 @@ function roundRect(c, x, y, w, h, r) {
 }
 
 // pseudo-3D traffic light: dark housing on a pole shadow, three lamps
-function drawSignalHousing(cx, cy, mode, aggState, label, now) {
+function drawSignalHousing(cx, cy, mode, aggState, label, now, s = 1) {
   const w = 12, h = 26;
   ctx.save();
   ctx.translate(cx, cy);
+  ctx.scale(s, s);
   // ground shadow gives the 3D standing feel
   ctx.beginPath();
   ctx.ellipse(0, h / 2 + 4, 9, 3.2, 0, 0, 7);
@@ -519,7 +582,7 @@ function drawSignalHousing(cx, cy, mode, aggState, label, now) {
   }
   ctx.restore();
   if (mode !== "normal") {
-    const pulse = 15 + 4 * Math.sin(now / 170);
+    const pulse = (15 + 4 * Math.sin(now / 170)) * s;
     ctx.beginPath(); ctx.arc(cx, cy, pulse, 0, 7);
     ctx.strokeStyle = mode === "preempted" || mode === "clearing"
       ? "rgba(34,197,94,.9)" : mode === "demand"
@@ -626,58 +689,94 @@ function render(now) {
     }
   }
 
-  // per-approach signal heads
+  // white stop bars across each signalized approach (under the cars)
+  if (zoom >= 15.5) {
+    ctx.strokeStyle = "rgba(232,237,246,.8)";
+    ctx.lineWidth = zoom >= 16.5 ? 3 : 2;
+    for (const t of tlsStatic) {
+      if (!frame.tls[t.id]) continue;
+      for (const h of t.heads) {
+        if (!h) continue;
+        const p = map.latLngToContainerPoint([h[0], h[1]]);
+        if (p.x < -20 || p.y < -20 || p.x > vw + 20 || p.y > vh + 20) continue;
+        const a = (h[2] || 0) * Math.PI / 180;
+        const len = zoom >= 16.5 ? 9 : 6;   // half-length, perp to approach
+        ctx.beginPath();
+        ctx.moveTo(p.x - Math.cos(a) * len, p.y - Math.sin(a) * len);
+        ctx.lineTo(p.x + Math.cos(a) * len, p.y + Math.sin(a) * len);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // cars: dots far out, 3D bodies up close
+  const carMode = zoom >= 15.5 ? 2 : zoom >= 14 ? 1 : 0;
+  for (const p of carPos.values()) {
+    p.lon += (p.tLon - p.lon) * k;
+    p.lat += (p.tLat - p.lat) * k;
+    const dAng = (((p.tAng || 0) - (p.ang || 0) + 540) % 360) - 180;
+    p.ang = (p.ang || 0) + dAng * k;
+    const c = map.latLngToContainerPoint([p.lat, p.lon]);
+    if (c.x < -14 || c.y < -14 || c.x > vw + 14 || c.y > vh + 14) continue;
+    if (carMode === 0) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 2.2, 0, 7);
+      ctx.fillStyle = p.col;
+      ctx.fill();
+    } else {
+      drawMiniCar(c.x, c.y, p.ang, p.col, carMode, zoom);
+    }
+  }
+
+  // per-approach signal heads: standing 3D lollipops up close, dots further
   if (zoom >= 13.5) {
-    const rHead = zoom >= 16 ? 3.5 : 2.5;
+    const mini = zoom >= 15.5;
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st) continue;
       for (let i = 0; i < t.heads.length; i++) {
         const h = t.heads[i];
         if (!h) continue;
-        const p = map.latLngToContainerPoint(h);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, rHead, 0, 7);
-        ctx.fillStyle = SIG[st.s[i]] || "#6b7280";
-        ctx.fill();
+        const p = map.latLngToContainerPoint([h[0], h[1]]);
+        if (p.x < -20 || p.y < -20 || p.x > vw + 20 || p.y > vh + 20) continue;
+        const color = SIG[st.s[i]] || "#6b7280";
+        if (mini) drawHeadLollipop(p.x, p.y, color, zoom);
+        else {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2.6, 0, 7);
+          ctx.fillStyle = color;
+          ctx.fill();
+        }
       }
     }
   }
 
-  // 3D signal housings + purposely-enabled labels
-  if (zoom >= 14.5) {
+  // 3D signal housings + purposely-enabled labels, scaled with zoom
+  if (zoom >= 13.5) {
+    const hs = Math.min(1.15, Math.max(0.55, (zoom - 12.5) / 3.2));
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st) continue;
       const c = map.latLngToContainerPoint([t.lat, t.lon]);
       if (c.x < -30 || c.y < -30 || c.x > vw + 30 || c.y > vh + 30) continue;
       let label = null;
-      if (st.m === "preempted" || st.m === "clearing")
-        label = { text: `PURPOSELY ENABLED · ${st.case} · ${st.amb}`, color: "#22c55e" };
-      else if (st.m === "transition")
-        label = { text: `ENABLING · ${st.case}`, color: "#f0b429" };
-      else if (st.m === "restoring")
-        label = { text: `RESTORING · ${st.case}`, color: "#f0b429" };
-      else if (st.m === "demand")
-        label = { text: "EARLY GREEN · lone traffic", color: "#22d3ee" };
-      else if (restoredBadges.get(t.id) > Date.now())
-        label = { text: "BACK TO NORMAL ✓", color: "#8be9b6" };
-      drawSignalHousing(c.x, c.y, st.m, st.s, label, now);
+      if (zoom >= 14.5) {
+        if (st.m === "preempted" || st.m === "clearing")
+          label = { text: `PURPOSELY ENABLED · ${st.case} · ${st.amb}`, color: "#22c55e" };
+        else if (st.m === "transition")
+          label = { text: `ENABLING · ${st.case}`, color: "#f0b429" };
+        else if (st.m === "restoring")
+          label = { text: `RESTORING · ${st.case}`, color: "#f0b429" };
+        else if (st.m === "demand")
+          label = { text: "EARLY GREEN · lone traffic", color: "#22d3ee" };
+        else if (restoredBadges.get(t.id) > Date.now())
+          label = { text: "BACK TO NORMAL ✓", color: "#8be9b6" };
+      }
+      drawSignalHousing(c.x, c.y, st.m, st.s, label, now, hs);
     }
   }
 
-  // cars
-  const rCar = zoom >= 16 ? 3.4 : zoom >= 14.5 ? 2.6 : 2;
-  ctx.fillStyle = "#9aa7bb";
-  for (const p of carPos.values()) {
-    p.lon += (p.tLon - p.lon) * k;
-    p.lat += (p.tLat - p.lat) * k;
-    const c = map.latLngToContainerPoint([p.lat, p.lon]);
-    if (c.x < -10 || c.y < -10 || c.x > vw + 10 || c.y > vh + 10) continue;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, rCar, 0, 7);
-    ctx.fill();
-  }
+  $("zoomhint").style.display = zoom < 14.5 ? "block" : "none";
 
   // ambulances: constant-velocity interpolation between snapshots
   const blue = Math.floor(now / 260) % 2 === 0;
