@@ -9,6 +9,7 @@ import sumolib
 from .config import SimConfig, HOSPITALS
 from .sumo_env import ensure_sumo_home, sumo_binary
 from .preemption import GreenWaveController
+from .actuation import DemandResponsiveController
 from .ambulance import Dispatcher
 from .metrics import Metrics
 from .operations import OperationsLog
@@ -18,10 +19,12 @@ VEH_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED]
 
 
 class Simulation:
-    def __init__(self, root, cfg=None, gui=False, preemption=True, seed=None):
+    def __init__(self, root, cfg=None, gui=False, preemption=True, seed=None,
+                 extra_args=None):
         self.root = root
         self.cfg = cfg or SimConfig()
         self.gui = gui
+        self.extra_args = list(extra_args or [])
         self.seed = self.cfg.seed if seed is None else seed
         self._preemption_wanted = preemption
         self.net = None
@@ -49,11 +52,14 @@ class Simulation:
         ]
         if self.cfg.lateral_resolution > 0:
             cmd += ["--lateral-resolution", str(self.cfg.lateral_resolution)]
+        cmd += self.extra_args
         traci.start(cmd)
         self.ops = OperationsLog(self.root)
         self.router = Router(self.net)
         self.controller = GreenWaveController(
             self.cfg, self.ops, enabled=self._preemption_wanted)
+        self.actuation = DemandResponsiveController(
+            self.cfg, self.ops, enabled=self.cfg.actuation_enabled)
         self.dispatcher = Dispatcher(self.net, self.cfg, self.ops, self.router)
         self.metrics = Metrics()
         for tls_id in traci.trafficlight.getIDList():
@@ -94,6 +100,9 @@ class Simulation:
             self._attribute_delay(active)
         self.controller.update(
             self.dispatcher.active_ambulances(lights_only=True), self.time)
+        self.actuation.update(
+            self.time,
+            excluded=set(self.controller.active) | set(self.controller.pending))
 
     def _attribute_delay(self, active):
         """Split each ambulance's lost time between 'waiting at a red signal'
@@ -154,12 +163,15 @@ class Simulation:
                 cars.append([veh_id, round(lon, 6), round(lat, 6), angle])
 
         status = self.controller.status()
+        demand = self.actuation.status()
         tls = {}
         for tls_id, vals in traci.trafficlight.getAllSubscriptionResults().items():
             entry = {"s": vals.get(tc.TL_RED_YELLOW_GREEN_STATE, ""),
                      "m": "normal", "case": None, "amb": None}
             if tls_id in status:
                 entry.update(status[tls_id])
+            elif tls_id in demand:
+                entry["m"] = "demand"
             tls[tls_id] = entry
 
         events = [{"t": e["t"], "msg": e["msg"], "sev": e["sev"],
@@ -179,6 +191,8 @@ class Simulation:
         kpi["teleports"] = self.teleports
         kpi["clock"] = self.clock()
         kpi["open_cases"] = len(self.ops.open_cases())
+        kpi["early_greens"] = self.actuation.granted_total
+        kpi["demand_serving"] = self.actuation.active_count()
 
         return {
             "t": self.time,

@@ -228,6 +228,13 @@
           <td class="act">Auto-reroute to the nearest hospital; loading pause
           (corridor paused), then hot return — corridor follows the new
           route</td><td>reroute op</td></tr>
+        <tr><td>10</td><td>No ambulance involved: exactly ONE approach of a
+          junction occupied, every other approach empty ≥ 3 s</td>
+          <td class="crit w-timer">DEMAND (skip a pointless red)</td>
+          <td class="act">Early green via the junction's own amber; ends the
+          moment another approach is occupied, the lone traffic passes, or
+          after 30 s — with several approaches occupied everyone gets the
+          fair timer</td><td>actuation op</td></tr>
       </tbody>
     </table>
     <div id="dmm-live"><span style="color:var(--muted)">DMM in action —

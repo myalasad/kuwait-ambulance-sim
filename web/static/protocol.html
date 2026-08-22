@@ -248,7 +248,27 @@
     per camera, per ambulance, per case.</p>
   </div>
 
-  <h2><span class="no">8</span>Data provenance — what is real here</h2>
+  <h2><span class="no">8</span>Demand-responsive signals for ordinary traffic</h2>
+  <div class="scenario">
+    <h3>Early green for a lone driver — fair timers whenever anyone else is
+    waiting</h3>
+    <p>No ambulance involved: if exactly <b>one approach</b> of a junction is
+    occupied and every other approach has been <b>empty for
+    <code>3 s</code></b>, the junction moves through its own amber to the
+    phase serving that approach — nobody sits at a red for an empty crossing
+    (the late-night Mishref / Mubarak Al-Abdullah situation). The early green
+    ends the moment <b>any other approach becomes occupied</b> (after a
+    <code>5 s</code> minimum green), when the lone traffic has passed, or at
+    the <code>30 s</code> cap — the junction then resumes its normal
+    fixed-time cycle, so with several approaches occupied <b>everyone gets
+    the fair timer</b>, no favourites. A <code>10 s</code> per-junction
+    cooldown prevents flip-flopping. Ambulance preemption always outranks
+    this rule, and every grant and release is logged as an
+    <code>actuation</code> operation; the map labels the junction
+    "EARLY GREEN · lone traffic".</p>
+  </div>
+
+  <h2><span class="no">9</span>Data provenance — what is real here</h2>
   <ul>
     <li><b>Real:</b> the downtown Kuwait City road network, one-way system,
         turn restrictions and signal locations (OpenStreetMap), simulated at

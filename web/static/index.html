@@ -197,6 +197,7 @@
       <span><i style="background:#ef4444"></i>approach red</span>
       <span><i style="background:#f0b429"></i>amber transition</span>
       <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>purposely enabled</span>
+      <span><i style="background:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>early green (lone traffic)</span>
       <span><i style="background:#9aa7bb"></i>car</span>
       <span><i style="background:#ff2d2d;box-shadow:0 0 6px #3b82f6"></i>ambulance</span>
     </div>
@@ -463,7 +464,8 @@ function drawSignalHousing(cx, cy, mode, aggState, label, now) {
   ctx.strokeStyle = "#4a586d"; ctx.lineWidth = 1; ctx.stroke();
   // lamps
   const lamps = [["#ef4444", "#3a1414"], ["#f0b429", "#3a2f10"], ["#22c55e", "#123a20"]];
-  const lit = mode === "preempted" || mode === "clearing" ? 2
+  const lit = mode === "preempted" || mode === "clearing"
+              || mode === "demand" ? 2
             : mode === "transition" || mode === "restoring" ? 1
             : /[Gg]/.test(aggState) ? 2 : 0;
   for (let i = 0; i < 3; i++) {
@@ -480,7 +482,8 @@ function drawSignalHousing(cx, cy, mode, aggState, label, now) {
     const pulse = 15 + 4 * Math.sin(now / 170);
     ctx.beginPath(); ctx.arc(cx, cy, pulse, 0, 7);
     ctx.strokeStyle = mode === "preempted" || mode === "clearing"
-      ? "rgba(34,197,94,.9)" : "rgba(240,180,41,.9)";
+      ? "rgba(34,197,94,.9)" : mode === "demand"
+      ? "rgba(34,211,238,.9)" : "rgba(240,180,41,.9)";
     ctx.lineWidth = 2.5; ctx.stroke();
   }
   if (label) {
@@ -615,6 +618,8 @@ function render(now) {
         label = { text: `ENABLING · ${st.case}`, color: "#f0b429" };
       else if (st.m === "restoring")
         label = { text: `RESTORING · ${st.case}`, color: "#f0b429" };
+      else if (st.m === "demand")
+        label = { text: "EARLY GREEN · lone traffic", color: "#22d3ee" };
       else if (restoredBadges.get(t.id) > Date.now())
         label = { text: "BACK TO NORMAL ✓", color: "#8be9b6" };
       drawSignalHousing(c.x, c.y, st.m, st.s, label, now);

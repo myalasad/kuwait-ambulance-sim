@@ -65,6 +65,14 @@ class SimConfig:
     patient_load_s: float = 40.0         # loading stop at the scene; the
     #                                      corridor is paused while loading
 
+    # --- demand-responsive signals for ordinary traffic ---
+    actuation_enabled: bool = True
+    lone_confirm_s: float = 3.0       # all other approaches must be empty
+    #                                   this long before an early green
+    lone_min_green_s: float = 5.0     # minimum served green once granted
+    lone_max_hold_s: float = 30.0     # early-green cap; then fair timers
+    actuation_cooldown_s: float = 10.0  # between early greens per junction
+
     # --- vehicles ---
     ambulance_type: str = "ambulance"
     speed_exemption_factor: float = 1.5  # ambulances may run at up to 150%
