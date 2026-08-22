@@ -47,7 +47,7 @@ class Router:
 
     # ------------------------------------------------------------- weights
 
-    def _weight(self, eid, live, horizon=0.0):
+    def _weight(self, eid, live, horizon=0.0, predictive=True):
         """Travel-time weight of entering `eid` `horizon` seconds from now.
 
         With a Markov predictor attached and enough history, the weight is
@@ -55,7 +55,7 @@ class Router:
         HORIZON — anticipatory routing: the route avoids where congestion
         WILL be, not just where it is.  Falls back to live TraCI travel
         time, then to free flow."""
-        if self.predictor is not None and horizon > 0:
+        if predictive and self.predictor is not None and horizon > 0:
             v = self.predictor.predicted_speed(eid, horizon)
             if v:
                 t = self._lengths.get(eid, 0.0) / max(v, 0.5)
@@ -72,8 +72,10 @@ class Router:
 
     # ------------------------------------------------------------ dijkstra
 
-    def route(self, from_edge, to_edge, live=True):
-        """Shortest-time edge sequence from from_edge to to_edge, or None."""
+    def route(self, from_edge, to_edge, live=True, predictive=True):
+        """Shortest-time edge sequence from from_edge to to_edge, or None.
+        predictive=False ignores the Markov predictor (live weights only) —
+        used to measure whether the prediction changed the decision."""
         if from_edge not in self.succ or to_edge not in self.succ:
             return None
         if from_edge == to_edge:
@@ -97,7 +99,8 @@ class Router:
                     continue
                 # time-dependent: the weight of the next edge is evaluated
                 # at the horizon we would reach it (cumulative time so far)
-                nd = d + self._weight(nxt, live, horizon=d)
+                nd = d + self._weight(nxt, live, horizon=d,
+                                      predictive=predictive)
                 if nd < dist.get(nxt, float("inf")):
                     dist[nxt] = nd
                     prev[nxt] = eid
@@ -105,6 +108,13 @@ class Router:
         return None
 
     # ------------------------------------------------------ nodal analysis
+
+    def route_time(self, edges, live=True, predictive=True):
+        """Total weighted travel time of an edge sequence."""
+        t = 0.0
+        for eid in edges:
+            t += self._weight(eid, live, horizon=t, predictive=predictive)
+        return t
 
     def nodal_analysis(self, edges, live=True):
         """Node-by-node breakdown of a route: cumulative distance, ETA,

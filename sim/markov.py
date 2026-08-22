@@ -194,21 +194,41 @@ class TrafficMarkov:
         self._limits = {}         # edge id -> speed limit
         self._next_sample = 0.0
         self._loaded_obs = 0
+        self.sessions = 1            # how many sessions fed the chains
+        # forecast ledger: every sample, a 5-minute forecast per corridor is
+        # filed and later SCORED against what actually happened — the CTMC
+        # must beat two naive baselines (persistence, climatology) or the
+        # page says so.  Nothing here is decorative.
+        self.horizon_s = 300.0
+        self._pending = []           # (due_t, edge, p_ctmc, persist, clim)
+        self.scores = {"ctmc": [0, 0, 0.0], "persistence": [0, 0, 0.0],
+                       "climatology": [0, 0, 0.0]}   # [hits, n, brier_sum]
+        self.recent = []             # last scored forecasts for display
+        self.routing_evidence = {"compared": 0, "differed": 0,
+                                 "predicted_saving_s": 0.0}
 
-        # monitor the arterials individually; everything else pools by class
-        monitored = []
+        # Monitor where traffic actually CHANGES state: the approaches to
+        # signalized junctions (queues form and clear there) first, then the
+        # major arterials.  Everything else pools by road class.
+        approaches, arterials = [], []
         for e in net.getEdges():
             if not e.allows("passenger"):
                 continue
             eid = e.getID()
             self._limits[eid] = e.getSpeed()
-            cls = "class:major" if (e.getPriority() >= 9
-                                    or e.getLaneNumber() >= 3) else "class:minor"
-            self._edge_class[eid] = cls
-            if cls == "class:major" and e.getLength() > 80:
-                monitored.append(eid)
-        monitored.sort()
-        self.monitored = monitored[:cfg.markov_max_edges]
+            major = e.getPriority() >= 9 or e.getLaneNumber() >= 3
+            self._edge_class[eid] = "class:major" if major else "class:minor"
+            if e.getLength() < 40:
+                continue
+            if e.getToNode().getType().startswith("traffic_light"):
+                approaches.append((0 if major else 1, eid))
+            elif major and e.getLength() > 80:
+                arterials.append((2, eid))
+        ranked = sorted(approaches) + sorted(arterials)
+        self.monitored = [eid for _, eid in ranked][:cfg.markov_max_edges]
+        self.session_scores = {"ctmc": [0, 0, 0.0],
+                               "persistence": [0, 0, 0.0],
+                               "climatology": [0, 0, 0.0]}
         self._load()
 
     # ------------------------------------------------------------- feeding
@@ -222,6 +242,16 @@ class TrafficMarkov:
             for key, d in data.get("chains", {}).items():
                 self.chains[key] = _Chain.from_json(d)
             self._loaded_obs = sum(c.n for c in self.chains.values())
+            self.sessions = int(data.get("sessions", 0)) + 1
+            sc = data.get("scores")
+            if sc:
+                for k in self.scores:
+                    if k in sc:
+                        self.scores[k] = [int(sc[k][0]), int(sc[k][1]),
+                                          float(sc[k][2])]
+            ev = data.get("routing_evidence")
+            if ev:
+                self.routing_evidence.update(ev)
         except (ValueError, KeyError, OSError):
             self.chains = {}
 
@@ -229,6 +259,9 @@ class TrafficMarkov:
         try:
             with open(self.path, "w") as f:
                 json.dump({"period_s": self.period,
+                           "sessions": self.sessions,
+                           "scores": self.scores,
+                           "routing_evidence": self.routing_evidence,
                            "chains": {k: c.to_json()
                                       for k, c in self.chains.items()}}, f)
         except OSError:
@@ -249,6 +282,115 @@ class TrafficMarkov:
             self.chains.setdefault(eid, _Chain()).observe(state, now)
             self.chains.setdefault(self._edge_class[eid],
                                    _Chain()).observe(state, now)
+        self._score_due(now)
+        self._file_forecasts(now)
+
+    # ------------------------------------------- forecast ledger (observable)
+
+    def _file_forecasts(self, now):
+        for eid in self.monitored:
+            chain = self._chain_for(eid)
+            if chain is None or chain.n < self.cfg.markov_min_obs:
+                continue
+            state = self.state_now.get(eid, 0)
+            p_ctmc = expm(chain.Q(), self.horizon_s)[state]
+            persist = [1.0 if s == state else 0.0 for s in range(N_STATES)]
+            clim = stationary(chain.P())
+            self._pending.append((now + self.horizon_s, eid, state,
+                                  p_ctmc, persist, clim))
+        # bound memory: drop anything far overdue (should not happen)
+        if len(self._pending) > 20000:
+            self._pending = self._pending[-20000:]
+
+    def _score_due(self, now):
+        keep = []
+        for item in self._pending:
+            due, eid, from_state, p_ctmc, persist, clim = item
+            if due > now + 1e-6:
+                keep.append(item)
+                continue
+            actual = self.state_now.get(eid)
+            if actual is None:
+                continue
+            for name, dist in (("ctmc", p_ctmc), ("persistence", persist),
+                               ("climatology", clim)):
+                hit = max(range(N_STATES), key=lambda k: dist[k]) == actual
+                brier = sum((dist[k] - (1.0 if k == actual else 0.0)) ** 2
+                            for k in range(N_STATES))
+                for sc in (self.scores[name], self.session_scores[name]):
+                    sc[1] += 1
+                    sc[0] += 1 if hit else 0
+                    sc[2] += brier
+            self.recent.append({
+                "edge": eid,
+                "road": (self.places.road(eid) if self.places else eid),
+                "made_t": due - self.horizon_s, "due_t": due,
+                "from": STATE_NAMES[from_state],
+                "predicted": STATE_NAMES[max(range(N_STATES),
+                                             key=lambda k: p_ctmc[k])],
+                "p_predicted": round(max(p_ctmc), 2),
+                "actual": STATE_NAMES[actual],
+                "hit": max(range(N_STATES), key=lambda k: p_ctmc[k]) == actual,
+            })
+            if len(self.recent) > 40:
+                self.recent.pop(0)
+        self._pending = keep
+
+    @staticmethod
+    def _skill(scores):
+        out = {}
+        for name, (hits, n, brier) in scores.items():
+            out[name] = {"hit_rate": round(hits / n, 3) if n else None,
+                         "brier": round(brier / n, 4) if n else None,
+                         "n": n}
+        c, cl, pe = out["ctmc"], out["climatology"], out["persistence"]
+        def bss(ref):
+            if not c["n"] or ref["brier"] in (None, 0):
+                return None
+            return round(1.0 - c["brier"] / ref["brier"], 3)
+        # Brier skill score: 1 = perfect, 0 = no better than the baseline,
+        # negative = worse than the baseline.  This is the number that
+        # decides whether the predictor earns its place.
+        out["skill_vs_climatology"] = bss(cl)
+        out["skill_vs_persistence"] = bss(pe)
+        return out
+
+    def accuracy(self):
+        return {"all_time": self._skill(self.scores),
+                "this_session": self._skill(self.session_scores)}
+
+    def corridor_detail(self, eid):
+        """Everything needed to SEE the chains for one corridor: counts,
+        the DTMC matrix P, the CTMC generator Q, the stationary distribution,
+        the current-state forecast rows, and its recent scored forecasts."""
+        chain = self.chains.get(eid)
+        if chain is None:
+            return None
+        state = self.state_now.get(eid, 0)
+        p = chain.P()
+        q = chain.Q()
+        return {
+            "edge": eid,
+            "road": (self.places.corridor(eid) if self.places
+                     else {"road": eid, "area": "", "dir": ""}),
+            "observations": chain.n,
+            "state_now": STATE_NAMES[state],
+            "states": list(STATE_NAMES),
+            "dtmc": {
+                "counts": [[int(x) for x in row] for row in chain.C],
+                "P": [[round(x, 3) for x in row] for row in p],
+                "stationary": [round(x, 3) for x in stationary(p)],
+                "step_s": self.period,
+            },
+            "ctmc": {
+                "sojourn_s": [round(x) for x in chain.T],
+                "jumps": [[int(x) for x in row] for row in chain.J],
+                "Q": [[round(x, 5) for x in row] for row in q],
+                "forecast": {f"{h}s": [round(x, 3) for x in expm(q, h)[state]]
+                             for h in (60, 300, 900)},
+            },
+            "recent_forecasts": [r for r in self.recent if r["edge"] == eid][-8:],
+        }
 
     def observations(self):
         return sum(c.n for c in self.chains.values())
@@ -315,8 +457,20 @@ class TrafficMarkov:
         return {
             "total_observations": self.observations(),
             "loaded_from_previous_sessions": self._loaded_obs,
+            "sessions": self.sessions,
+            "corridors_with_history": sum(
+                1 for e in self.monitored
+                if (self.chains.get(e) and
+                    self.chains[e].n >= self.cfg.markov_min_obs)),
             "monitored_edges": len(self.monitored),
             "sample_period_s": self.period,
+            "horizon_s": self.horizon_s,
+            "accuracy": self.accuracy(),
+            "state_mix_now": {STATE_NAMES[k]: sum(
+                1 for e in self.monitored if self.state_now.get(e, 0) == k)
+                for k in range(N_STATES)},
+            "routing_evidence": dict(self.routing_evidence),
+            "recent_forecasts": self.recent[-10:],
             "network_major_stationary": (
                 {STATE_NAMES[s]: round(stationary(cls.P())[s], 3)
                  for s in range(N_STATES)}

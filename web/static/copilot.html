@@ -122,14 +122,33 @@
 
   <aside style="display:flex;flex-direction:column;gap:14px">
     <section class="card">
-      <h2>Markov traffic analytics <span class="feedchip" id="feed">…</span></h2>
+      <h2>Forecast skill — scored live against what actually happened</h2>
+      <div class="note" id="learn">Loading…</div>
+      <table>
+        <thead><tr><th>method</th><th class="num">hit rate</th>
+          <th class="num">Brier ↓</th><th class="num">skill</th></tr></thead>
+        <tbody id="skill-rows"></tbody>
+      </table>
+      <div class="note" id="skill-verdict"></div>
+      <div class="note">Every 30 s a 5-minute forecast is filed for each
+        corridor and later scored against the state that actually occurred.
+        <b>Persistence</b> = "stays as it is now"; <b>climatology</b> = the
+        long-run average. <b>Skill</b> is the Brier skill score versus
+        climatology: 1 = perfect, 0 = no better than guessing the average,
+        negative = worse. If the chains add nothing, this says so.</div>
+      <div id="recent" class="note" style="font-family:ui-monospace,Menlo,monospace;font-size:11px"></div>
+    </section>
+
+    <section class="card">
+      <h2>Corridor analytics — click a corridor to see its chains</h2>
       <table>
         <thead><tr><th>corridor</th><th>now</th>
           <th>time spent congested</th>
           <th class="num">jam risk · 5 min</th></tr></thead>
         <tbody id="mk-rows"></tbody>
       </table>
-      <div class="note" id="mk-meta">Loading…</div>
+      <div class="note" id="mk-meta"></div>
+      <div id="detail" style="display:none;margin-top:10px;background:#0d1119;border-radius:8px;padding:10px;font-size:11.5px"></div>
       <div class="note">Each corridor is a 4-state chain
         (FREE/SLOW/CONGESTED/JAMMED). A <b>DTMC</b> gives the long-run
         (stationary) congested share; a <b>CTMC</b> generator gives
@@ -200,14 +219,55 @@ async function pollMarkov() {
     const r = await fetch("/api/markov");
     const d = await r.json();
     if (d.error) { $("mk-meta").textContent = d.error; return; }
-    $("feed").textContent = d.total_observations + " obs, self-feeding";
+    // plain-language learning status — nothing decorative
+    $("learn").textContent =
+      `Learning from ${d.total_observations.toLocaleString()} corridor observations ` +
+      `across ${d.sessions} session${d.sessions === 1 ? "" : "s"} · ` +
+      `${d.corridors_with_history} of ${d.monitored_edges} monitored corridors have ` +
+      `full history · forecast horizon ${Math.round(d.horizon_s / 60)} min`;
+    const acc = (d.accuracy && d.accuracy.this_session) || {};
+    const accAll = (d.accuracy && d.accuracy.all_time) || {};
+    const fmt = v => v == null ? "—" : v;
+    const rows = [["CTMC forecast", "ctmc"], ["Persistence (naive)", "persistence"],
+                  ["Climatology (naive)", "climatology"]];
+    $("skill-rows").innerHTML = rows.map(([label, k]) => {
+      const a = acc[k] || {}, b = accAll[k] || {};
+      const skill = k === "ctmc" ? acc.skill_vs_climatology : null;
+      return `<tr><td>${label}<div style="font-size:10px;color:var(--muted)">` +
+        `n=${a.n || 0} this session · ${b.n || 0} all-time</div></td>` +
+        `<td class="num">${a.hit_rate == null ? "—" : (a.hit_rate * 100).toFixed(1) + "%"}</td>` +
+        `<td class="num">${fmt(a.brier)}</td>` +
+        `<td class="num" style="font-weight:700;color:${skill == null ? "var(--muted)" : skill > 0.05 ? "#4ade80" : skill < -0.05 ? "#ff6b6b" : "#f0b429"}">` +
+        `${k === "ctmc" ? fmt(skill) : ""}</td></tr>`;
+    }).join("");
+    const sk = acc.skill_vs_climatology, sp = acc.skill_vs_persistence;
+    const n = (acc.ctmc || {}).n || 0;
+    const mix = d.state_mix_now || {};
+    const total = Object.values(mix).reduce((a, b) => a + b, 0) || 1;
+    const freePct = Math.round(100 * (mix.FREE || 0) / total);
+    $("skill-verdict").innerHTML = n < 50
+      ? `Fewer than 50 forecasts scored this session — verdict pending.`
+      : sk == null ? ""
+      : sk > 0.05
+        ? `<b style="color:#4ade80">Verdict:</b> the CTMC forecast beats both baselines — skill ${sk} over climatology and ${fmt(sp)} over persistence — on ${n} scored forecasts.`
+      : (sp != null && sp > 0.05)
+        ? `<b style="color:#4ade80">Verdict:</b> the CTMC forecast beats persistence (skill ${sp} on ${n} forecasts): it correctly expects transient slowdowns to revert, which is the assumption live-weighted routing gets wrong. It shows no skill over the long-run average (skill ${sk}) because ${freePct}% of monitored corridors are flowing freely right now — there is little to predict until corridors actually change state.`
+        : `<b style="color:#f0b429">Verdict:</b> no measurable skill beyond the naive baselines (skill ${sk} vs climatology, ${fmt(sp)} vs persistence, ${n} forecasts) — ${freePct}% of monitored corridors are flowing freely, so prediction has nothing to add in this session.`;
+    $("recent").innerHTML = (d.recent_forecasts || []).slice(-6).reverse().map(f =>
+      `${f.hit ? "✓" : "✗"} ${(f.road || f.edge).toString().slice(0, 28)}: was ${f.from}, ` +
+      `forecast ${f.predicted} (${Math.round(f.p_predicted * 100)}%), actual ${f.actual}`
+    ).join("<br>");
+    const ev = d.routing_evidence || {};
+    $("mk-meta").textContent = ev.compared
+      ? `Predictive routing: ${ev.differed} of ${ev.compared} dispatches took a different corridor than live-only routing would have (predicted saving ${Math.round(ev.predicted_saving_s)} s in total).`
+      : "";
     const STATE_WORD = { FREE: "flowing", SLOW: "slow", CONGESTED: "congested",
                          JAMMED: "jammed" };
     $("mk-rows").innerHTML = (d.top_corridors || []).map(c => {
       const pct = Math.round(c.congested_share * 100);
       const jam = Math.round(c.p_jam_5min * 100);
       const sub = [c.area, c.dir].filter(Boolean).join(" · ");
-      return `<tr><td><div style="font-weight:600">${c.road}</div>` +
+      return `<tr data-edge="${c.edge}" style="cursor:pointer" title="click for this corridor's DTMC / CTMC"><td><div style="font-weight:600">${c.road}</div>` +
         `<div style="font-size:10.5px;color:var(--muted)">${sub}</div></td>` +
         `<td class="state-${c.state_now}">${STATE_WORD[c.state_now] || c.state_now}</td>` +
         `<td><div style="display:flex;align-items:center;gap:6px">` +
@@ -218,16 +278,45 @@ async function pollMarkov() {
     }).join("") || `<tr><td colspan="4" style="color:var(--muted)">Gathering
       observations — corridors appear once each has enough history
       (${d.monitored_edges} monitored).</td></tr>`;
-    $("mk-meta").textContent =
-      `${d.total_observations} total observations (` +
-      `${d.loaded_from_previous_sessions} carried over from previous ` +
-      `sessions) · sampling every ${d.sample_period_s} s · ` +
-      (d.network_major_stationary
-        ? `major-road long-run mix: ` +
-          Object.entries(d.network_major_stationary)
-            .map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", ")
-        : "network-level mix pending");
+    for (const tr of document.querySelectorAll("#mk-rows tr[data-edge]"))
+      tr.onclick = () => showDetail(tr.dataset.edge);
   } catch (e) { /* retry */ }
+}
+
+function matrix(m, states, fmt) {
+  return `<table style="border-collapse:collapse;font-size:10.5px;margin:4px 0">` +
+    `<tr><th></th>${states.map(s => `<th style="padding:2px 6px;color:var(--muted)">${s.slice(0,4)}</th>`).join("")}</tr>` +
+    m.map((row, i) => `<tr><th style="padding:2px 6px;color:var(--muted);text-align:left">${states[i].slice(0,4)}</th>` +
+      row.map(v => `<td style="padding:2px 6px;text-align:right;font-variant-numeric:tabular-nums">${fmt(v)}</td>`).join("") + `</tr>`).join("") +
+    `</table>`;
+}
+
+async function showDetail(edge) {
+  const box = $("detail");
+  box.style.display = "block";
+  box.innerHTML = "Loading corridor…";
+  try {
+    const r = await fetch("/api/markov/corridor?edge=" + encodeURIComponent(edge));
+    const d = await r.json();
+    if (d.error) { box.textContent = d.error; return; }
+    const st = d.states;
+    box.innerHTML =
+      `<div style="font-weight:700;font-size:12.5px">${d.road.road}` +
+      `<span style="color:var(--muted);font-weight:400"> · ${[d.road.area, d.road.dir].filter(Boolean).join(" · ")}</span></div>` +
+      `<div style="color:var(--muted)">${d.observations} observations · now ${d.state_now}</div>` +
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px">` +
+      `<div><b>DTMC</b> — one-step transition matrix P (${d.dtmc.step_s} s steps), from observed counts` +
+      matrix(d.dtmc.P, st, v => v.toFixed(2)) +
+      `<div>long-run share: ${st.map((s, i) => `${s.slice(0,4)} ${(d.dtmc.stationary[i]*100).toFixed(0)}%`).join(" · ")}</div></div>` +
+      `<div><b>CTMC</b> — generator matrix Q (rates per second), from sojourn times and jumps` +
+      matrix(d.ctmc.Q, st, v => v.toFixed(4)) +
+      `<div>forecast from ${d.state_now}: ` +
+      Object.entries(d.ctmc.forecast).map(([h, row]) =>
+        `${h}: ${st[row.indexOf(Math.max(...row))].slice(0,4)} ${(Math.max(...row)*100).toFixed(0)}%`).join(" · ") +
+      `</div></div></div>` +
+      (d.recent_forecasts.length ? `<div style="margin-top:6px;color:var(--muted)">recent scored forecasts: ` +
+        d.recent_forecasts.map(f => `${f.hit ? "✓" : "✗"} ${f.from}→${f.predicted} (actual ${f.actual})`).join(" · ") + `</div>` : "");
+  } catch (e) { box.textContent = "Could not load corridor detail."; }
 }
 pollMarkov();
 setInterval(pollMarkov, 5000);

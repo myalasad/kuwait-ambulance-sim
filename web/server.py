@@ -341,6 +341,17 @@ async def copilot_page():
     return _page("copilot.html")
 
 
+@app.get("/api/markov/corridor")
+async def api_markov_corridor(edge: str):
+    if hub.sim is None or hub.sim.markov is None:
+        return JSONResponse({"error": "simulation not running"}, status_code=503)
+    d = hub.sim.markov.corridor_detail(edge)
+    if d is None:
+        return JSONResponse({"error": "no history for that corridor"},
+                            status_code=404)
+    return JSONResponse(d)
+
+
 @app.post("/api/command")
 async def api_command(cmd: dict):
     """Same command surface as the WebSocket, for the auxiliary pages

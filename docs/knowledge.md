@@ -154,19 +154,53 @@ CITATION issued" instead of a fine. Lights off means no exemption.
 ## Routing (Dijkstra) and predictive routing (Markov chains)
 Routes are computed by the system's own Dijkstra over the road network's
 edge graph, so one-way streets and turn restrictions are respected. Edge
-weights are travel times. With the Markov predictor active, Dijkstra is
-time-dependent: each road is weighed by its predicted speed at the moment
-the ambulance will reach it, so routes avoid where congestion will be. Every
-monitored corridor is a 4-state congestion chain — FREE (speed ≥ 70% of the
-limit), SLOW (40–70%), CONGESTED (15–40%), JAMMED (< 15%) — estimated as a
-discrete-time Markov chain (DTMC, 30 s steps, stationary distribution = share
-of time spent in each state) and a continuous-time Markov chain (CTMC,
-generator matrix, transient probabilities at any horizon via the matrix
-exponential). Observations are taken every 30 s (markov_sample_s), persist per
-scenario in data/markov_<scenario>.json and are reloaded on every start, so the
-model keeps feeding itself; corridors with fewer than 40 observations
-(markov_min_obs) fall back to pooled road-class chains. The same route object
-serves both the driver's navigation and the signal controller.
+weights are travel times. The same route object serves both the driver's
+navigation and the signal controller.
+
+## How the DTMC and the CTMC are used — observable functions
+Every monitored corridor (the approaches to signalized junctions first, then
+the major arterials; 160 corridors) is classified every 30 s into one of four
+congestion states from its mean speed as a fraction of the limit: FREE
+(≥ 70%), SLOW (40–70%), CONGESTED (15–40%), JAMMED (< 15%). Two chains are
+estimated from those same observations and each has a distinct job:
+
+- The **DTMC** (discrete-time Markov chain) counts transitions between
+  consecutive 30-second samples into a one-step transition matrix P
+  (Laplace-smoothed). Its stationary distribution π is the long-run share of
+  time the corridor spends in each state — this is the "time spent
+  congested" figure in the corridor analytics table, and the climatology
+  baseline used in validation.
+- The **CTMC** (continuous-time Markov chain) estimates a generator matrix Q
+  from sojourn times and observed jumps (q_ij = jumps i→j ÷ time spent in i).
+  Its transient distribution P(t) = expm(Q·t) gives the probability of each
+  state at ANY future horizon t. This is what routing uses: the router weighs
+  each road by its CTMC-forecast speed at the moment the ambulance will reach
+  it (time-dependent Dijkstra), so routes avoid where congestion will be
+  rather than where it is. The 5-minute jam probability in the analytics
+  table is expm(Q·300 s) from the corridor's current state.
+
+Validation, not assertion: every 30 s a 5-minute forecast is filed for every
+corridor with enough history and later scored against the state that
+actually occurred, alongside two naive baselines — persistence ("stays as it
+is now") and climatology (the stationary distribution). The Copilot page
+shows hit rate, Brier score and the Brier skill score (1 = perfect, 0 = no
+better than the baseline, negative = worse) for this session and all-time,
+with a plain verdict. At every dispatch the router also computes the
+live-only route and records whether the predictive route differed and by how
+much — the "predictive routing" evidence line. Results so far: on the
+six-governorate peak the CTMC shows strong skill over persistence (Brier
+skill ≈ 0.46 on 5,440 forecasts) because it knows transient slowdowns
+revert; skill over climatology is only earned when corridors actually change
+state, which requires realistic peak demand on the arterials.
+
+Self-feeding: observations persist per scenario in data/markov_<scenario>.json
+(with the scores and the routing evidence) and reload on every start, so the
+matrices sharpen across sessions; corridors with fewer than 40 observations
+(markov_min_obs) fall back to pooled road-class chains instead of guessing.
+All the linear algebra is exact pure Python on 4×4 matrices, verified against
+closed-form solutions in tests/test_markov.py. Each corridor's P, Q,
+stationary distribution, counts and recent scored forecasts can be opened
+from the analytics table.
 
 ## Arrival-time comparison (with vs without preemption)
 Each completed run is split into free-flow driving, measured traffic delay and

@@ -125,6 +125,29 @@ class Dispatcher:
         if not route:
             raise ValueError(f"No route from {from_desc} to {to_desc}")
 
+        # Observable predictive routing: compare against the live-only route.
+        routing_note = ""
+        pred = self.router.predictor
+        if pred is not None and algorithm.startswith("Dijkstra"):
+            alt = self.router.route(route[0], route[-1], live=live,
+                                    predictive=False)
+            if alt:
+                t_pred = self.router.route_time(route, live=live)
+                t_alt = self.router.route_time(alt, live=live)
+                ev = pred.routing_evidence
+                ev["compared"] += 1
+                if alt != route:
+                    ev["differed"] += 1
+                    ev["predicted_saving_s"] += max(0.0, t_alt - t_pred)
+                    routing_note = (f"; predictive routing chose a different "
+                                    f"corridor than live-only routing "
+                                    f"(predicted {t_alt - t_pred:+.0f} s vs "
+                                    f"the live-only route)")
+                else:
+                    routing_note = ("; predictive routing agrees with "
+                                    "live-only routing for this trip")
+                algorithm = "Dijkstra (live + Markov-predicted travel times)"
+
         rows = self.router.nodal_analysis(route,
                                           live=self.cfg.route_live_weights)
         length_m = rows[-1]["dist_m"] if rows else 0
@@ -174,7 +197,8 @@ class Dispatcher:
                       f"route, ETA {eta_s:.0f} s, lights ON, speed-limit "
                       f"exemption active (up to "
                       f"{self.cfg.speed_exemption_factor:.0%} of posted "
-                      f"limit, max {self.cfg.ambulance_max_kmh:.0f} km/h)",
+                      f"limit, max {self.cfg.ambulance_max_kmh:.0f} km/h)"
+                      f"{routing_note}",
                       "info", actor=amb_id, case=case)
         return amb_id
 

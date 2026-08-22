@@ -8,11 +8,11 @@
   :root {
     --bg: #10141c; --panel: #171d29; --panel2: #1e2634; --line: #2a3547;
     --text: #e8edf6; --muted: #8b98ad;
-    --kw-green: #009a4e; --kw-red: #ce1126; --amber: #f0b429;
-    --purple: #a78bfa;
+    --kw-green: #009a4e; --kw-red: #ce1126; --amber: #f0b429; --purple: #a78bfa;
+    --cyan: #22d3ee;
   }
   * { box-sizing: border-box; margin: 0; }
-  body { font: 14.5px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif;
+  body { font: 14px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
          background: var(--bg); color: var(--text); min-height: 100vh; }
   header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
     border-bottom: 1px solid var(--line); background: var(--panel);
@@ -22,36 +22,67 @@
     border-radius: 2.5px; margin-right: 8px; vertical-align: -1px;
     box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 1px 3px rgba(0,0,0,.45);
     background: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 12%22><rect width=%2224%22 height=%224%22 fill=%22%23007A3D%22/><rect y=%224%22 width=%2224%22 height=%224%22 fill=%22%23ffffff%22/><rect y=%228%22 width=%2224%22 height=%224%22 fill=%22%23CE1126%22/><path d=%22M0 0 L6 4 L6 8 L0 12 Z%22/></svg>') center/cover no-repeat; }
-  nav { display: flex; gap: 4px; margin-left: auto; }
-  nav a { transition: background .15s, color .15s, border-color .15s; padding: 6px 14px; font-size: 12px; font-weight: 600;
-    color: var(--muted); text-decoration: none; border: 1px solid var(--line);
-    border-radius: 8px; background: #141a25; }
+  nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  nav a { transition: background .15s, color .15s, border-color .15s;
+    padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--muted);
+    text-decoration: none; border: 1px solid var(--line); border-radius: 8px;
+    background: #141a25; }
   nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
 
-  main { max-width: 880px; margin: 0 auto; padding: 24px 20px 60px; }
-  h2 { font-size: 15px; margin: 28px 0 10px; padding-bottom: 6px;
-       border-bottom: 1px solid var(--line); color: #cdd8ea; }
-  h2 .no { color: var(--kw-green); margin-right: 8px;
-           font-variant-numeric: tabular-nums; }
-  p { margin: 8px 0; }
-  .scenario { background: var(--panel2); border: 1px solid var(--line);
-    border-left: 4px solid var(--kw-green); border-radius: 8px;
-    padding: 10px 14px; margin: 10px 0; }
-  .scenario.warn { border-left-color: var(--amber); }
-  .scenario.error { border-left-color: var(--kw-red); }
-  .scenario.decision { border-left-color: var(--purple); }
-  .scenario h3 { font-size: 13.5px; margin-bottom: 4px; }
-  .scenario p { font-size: 13px; color: #c6d0e0; margin: 4px 0; }
-  .scenario .tag { font-size: 10.5px; font-weight: 700; letter-spacing: .05em;
-    text-transform: uppercase; color: var(--muted); }
+  main { max-width: 960px; margin: 0 auto; padding: 22px 20px 70px; }
+  .lede { color: #c6d0e0; max-width: 760px; }
+  .howto { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0 22px;
+    font-size: 12px; color: var(--muted); }
+  .howto span b { color: var(--text); }
+
+  #toc { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+         margin-bottom: 26px; }
+  @media (max-width: 760px) { #toc { grid-template-columns: 1fr 1fr; } }
+  #toc a { display: block; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 12px; text-decoration: none; color: var(--text); }
+  #toc a b { display: block; font-size: 11px; color: var(--kw-green);
+    letter-spacing: .06em; }
+  #toc a span { font-size: 12.5px; }
+  #toc a small { display: block; color: var(--muted); font-size: 11px; }
+
+  section.cat { margin-top: 30px; }
+  section.cat h2 { font-size: 15px; padding-bottom: 6px; margin-bottom: 10px;
+    border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 10px; }
+  section.cat h2 .k { color: var(--kw-green); font-size: 12px; letter-spacing: .08em; }
+  section.cat h2 small { color: var(--muted); font-weight: 400; font-size: 12px;
+    margin-left: auto; }
+  .intent { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+
+  .sc { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px 12px; margin: 8px 0; border-left: 4px solid var(--kw-green); }
+  .sc.warn { border-left-color: var(--amber); }
+  .sc.err { border-left-color: var(--kw-red); }
+  .sc.dec { border-left-color: var(--purple); }
+  .sc.info { border-left-color: var(--cyan); }
+  .sc h3 { font-size: 13.5px; margin-bottom: 6px; }
+  .sc h3 .id { color: var(--muted); font-weight: 600; margin-right: 8px;
+    font-variant-numeric: tabular-nums; }
+  .f { display: grid; grid-template-columns: 96px 1fr; gap: 3px 12px;
+       font-size: 12.5px; }
+  .f dt { color: var(--muted); text-transform: uppercase; font-size: 10.5px;
+          letter-spacing: .06em; padding-top: 2px; }
+  .f dd { color: #d5dde9; }
   code { background: #0d1119; border-radius: 4px; padding: 1px 6px;
-         font-size: 12.5px; color: #8be9b6; }
-  .disclaimer { background: #2a1616; border: 1px solid #5b2020;
-    border-radius: 10px; padding: 14px 16px; margin-top: 30px; }
-  .disclaimer h3 { color: #ff9b9b; font-size: 13.5px; margin-bottom: 6px; }
-  .disclaimer p { font-size: 13px; color: #e8c8c8; }
-  ul { margin: 6px 0 6px 22px; }
-  li { margin: 3px 0; font-size: 13.5px; }
+         font-size: 12px; color: #8be9b6; }
+  .tag { display: inline-block; background: #141a25; border: 1px solid var(--line);
+    border-radius: 999px; padding: 0 8px; font-size: 11px; color: var(--muted); margin-right: 4px; }
+
+  table.params { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  table.params th, table.params td { text-align: left; padding: 6px 8px;
+    border-bottom: 1px solid #232d3f; vertical-align: top; }
+  table.params th { color: var(--muted); font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .06em; }
+  table.params td.v { font-variant-numeric: tabular-nums; white-space: nowrap; color: #8be9b6; }
+
+  .scope { background: #2a1616; border: 1px solid #5b2020; border-radius: 10px;
+    padding: 14px 16px; margin-top: 28px; }
+  .scope h3 { color: #ff9b9b; font-size: 13.5px; margin-bottom: 6px; }
+  .scope p { font-size: 13px; color: #e8c8c8; }
 </style>
 </head>
 <body>
@@ -69,268 +100,382 @@
 </header>
 
 <main>
-  <p>This is the complete rulebook the control system follows. Every rule here
-  is implemented in the simulation and every application of a rule is recorded
-  as a structured operation with a case id — visible live on the
-  <a href="/operations" style="color:#4ade80">Operations</a> page and persisted
-  to <code>data/operations.jsonl</code> for after-action review.</p>
-
-  <h2><span class="no">1</span>Normal corridor operation</h2>
-  <div class="scenario">
-    <h3>Camera detection → confirmation → green corridor</h3>
-    <p>Each signalized junction has a virtual camera that recognises an
-    ambulance with active emergency lights up to <code>200 m</code> along its
-    approaches. The first detection confirms the vehicle to the control
-    centre, which knows its planned route (the same Dijkstra route the driver
-    navigates — see <a href="/navigation" style="color:#4ade80">Navigation</a>).
-    Signals along the route are then <b>purposely enabled</b> in sequence when
-    the ambulance's ETA drops below <code>25 s</code>: amber to conflicting
-    traffic (3 s), all-red clearance (2 s), then the junction's own programme
-    phase serving the ambulance's approach is held. The queue in front of the
-    ambulance discharges through the green — cars ahead get priority, exactly
-    as intended. Signals are never switched dark: a dark signal causes
-    collisions.</p>
-    <p class="tag">Case P-nnn opens at enablement, closes at restoration; the
-    map labels the junction "PURPOSELY ENABLED" and then "BACK TO NORMAL".</p>
+  <p class="lede">The complete rulebook the control system follows. Every rule
+  is implemented in the simulation, and every application of a rule is
+  recorded as an operation with a case id — visible live on the
+  <a href="/operations" style="color:#4ade80">Operations</a> page and kept in
+  <code>data/operations.jsonl</code>.</p>
+  <div class="howto">
+    <span><b>Trigger</b> — the condition that fires the rule</span>
+    <span><b>Action</b> — what the system does</span>
+    <span><b>Ends when</b> — how the rule releases</span>
+    <span><b>Logged as</b> — the operation / case it leaves behind</span>
+    <span><b>Parameters</b> — the knobs in <code>sim/config.py</code></span>
   </div>
 
-  <h2><span class="no">2</span>Two priority vehicles — ambulance vs ambulance</h2>
-  <div class="scenario warn">
-    <h3>2a. Clear margin — automatic arbitration</h3>
-    <p>When two corridors request the same junction and one ambulance is
-    clearly nearer (margin &gt; <code>20 m</code>), the <b>nearest is granted</b>
-    and the second queues behind the decision. The arbitration is logged as a
-    warning-level operation naming both vehicles and both distances.</p>
-  </div>
-  <div class="scenario decision">
-    <h3>2b. Tie — unable to decide → refer to operator</h3>
-    <p>If the margin is under <code>20 m</code>, the controller declares itself
-    unable to decide. The junction is <b>held on its normal programme — the
-    safe state</b> — a D-case opens, and the conflict is pushed to the
-    operator on the Live Map and the Operations page with one-click
-    <b>supervisor grant buttons</b>. If no human decides within
-    <code>8 s</code>, the default policy (nearest) is applied automatically
-    and logged as a policy decision.</p>
-  </div>
-  <div class="scenario">
-    <h3>2c. Continuity rule</h3>
-    <p>A junction already serving a corridor keeps serving it until that
-    ambulance passes — switching allegiance mid-approach would trap both
-    streams in the box. The follower is served immediately after.</p>
-  </div>
-  <div class="scenario">
-    <h3>2d. Same approach — shared corridor</h3>
-    <p>Two ambulances on the same approach share the same green; the second
-    re-arms the junction during its clearing window if needed.</p>
+  <div id="toc">
+    <a href="#A"><b>A</b><span>Green corridor for ambulances</span><small>5 rules</small></a>
+    <a href="#B"><b>B</b><span>Priority conflicts</span><small>4 rules</small></a>
+    <a href="#C"><b>C</b><span>Ambulance mission lifecycle</span><small>7 rules</small></a>
+    <a href="#D"><b>D</b><span>Ordinary traffic — early green</span><small>3 rules</small></a>
+    <a href="#E"><b>E</b><span>Routing &amp; prediction</span><small>3 rules</small></a>
+    <a href="#F"><b>F</b><span>Enforcement</span><small>1 rule</small></a>
+    <a href="#G"><b>G</b><span>Safety &amp; fail-safes</span><small>4 rules</small></a>
+    <a href="#H"><b>H</b><span>Operator &amp; supervisor powers</span><small>4 rules</small></a>
+    <a href="#I"><b>I</b><span>Data, models &amp; scope</span><small>4 items</small></a>
   </div>
 
-  <h2><span class="no">3</span>Errors and fail-safes</h2>
-  <div class="scenario error">
-    <h3>3a. Signal command failure</h3>
-    <p>If any command to a junction fails (communication/state error), the
-    junction is immediately <b>reverted to its normal programme</b> — never
-    left frozen in a corridor state — the P-case closes with status
-    <code>error</code>, and an error-severity operation is emitted for the
-    operator.</p>
-  </div>
-  <div class="scenario error">
-    <h3>3b. Simulation/server failure</h3>
-    <p>If the simulation loop dies, the server broadcasts the error to every
-    connected dashboard (no silent freeze), keeps serving, and offers Reset.
-    The <code>run_forever.sh</code> watchdog restarts the whole server if the
-    process itself dies. In a real deployment the analogous fail-safe is the
-    local junction controller falling back to its fixed-time plan when the
-    centre stops responding.</p>
-  </div>
-  <div class="scenario warn">
-    <h3>3c. Over-held junction (starvation guard)</h3>
-    <p>A single hold is capped at <code>90 s</code>. Beyond it, cross traffic
-    is guaranteed a normal cycle (<code>20 s</code> cooldown) unless the
-    ambulance is already at the stop line. Both the release and the re-arm
-    are logged on the case.</p>
-  </div>
-  <div class="scenario warn">
-    <h3>3d. Ambulance physically inside the junction</h3>
-    <p>A junction is never restored while the ambulance is inside its box —
-    restoring early would give cross traffic green into a box the ambulance
-    still occupies.</p>
-  </div>
+  <!-- ================================================================ A -->
+  <section class="cat" id="A">
+    <h2><span class="k">A</span>Green corridor for ambulances<small>detection → enable → restore</small></h2>
+    <p class="intent">Intent: an ambulance with lights on never waits at a red light on its route, and no signal is ever switched unsafely.</p>
 
-  <h2><span class="no">4</span>Why did the ambulance disappear / lose its
-      lights?</h2>
-  <p>Nothing leaves the map silently. Every ambulance has an A-case from
-  dispatch to close, and the close reason is always one of these logged
-  operations:</p>
-  <div class="scenario">
-    <h3>4a. Arrived (normal)</h3>
-    <p><code>AMB_n ARRIVED at its destination and was removed from the map
-    (run complete)</code> — with travel time, distance, average speed and the
-    planned ETA for comparison.</p>
-  </div>
-  <div class="scenario warn">
-    <h3>4b. Teleported by the congestion resolver</h3>
-    <p>SUMO teleports any vehicle physically stuck for &gt; 180 s. If that
-    happens to an ambulance its position jumps; the operation says so
-    explicitly and flags it as a simulation artefact, not a comms loss.</p>
-  </div>
-  <div class="scenario warn">
-    <h3>4c. Lights switched off (operator action)</h3>
-    <p>The operator can switch an ambulance's emergency lights off/on from the
-    Live Map (per-ambulance toggle). Lights off means it stops requesting
-    priority: its junctions restore to normal, its route overlay dims, and the
-    who/when/why is logged on its case. Switching back on resumes corridor
-    requests.</p>
-  </div>
-  <div class="scenario error">
-    <h3>4d. Unexpected removal</h3>
-    <p>If an active ambulance vanishes from the vehicle list without an
-    arrival event, an <b>error operation</b> fires immediately
-    (<code>LEFT THE SIMULATION UNEXPECTEDLY</code>) and the case closes with
-    status <code>error</code> for investigation.</p>
-  </div>
-  <div class="scenario error">
-    <h3>4e. Reset</h3>
-    <p>A dashboard Reset restarts the world; open cases from the previous run
-    remain in <code>data/operations.jsonl</code> with their last state.</p>
-  </div>
+    <div class="sc"><h3><span class="id">A1</span>Camera detection and confirmation</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>An ambulance with active emergency lights enters a junction camera's range along one of its approaches.</dd>
+        <dt>Action</dt><dd>The detection is reported; the first detection <b>confirms</b> the ambulance to the control centre, which already holds its planned route.</dd>
+        <dt>Ends when</dt><dd>The mission ends or the lights are switched off.</dd>
+        <dt>Logged as</dt><dd><span class="tag">camera</span><span class="tag">corridor</span> operations on the ambulance's A-case.</dd>
+        <dt>Parameters</dt><dd><code>camera_range_m = 200</code></dd>
+      </dl></div>
 
-  <h2><span class="no">5</span>Operator &amp; supervisor powers</h2>
-  <ul>
-    <li><b>Grant priority</b> in a referred conflict (2b) — one click, logged
-        by name ("supervisor").</li>
-    <li><b>Arm/disarm the whole preemption system</b> — disarming releases
-        every junction through the normal amber-down sequence and is logged.</li>
-    <li><b>Lights on/off</b> per ambulance (4c).</li>
-    <li><b>Pause / resume / reset</b> the simulation; every state change is
-        broadcast to all connected screens so no operator sees a stale
-        picture.</li>
-  </ul>
+    <div class="sc"><h3><span class="id">A2</span>Enabling a junction (purposely enabled)</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>A confirmed ambulance's ETA to a signal on its route drops below the lead time — never later than the minimum distance, never earlier than the maximum.</dd>
+        <dt>Action</dt><dd>Amber to conflicting traffic → all-red clearance → the junction's <b>own programme phase</b> serving the ambulance's approach is held. Cars in front of the ambulance discharge through the green. Signals are never switched dark.</dd>
+        <dt>Ends when</dt><dd>Rule A3 (pass) or A4 (hold limit).</dd>
+        <dt>Logged as</dt><dd>P-case opens: <span class="tag">preempt_start</span><span class="tag">preempt_phase</span> (amber, all-red, corridor active). Map label <b>PURPOSELY ENABLED</b>.</dd>
+        <dt>Parameters</dt><dd><code>greenwave_lead_s = 25</code> <code>greenwave_min_m = 160</code> <code>greenwave_distance_m = 800</code> <code>yellow_time_s = 3</code> <code>allred_time_s = 2</code></dd>
+      </dl></div>
 
-  <h2><span class="no">6</span>Routing (navigation = corridor)</h2>
-  <div class="scenario">
-    <h3>One route object, two consumers</h3>
-    <p>Dispatch computes the route with <b>Dijkstra</b> over the network's
-    edge graph — one-way streets and OSM turn restrictions respected, edges
-    weighted by <b>live travel times</b> so the route avoids congestion at
-    dispatch time. The same route is assigned to the driver (vehicle
-    navigation) and read by the control centre (which junction comes next, at
-    what ETA). That is how a junction knows the ambulance is coming before its
-    camera ever sees it: detection confirms; the route predicts. Full
-    node-by-node analysis is on the
-    <a href="/navigation" style="color:#4ade80">Navigation</a> page.</p>
-  </div>
-  <div class="scenario">
-    <h3>Predictive (Markov) routing — the model feeds itself</h3>
-    <p>Every monitored corridor is described by a 4-state congestion chain
-    (FREE / SLOW / CONGESTED / JAMMED) estimated two ways from the same
-    observations: a <b>discrete-time Markov chain</b> (30 s steps — long-run
-    congested share per corridor) and a <b>continuous-time Markov chain</b>
-    (generator matrix — the probability of each state at ANY future moment).
-    The router uses the CTMC forecast to weigh each road by its predicted
-    speed <b>at the time the ambulance will reach it</b>, so routes avoid
-    where congestion <i>will be</i>, not just where it is. Observations
-    accumulate every 30 s and persist across sessions
-    (<code>data/markov_*.json</code>) — the model continuously feeds itself.
-    Sparse corridors fall back to pooled road-class chains rather than
-    guessing. The transition math is verified against closed-form solutions
-    in <code>tests/test_markov.py</code>. Learning source here is simulated
-    traffic; the identical estimator ingests real detector data unchanged.
-    Live analytics and the record-grounded Q&amp;A assistant are on the
-    <a href="/copilot" style="color:#4ade80">Copilot</a> page.</p>
-  </div>
-  <div class="scenario">
-    <h3>Automatic reroute to the nearest hospital</h3>
-    <p>On reaching the incident scene the ambulance stops for
-    <code>40 s</code> of patient loading — during which its corridor is
-    <b>paused</b> so cross streets are not held for a stationary vehicle —
-    then it is automatically rerouted to the <b>nearest hospital by Dijkstra
-    travel time</b> (not straight-line distance: one-way streets and current
-    congestion decide). The signal corridor follows the new route
-    immediately, and the whole second leg is logged on the same A-case.
-    Amiri Hospital is inside the modelled area; Al-Sabah and Dar Al Shifa
-    are represented by in-map anchor points on the corridors toward them.</p>
-  </div>
+    <div class="sc"><h3><span class="id">A3</span>Restoring after the ambulance passes</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>The ambulance has passed the junction and is physically out of the junction box (see G4).</dd>
+        <dt>Action</dt><dd>Corridor held for a short clearance, then amber, then the normal programme resumes.</dd>
+        <dt>Ends when</dt><dd>Immediately re-armed if another ambulance is inbound (B4).</dd>
+        <dt>Logged as</dt><dd><span class="tag">restore</span> closes the P-case with the hold duration. Map label <b>BACK TO NORMAL</b>.</dd>
+        <dt>Parameters</dt><dd><code>clearance_after_pass_s = 2</code> <code>yellow_time_s = 3</code></dd>
+      </dl></div>
 
-  <h2><span class="no">7</span>Speed-limit exemption — no fines</h2>
-  <div class="scenario">
-    <h3>Emergency vehicles may exceed the posted limit</h3>
-    <p>A dispatched ambulance with active lights runs at up to <code>150%</code>
-    of the posted limit (absolute cap <code>140 km/h</code>), consistent with
-    the emergency exemption in Kuwaiti traffic law. The enforcement camera at
-    each junction is the same camera that detects the corridor: when it
-    measures the ambulance above the limit with lights active, it logs
-    <b>"exemption applies — NO CITATION issued"</b> as an operation instead of
-    a fine. Lights off = no exemption: the ambulance drives as normal traffic.
-    The <a href="/driver" style="color:#4ade80">Driver view</a> shows the
-    live speed beside the posted-limit sign with an <b>EMERGENCY EXEMPT</b>
-    badge whenever the exemption is in effect.</p>
-    <p class="tag">Every exempt pass is on the operations record — auditable,
-    per camera, per ambulance, per case.</p>
-  </div>
+    <div class="sc warn"><h3><span class="id">A4</span>Hold limit — cross traffic is never starved</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>A junction has been held continuously for the maximum time while the ambulance is still beyond camera range.</dd>
+        <dt>Action</dt><dd>Release the corridor and guarantee cross traffic a normal cycle (cooldown) before re-arming.</dd>
+        <dt>Ends when</dt><dd>Cooldown elapses, or the ambulance reaches camera range (it is then served regardless).</dd>
+        <dt>Logged as</dt><dd><span class="tag">hold_limit</span> then <span class="tag">restore</span> on the P-case.</dd>
+        <dt>Parameters</dt><dd><code>max_hold_s = 90</code> <code>preempt_cooldown_s = 20</code></dd>
+      </dl></div>
 
-  <h2><span class="no">8</span>Demand-responsive signals for ordinary traffic</h2>
-  <div class="scenario">
-    <h3>Early green for a lone driver — fair timers whenever anyone else is
-    waiting</h3>
-    <p>No ambulance involved: if exactly <b>one approach</b> of a junction is
-    occupied and every other approach has been <b>empty for
-    <code>3 s</code></b>, the junction moves through its own amber to the
-    phase serving that approach — nobody sits at a red for an empty crossing
-    (the late-night Mishref / Mubarak Al-Abdullah situation). The early green
-    ends the moment <b>any other approach becomes occupied</b> (after a
-    <code>5 s</code> minimum green), when the lone traffic has passed, or at
-    the <code>30 s</code> cap — the junction then resumes its normal
-    fixed-time cycle, so with several approaches occupied <b>everyone gets
-    the fair timer</b>, no favourites. A <code>10 s</code> per-junction
-    cooldown prevents flip-flopping. Ambulance preemption always outranks
-    this rule, and every grant and release is logged as an
-    <code>actuation</code> operation; the map labels the junction
-    "EARLY GREEN · lone traffic".</p>
-  </div>
+    <div class="sc"><h3><span class="id">A5</span>Ambulance physically inside the junction</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>The ambulance is on the junction's internal lanes.</dd>
+        <dt>Action</dt><dd>The hold is kept even if the signal is otherwise due to release — cross traffic must not receive green into an occupied box.</dd>
+        <dt>Ends when</dt><dd>The ambulance exits the box.</dd>
+        <dt>Logged as</dt><dd>Covered by the open P-case.</dd>
+        <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+  </section>
 
-  <h2><span class="no">9</span>Data provenance — what is real here</h2>
-  <ul>
-    <li><b>Real:</b> the downtown Kuwait City road network, one-way system,
-        turn restrictions and signal locations (OpenStreetMap), simulated at
-        microscopic fidelity (SUMO 1.27, sublane model, rescue-lane
-        behaviour).</li>
-    <li><b>Calibrated, not measured:</b> background demand follows the
-        published shape of Kuwaiti weekday traffic (07:00 morning peak by
-        default; afternoon and evening peaks in the profile) — Kuwait exposes
-        no public live traffic feed. When MOI/Municipality counts are
-        available, drop them in <code>data/real_counts.csv</code>
-        (<code>hour,multiplier</code>) and rebuild: they override the
-        calibrated profile. Commercial sources exist for exactly this —
-        e.g. the <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data"
-        style="color:#4ade80">xMap Kuwait road traffic catalog</a> (speeds,
-        travel times, congestion trends across Kuwait's road network; licensed
-        product, procurable by MOI) — and its hourly figures drop straight
-        into that CSV hook.</li>
-    <li><b>Two network models are selectable</b> (Live Map → "Network
-        model"): the detailed downtown core, and <b>all six governorates</b>
-        (Capital, Hawalli, Farwaniya, Mubarak Al-Kabeer, Ahmadi, Jahra) at
-        arterial level — motorways, trunks, primary and secondary roads from
-        OSM, with a real MoH hospital per governorate and named incident
-        areas across all six. Arterial level is stated plainly: residential
-        side streets are not modelled in the metro scenario.</li>
-    <li><b>Time of day is selectable</b> (Live Map → "Kuwait clock start"):
-        one flat peak-rate demand base is scaled live each hour by the
-        profile, so 01:00–05:00 gives the near-empty night grid and
-        07:00/18:00 the full peaks — no rebuild.</li>
-    <li><b>Synthetic:</b> individual signal timing plans (static 72–90 s
-        cycles generated per junction; the real KMoI plans can be substituted
-        in the network file when obtained).</li>
-  </ul>
+  <!-- ================================================================ B -->
+  <section class="cat" id="B">
+    <h2><span class="k">B</span>Priority conflicts<small>two ambulances, one junction</small></h2>
+    <p class="intent">Intent: deterministic, auditable rulings — and a human decision whenever the machine criteria cannot separate the candidates.</p>
 
-  <div class="disclaimer">
+    <div class="sc"><h3><span class="id">B1</span>Continuity</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>A junction already serving one corridor receives a request from a second ambulance.</dd>
+        <dt>Action</dt><dd>Keep serving the current ambulance; the second queues. Switching mid-approach would trap both streams.</dd>
+        <dt>Ends when</dt><dd>The first ambulance passes; the second is served next.</dd>
+        <dt>Logged as</dt><dd><span class="tag">arbitration</span></dd>
+        <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+
+    <div class="sc warn"><h3><span class="id">B2</span>Clear margin — nearest wins</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Two fresh requests; one ambulance is nearer by more than the tie margin.</dd>
+        <dt>Action</dt><dd>Grant the nearest; queue the other.</dd>
+        <dt>Ends when</dt><dd>The granted ambulance passes.</dd>
+        <dt>Logged as</dt><dd><span class="tag">arbitration</span> naming both vehicles and distances.</dd>
+        <dt>Parameters</dt><dd><code>arbitration_tie_m = 20</code></dd>
+      </dl></div>
+
+    <div class="sc dec"><h3><span class="id">B3</span>Tie — unable to decide → operator referral</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Two fresh requests within the tie margin of each other.</dd>
+        <dt>Action</dt><dd>The junction stays on its normal programme (the safe state); a D-case opens; the conflict is pushed to the operator on the Live Map and Operations page with one-click grant buttons.</dd>
+        <dt>Ends when</dt><dd>A supervisor grants, the conflict dissolves, or the timeout applies the default policy (nearest).</dd>
+        <dt>Logged as</dt><dd>D-case: <span class="tag">decision_referred</span> <span class="tag">decision_made</span> <span class="tag">decision_moot</span></dd>
+        <dt>Parameters</dt><dd><code>arbitration_tie_m = 20</code> <code>operator_timeout_s = 8</code></dd>
+      </dl></div>
+
+    <div class="sc"><h3><span class="id">B4</span>Same approach — shared corridor</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Two ambulances on the same approach.</dd>
+        <dt>Action</dt><dd>Both use the same green; the follower re-arms the junction during its clearing window.</dd>
+        <dt>Ends when</dt><dd>The follower passes.</dd>
+        <dt>Logged as</dt><dd>Same P-case, re-armed.</dd>
+        <dt>Parameters</dt><dd><code>clearance_after_pass_s = 2</code></dd>
+      </dl></div>
+  </section>
+
+  <!-- ================================================================ C -->
+  <section class="cat" id="C">
+    <h2><span class="k">C</span>Ambulance mission lifecycle<small>nothing leaves the map silently</small></h2>
+    <p class="intent">Intent: every ambulance has an A-case from dispatch to close, and the close reason is always on record.</p>
+
+    <div class="sc"><h3><span class="id">C1</span>Dispatch — always from a hospital</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>An operator dispatches to an incident scene (map click or named area).</dd>
+        <dt>Action</dt><dd>Origin is a hospital; "Auto" picks the hospital with the shortest Dijkstra travel time to the scene. Route computed (E1), speed exemption armed (F1), lights on.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd>A-case opens: <span class="tag">dispatch</span> with route length, signals on route, ETA, routing basis.</dd>
+        <dt>Parameters</dt><dd><code>snap_radius_m</code> per scenario</dd>
+      </dl></div>
+
+    <div class="sc"><h3><span class="id">C2</span>Scene reached — patient loading</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>The ambulance reaches the incident scene.</dd>
+        <dt>Action</dt><dd>Stops to load the patient; the corridor is <b>paused</b> so cross streets are not held for a stationary vehicle.</dd>
+        <dt>Ends when</dt><dd>Loading time elapses.</dd>
+        <dt>Logged as</dt><dd><span class="tag">reroute</span> on the A-case.</dd>
+        <dt>Parameters</dt><dd><code>patient_load_s = 40</code></dd>
+      </dl></div>
+
+    <div class="sc"><h3><span class="id">C3</span>Hot return — reroute to the nearest hospital</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Patient aboard.</dd>
+        <dt>Action</dt><dd>Automatic reroute to the nearest hospital by Dijkstra travel time (one-ways and congestion decide, not straight-line distance); lights on; the corridor follows the new route.</dd>
+        <dt>Ends when</dt><dd>Arrival (C4).</dd>
+        <dt>Logged as</dt><dd><span class="tag">reroute</span> naming the hospital, distance, ETA and signals.</dd>
+        <dt>Parameters</dt><dd><code>reroute_to_hospital = True</code></dd>
+      </dl></div>
+
+    <div class="sc"><h3><span class="id">C4</span>Arrival</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>The ambulance reaches the hospital.</dd>
+        <dt>Action</dt><dd>Removed from the map; the run is analysed (E3 comparison).</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd><span class="tag">arrival</span> (time, distance, average speed, planned ETA) and <span class="tag">analysis</span>; A-case closes.</dd>
+        <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+
+    <div class="sc warn"><h3><span class="id">C5</span>Teleport (simulation artefact)</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>SUMO's congestion resolver moves a vehicle physically stuck beyond the limit.</dd>
+        <dt>Action</dt><dd>The ambulance's position jumps; the operation says so explicitly — it is not a communications loss.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd><span class="tag">teleport</span> on the A-case.</dd>
+        <dt>Parameters</dt><dd><code>time-to-teleport = 180 s</code> (scenario file)</dd>
+      </dl></div>
+
+    <div class="sc warn"><h3><span class="id">C6</span>Lights switched off</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>An operator switches an ambulance's lights off (Live Map toggle).</dd>
+        <dt>Action</dt><dd>It stops requesting priority; its junctions restore; no speed exemption.</dd>
+        <dt>Ends when</dt><dd>Lights switched back on.</dd>
+        <dt>Logged as</dt><dd><span class="tag">lights</span> with who and when.</dd>
+        <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+
+    <div class="sc err"><h3><span class="id">C7</span>Unexpected removal</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>An active ambulance vanishes from the vehicle list without an arrival.</dd>
+        <dt>Action</dt><dd>Error raised immediately for investigation.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd><span class="tag">error</span>; A-case closes with status <code>error</code>.</dd>
+        <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+  </section>
+
+  <!-- ================================================================ D -->
+  <section class="cat" id="D">
+    <h2><span class="k">D</span>Ordinary traffic — early green<small>demand-responsive signals</small></h2>
+    <p class="intent">Intent: nobody waits at a red light on an empty crossing; everyone gets the fair timer the moment anyone else is waiting.</p>
+
+    <div class="sc info"><h3><span class="id">D1</span>Early green for the only occupied approach</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Exactly one approach occupied; every other approach empty for the confirmation window; no ambulance involved.</dd>
+        <dt>Action</dt><dd>Through the junction's own amber, move to the phase serving that approach and hold it (or extend it if already green).</dd>
+        <dt>Ends when</dt><dd>Rule D2.</dd>
+        <dt>Logged as</dt><dd><span class="tag">actuation</span>. Map label <b>EARLY GREEN</b>.</dd>
+        <dt>Parameters</dt><dd><code>lone_confirm_s = 3</code> <code>lone_min_green_s = 5</code></dd>
+      </dl></div>
+
+    <div class="sc info"><h3><span class="id">D2</span>Fairness returns instantly</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Any other approach becomes occupied, the lone traffic has passed, or the cap is reached.</dd>
+        <dt>Action</dt><dd>End the early green (after the minimum green) and resume the normal fixed-time cycle — with several approaches occupied everyone takes turns.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd><span class="tag">actuation</span> with the reason.</dd>
+        <dt>Parameters</dt><dd><code>lone_max_hold_s = 30</code></dd>
+      </dl></div>
+
+    <div class="sc info"><h3><span class="id">D3</span>Cooldown and precedence</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>An early green has just ended; or an ambulance corridor arrives at the junction.</dd>
+        <dt>Action</dt><dd>No new early green for the cooldown; ambulance preemption always outranks early green and takes the junction immediately.</dd>
+        <dt>Ends when</dt><dd>Cooldown elapses.</dd>
+        <dt>Logged as</dt><dd>—</dd>
+        <dt>Parameters</dt><dd><code>actuation_cooldown_s = 10</code></dd>
+      </dl></div>
+  </section>
+
+  <!-- ================================================================ E -->
+  <section class="cat" id="E">
+    <h2><span class="k">E</span>Routing &amp; prediction<small>one route object, two consumers</small></h2>
+    <p class="intent">Intent: the driver's navigation and the signal corridor are the same route, and the route anticipates congestion rather than reacting to it.</p>
+
+    <div class="sc"><h3><span class="id">E1</span>Dijkstra routing</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Dispatch (C1) and hot return (C3).</dd>
+        <dt>Action</dt><dd>Shortest-time route over the edge graph — one-way streets and turn restrictions respected — assigned to the vehicle and read by the control centre to know which junction comes next and when.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd>Route length, signals and ETA on the <span class="tag">dispatch</span> operation; node-by-node table on the Navigation page.</dd>
+        <dt>Parameters</dt><dd><code>route_live_weights = True</code></dd>
+      </dl></div>
+
+    <div class="sc"><h3><span class="id">E2</span>Predictive weights (Markov chains)</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Routing, when a corridor has enough observed history.</dd>
+        <dt>Action</dt><dd>Each road is weighed by its <b>CTMC-forecast speed at the moment the ambulance will reach it</b> (time-dependent Dijkstra), so routes avoid where congestion will be. The <b>DTMC</b> supplies long-run congestion shares for analytics. Corridors with too little history fall back to pooled road-class chains.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd>The <span class="tag">dispatch</span> operation states whether predictive routing changed the corridor versus live-only routing, and by how much.</dd>
+        <dt>Parameters</dt><dd><code>markov_routing = True</code> <code>markov_sample_s = 30</code> <code>markov_min_obs = 40</code> <code>markov_max_edges = 160</code></dd>
+      </dl></div>
+
+    <div class="sc"><h3><span class="id">E3</span>Prediction is validated, not assumed</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Every observation period, for every corridor with history.</dd>
+        <dt>Action</dt><dd>A 5-minute forecast is filed and later <b>scored against what actually happened</b>, alongside two naive baselines (persistence: "stays as now"; climatology: "long-run average"). The Copilot page reports hit rate, Brier score and the <b>Brier skill score</b> against each baseline — zero or negative skill is shown as such.</dd>
+        <dt>Ends when</dt><dd>Continuous; scores persist across sessions.</dd>
+        <dt>Logged as</dt><dd>Copilot page: forecast accuracy card, per-corridor matrices and recent forecasts with outcomes.</dd>
+        <dt>Parameters</dt><dd>horizon 300 s</dd>
+      </dl></div>
+  </section>
+
+  <!-- ================================================================ F -->
+  <section class="cat" id="F">
+    <h2><span class="k">F</span>Enforcement<small>the same camera, a different verdict</small></h2>
+    <div class="sc"><h3><span class="id">F1</span>Speed-limit exemption — no fines</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>A junction camera measures a dispatched ambulance above the posted limit with lights active.</dd>
+        <dt>Action</dt><dd>Exemption applies; no citation. The ambulance may run up to the exemption factor of the limit, capped absolutely. Lights off = no exemption.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd><span class="tag">enforcement</span> per camera, per ambulance, per case; Driver view shows <b>EMERGENCY EXEMPT</b>.</dd>
+        <dt>Parameters</dt><dd><code>speed_exemption_factor = 1.5</code> <code>ambulance_max_kmh = 140</code></dd>
+      </dl></div>
+  </section>
+
+  <!-- ================================================================ G -->
+  <section class="cat" id="G">
+    <h2><span class="k">G</span>Safety &amp; fail-safes<small>absolute — above every other criterion</small></h2>
+
+    <div class="sc err"><h3><span class="id">G1</span>Signal command failure</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Any command to a junction fails.</dd>
+        <dt>Action</dt><dd>Revert the junction to its normal programme immediately — never leave it frozen in a corridor state.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd><span class="tag">error</span>; P-case closes with status <code>error</code>.</dd>
+        <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+
+    <div class="sc err"><h3><span class="id">G2</span>Simulation or server failure</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>The simulation loop stops or the process dies.</dd>
+        <dt>Action</dt><dd>Every connected dashboard is told (no silent freeze) and offered Reset; the watchdog restarts the process. In a real deployment the equivalent is the local junction controller falling back to its fixed-time plan.</dd>
+        <dt>Ends when</dt><dd>Reset / restart.</dd>
+        <dt>Logged as</dt><dd>Error frame to clients; server log.</dd>
+        <dt>Parameters</dt><dd><code>scripts/run_forever.sh</code></dd>
+      </dl></div>
+
+    <div class="sc err"><h3><span class="id">G3</span>Never dark</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Always.</dd>
+        <dt>Action</dt><dd>No rule may switch a signal off or to flashing; corridors use real programme phases.</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd>—</dd>
+        <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+
+    <div class="sc err"><h3><span class="id">G4</span>Transition invariants</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>Any change that turns a green to red (enabling, retargeting, restoring).</dd>
+        <dt>Action</dt><dd>Amber first, then all-red clearance where a corridor is being created; a junction is never restored while an ambulance is inside its box (A5).</dd>
+        <dt>Ends when</dt><dd>—</dd>
+        <dt>Logged as</dt><dd><span class="tag">preempt_phase</span></dd>
+        <dt>Parameters</dt><dd><code>yellow_time_s = 3</code> <code>allred_time_s = 2</code></dd>
+      </dl></div>
+  </section>
+
+  <!-- ================================================================ H -->
+  <section class="cat" id="H">
+    <h2><span class="k">H</span>Operator &amp; supervisor powers<small>humans stay in charge</small></h2>
+    <div class="sc dec"><h3><span class="id">H1</span>Grant a referred conflict</h3>
+      <dl class="f"><dt>Action</dt><dd>One click on the Live Map or Operations page; logged by name ("supervisor") on the D-case.</dd></dl></div>
+    <div class="sc dec"><h3><span class="id">H2</span>Arm / disarm the preemption system</h3>
+      <dl class="f"><dt>Action</dt><dd>Disarming releases every junction through the normal amber-down sequence; logged as <span class="tag">system</span>.</dd></dl></div>
+    <div class="sc dec"><h3><span class="id">H3</span>Lights on / off per ambulance</h3>
+      <dl class="f"><dt>Action</dt><dd>See C6; logged with who and when.</dd></dl></div>
+    <div class="sc dec"><h3><span class="id">H4</span>Pause, resume, reset, time of day, network model</h3>
+      <dl class="f"><dt>Action</dt><dd>Every state change is broadcast to all connected screens so no operator sees a stale picture; the Copilot is read-only and can never issue signal commands.</dd></dl></div>
+  </section>
+
+  <!-- ================================================================ I -->
+  <section class="cat" id="I">
+    <h2><span class="k">I</span>Data, models &amp; scope<small>what is real</small></h2>
+    <div class="sc"><h3><span class="id">I1</span>Provenance</h3>
+      <dl class="f">
+        <dt>Real</dt><dd>Road networks, one-way system, turn restrictions, signal locations and street names (OpenStreetMap); hospital locations.</dd>
+        <dt>Calibrated</dt><dd>Background demand follows the published shape of Kuwaiti weekday traffic — Kuwait exposes no public live feed. Real hourly counts (e.g. the licensed <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data" style="color:#4ade80">xMap Kuwait catalog</a>) drop into <code>data/real_counts.csv</code> as <code>hour,multiplier</code> and override the profile.</dd>
+        <dt>Synthetic</dt><dd>Individual signal timing plans (static 72–90 s cycles per junction); replaceable with real MOI plans in the network file.</dd>
+        <dt>Learned</dt><dd>Markov chains learn from simulated traffic here; the identical estimator ingests real detector data unchanged.</dd>
+      </dl></div>
+    <div class="sc"><h3><span class="id">I2</span>Network models</h3>
+      <dl class="f">
+        <dt>Downtown</dt><dd>Kuwait City core, every street, sublane model with rescue-lane behaviour.</dd>
+        <dt>Metro</dt><dd>All six governorates at arterial level (motorways, trunks, primary and secondary roads; residential side streets not modelled), a real MoH hospital per governorate, ~100 named areas.</dd>
+      </dl></div>
+    <div class="sc"><h3><span class="id">I3</span>Time of day</h3>
+      <dl class="f">
+        <dt>Action</dt><dd>One flat peak-rate demand base is scaled live each hour by the calibrated profile; any start hour 0–23 is selectable on the Live Map.</dd>
+        <dt>Parameters</dt><dd><code>start_hour</code> <code>demand_hours = 3</code></dd>
+      </dl></div>
+    <div class="sc"><h3><span class="id">I4</span>Names and codes</h3>
+      <dl class="f">
+        <dt>Action</dt><dd>Roads carry their real OpenStreetMap names; junctions a short code plus the streets that meet there (<code>J-048 · Abdullah Al-Salem Street × Al Soor Street</code>); cases are <code>P-</code> (junction enabled), <code>A-</code> (ambulance run), <code>D-</code> (referred decision).</dd>
+      </dl></div>
+  </section>
+
+  <section class="cat" id="params">
+    <h2><span class="k">§</span>Parameter appendix<small>sim/config.py</small></h2>
+    <table class="params">
+      <thead><tr><th>Parameter</th><th>Value</th><th>Meaning</th><th>Rules</th></tr></thead>
+      <tbody>
+        <tr><td>camera_range_m</td><td class="v">200 m</td><td>Camera detection range along an approach</td><td>A1</td></tr>
+        <tr><td>greenwave_lead_s</td><td class="v">25 s</td><td>Enable a signal when the ambulance's ETA drops below this</td><td>A2</td></tr>
+        <tr><td>greenwave_min_m / greenwave_distance_m</td><td class="v">160 m / 800 m</td><td>Never later / never earlier than these distances</td><td>A2</td></tr>
+        <tr><td>yellow_time_s / allred_time_s</td><td class="v">3 s / 2 s</td><td>Amber to conflicts; all-red clearance</td><td>A2 G4</td></tr>
+        <tr><td>clearance_after_pass_s</td><td class="v">2 s</td><td>Corridor held after the ambulance passes</td><td>A3 B4</td></tr>
+        <tr><td>max_hold_s / preempt_cooldown_s</td><td class="v">90 s / 20 s</td><td>Hold cap; guaranteed cross-traffic cycling</td><td>A4</td></tr>
+        <tr><td>arbitration_tie_m</td><td class="v">20 m</td><td>Tie margin for operator referral</td><td>B2 B3</td></tr>
+        <tr><td>operator_timeout_s</td><td class="v">8 s</td><td>Default policy applies after this</td><td>B3</td></tr>
+        <tr><td>patient_load_s</td><td class="v">40 s</td><td>Loading stop at the scene</td><td>C2</td></tr>
+        <tr><td>lone_confirm_s / lone_min_green_s / lone_max_hold_s</td><td class="v">3 s / 5 s / 30 s</td><td>Early green: confirmation, minimum, cap</td><td>D1 D2</td></tr>
+        <tr><td>actuation_cooldown_s</td><td class="v">10 s</td><td>Between early greens per junction</td><td>D3</td></tr>
+        <tr><td>speed_exemption_factor / ambulance_max_kmh</td><td class="v">1.5 / 140 km/h</td><td>Exemption above the posted limit; absolute cap</td><td>F1</td></tr>
+        <tr><td>markov_sample_s / markov_min_obs / markov_max_edges</td><td class="v">30 s / 40 / 160</td><td>Observation period; history needed; corridors monitored</td><td>E2 E3</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="scope">
     <h3>Scope of use</h3>
     <p>This is a planning, evaluation and training simulator. It is not a
     certified life-safety control system and must not be connected to live
-    signal hardware without the full engineering, redundancy and regulatory
-    review that real emergency-vehicle-preemption deployments require
-    (conflict-monitor hardware, fail-to-normal guarantees, MOI approval).
-    Decisions about real dispatch or real signal control must not be made on
-    simulation output alone.</p>
+    signal hardware without the engineering, redundancy and regulatory review
+    that real emergency-vehicle-preemption deployments require. Decisions
+    about real dispatch or real signal control must not be made on simulation
+    output alone.</p>
   </div>
 </main>
 </body>

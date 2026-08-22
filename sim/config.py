@@ -61,7 +61,7 @@ SCENARIOS = {
         "routes": "background_metro.rou.xml",
         "sumocfg": "scenario_metro.sumocfg",
         "query": "overpass_query_metro.txt",
-        "peak_period_s": 0.55,
+        "peak_period_s": 0.25,   # ~14,400 veh/h metro-wide at peak
         "lateral_resolution": 0.0,   # sublane off: 6-governorate network
         "snap_radius_m": 1500.0,     # arterials only -> snap further
         "hospitals": {
@@ -229,7 +229,8 @@ class SimConfig:
     markov_routing: bool = True       # Dijkstra uses CTMC-predicted edge
     #                                   speeds at the arrival horizon
     markov_sample_s: float = 30.0     # observation period (sim seconds)
-    markov_max_edges: int = 80        # arterials monitored individually
+    markov_max_edges: int = 160       # junction approaches + arterials
+    #                                   monitored individually
     markov_min_obs: int = 40          # below this, pool by road class
     markov_save_every_s: float = 300.0  # persist the chains this often
 

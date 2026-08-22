@@ -97,7 +97,7 @@ def build_corpus(root):
         body = html.split("<main>", 1)[-1]
         sections = re.split(r"<h2>", body)
         for sec in sections[1:]:
-            text = _strip_html("<h2>" + sec)[:4000]
+            text = _strip_html("<h2>" + sec)[:7000]
             title = text[:80].strip()
             docs.append({"id": f"protocol:{title[:40]}", "type": "protocol",
                          "title": f"Protocol — {title[:60]}",
