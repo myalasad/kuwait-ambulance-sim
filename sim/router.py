@@ -25,6 +25,10 @@ class Router:
         # junction node id -> actual TLS id (joined signals get prefixed ids
         # like "GS_<node>"); filled in by the runner once TraCI is up
         self.tls_map = {}
+        # optional TrafficMarkov instance for anticipatory weights
+        self.predictor = None
+        self._lengths = {e.getID(): e.getLength() for e in net.getEdges()
+                         if e.allows(vclass)}
         # edge id -> list of (successor edge id, successor static cost)
         self.succ = {}
         self.static_cost = {}
@@ -42,7 +46,19 @@ class Router:
 
     # ------------------------------------------------------------- weights
 
-    def _weight(self, eid, live):
+    def _weight(self, eid, live, horizon=0.0):
+        """Travel-time weight of entering `eid` `horizon` seconds from now.
+
+        With a Markov predictor attached and enough history, the weight is
+        the edge length over the CTMC-predicted mean speed AT THE ARRIVAL
+        HORIZON — anticipatory routing: the route avoids where congestion
+        WILL be, not just where it is.  Falls back to live TraCI travel
+        time, then to free flow."""
+        if self.predictor is not None and horizon > 0:
+            v = self.predictor.predicted_speed(eid, horizon)
+            if v:
+                t = self._lengths.get(eid, 0.0) / max(v, 0.5)
+                return min(max(t, self.static_cost[eid]), 1200.0)
         if live:
             try:
                 t = traci.edge.getTraveltime(eid)
@@ -78,7 +94,9 @@ class Router:
             for nxt in self.succ.get(eid, ()):
                 if nxt in visited:
                     continue
-                nd = d + self._weight(nxt, live)
+                # time-dependent: the weight of the next edge is evaluated
+                # at the horizon we would reach it (cumulative time so far)
+                nd = d + self._weight(nxt, live, horizon=d)
                 if nd < dist.get(nxt, float("inf")):
                     dist[nxt] = nd
                     prev[nxt] = eid
@@ -97,7 +115,7 @@ class Router:
             edge = self.net.getEdge(eid)
             node = edge.getToNode()
             cum_d += edge.getLength()
-            cum_t += self._weight(eid, live)
+            cum_t += self._weight(eid, live, horizon=cum_t)
             lon, lat = self.net.convertXY2LonLat(*node.getCoord())
             rows.append({
                 "node": node.getID(),

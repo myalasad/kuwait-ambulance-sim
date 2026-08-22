@@ -16,6 +16,7 @@ from .metrics import Metrics
 from .operations import OperationsLog
 from .router import Router
 from .traffic_profile import hourly_profile
+from .markov import TrafficMarkov
 
 VEH_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED]
 
@@ -35,6 +36,7 @@ class Simulation:
         self.controller = None
         self.dispatcher = None
         self.metrics = None
+        self.markov = None
         self.time = 0.0
         self.teleports = 0
         self._last_seq = 0
@@ -67,6 +69,18 @@ class Simulation:
             self.cfg, self.ops, enabled=self._preemption_wanted)
         self.actuation = DemandResponsiveController(
             self.cfg, self.ops, enabled=self.cfg.actuation_enabled)
+        self.markov = TrafficMarkov(self.net, self.cfg, self.root, self.ops)
+        self._markov_next_save = self.cfg.markov_save_every_s
+        if self.cfg.markov_routing:
+            self.router.predictor = self.markov
+        if self.markov._loaded_obs:
+            self.ops.emit(0.0, "system",
+                          f"Markov traffic predictor loaded "
+                          f"{self.markov._loaded_obs} observations from "
+                          f"previous sessions ({len(self.markov.monitored)} "
+                          f"monitored corridors) — the model keeps feeding "
+                          f"itself every {self.cfg.markov_sample_s:.0f} s",
+                          "info")
         self.dispatcher = Dispatcher(self.net, self.cfg, self.ops, self.router)
         self.metrics = Metrics()
         for tls_id in traci.trafficlight.getIDList():
@@ -87,6 +101,11 @@ class Simulation:
                       "info")
 
     def close(self):
+        try:
+            if self.markov is not None:
+                self.markov.save()
+        except Exception:
+            pass
         try:
             traci.close()
         except Exception:
@@ -129,6 +148,10 @@ class Simulation:
         self.actuation.update(
             self.time,
             excluded=set(self.controller.active) | set(self.controller.pending))
+        self.markov.update(self.time)
+        if self.time >= self._markov_next_save:
+            self._markov_next_save = self.time + self.cfg.markov_save_every_s
+            self.markov.save()
 
     def _attribute_delay(self, active):
         """Split each ambulance's lost time between 'waiting at a red signal'

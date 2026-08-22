@@ -162,6 +162,14 @@ class SimConfig:
     lone_max_hold_s: float = 30.0     # early-green cap; then fair timers
     actuation_cooldown_s: float = 10.0  # between early greens per junction
 
+    # --- Markov traffic predictor (DTMC + CTMC, self-feeding) ---
+    markov_routing: bool = True       # Dijkstra uses CTMC-predicted edge
+    #                                   speeds at the arrival horizon
+    markov_sample_s: float = 30.0     # observation period (sim seconds)
+    markov_max_edges: int = 80        # arterials monitored individually
+    markov_min_obs: int = 40          # below this, pool by road class
+    markov_save_every_s: float = 300.0  # persist the chains this often
+
     # --- vehicles ---
     ambulance_type: str = "ambulance"
     speed_exemption_factor: float = 1.5  # ambulances may run at up to 150%

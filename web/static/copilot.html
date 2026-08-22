@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copilot — Kuwait Ambulance Green Wave</title>
+<style>
+  :root {
+    --bg: #10141c; --panel: #171d29; --panel2: #1e2634; --line: #2a3547;
+    --text: #e8edf6; --muted: #8b98ad;
+    --kw-green: #009a4e; --amber: #f0b429; --cyan: #22d3ee;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
+  header h1 { font-size: 16px; }
+  header .flag { display: inline-block; width: 22px; height: 11px;
+    border-radius: 2.5px; margin-right: 8px; vertical-align: -1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 1px 3px rgba(0,0,0,.45);
+    background: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 12%22><rect width=%2224%22 height=%224%22 fill=%22%23007A3D%22/><rect y=%224%22 width=%2224%22 height=%224%22 fill=%22%23ffffff%22/><rect y=%228%22 width=%2224%22 height=%224%22 fill=%22%23CE1126%22/><path d=%22M0 0 L6 4 L6 8 L0 12 Z%22/></svg>') center/cover no-repeat; }
+  nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  nav a { transition: background .15s, color .15s, border-color .15s;
+    padding: 6px 12px; font-size: 12px; font-weight: 600;
+    color: var(--muted); text-decoration: none; border: 1px solid var(--line);
+    border-radius: 8px; background: #141a25; }
+  nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
+
+  main { display: grid; grid-template-columns: 1fr 400px; gap: 14px;
+         padding: 14px 20px; align-items: start; max-width: 1400px;
+         margin: 0 auto; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel2); border: 1px solid var(--line);
+          border-radius: 10px; padding: 12px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--muted); margin-bottom: 9px; }
+
+  #chat { display: flex; flex-direction: column; gap: 10px; min-height: 55vh;
+          max-height: 68vh; overflow-y: auto; padding: 4px; }
+  .msg { max-width: 92%; border-radius: 12px; padding: 9px 13px;
+         font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
+  .msg.q { align-self: flex-end; background: var(--kw-green); color: #fff; }
+  .msg.a { align-self: flex-start; background: #141a25;
+           border: 1px solid var(--line); }
+  .msg.a .srcs { margin-top: 8px; font-size: 11px; color: var(--cyan); }
+  .msg.a .mode { margin-top: 4px; font-size: 10.5px; color: var(--muted); }
+  #askrow { display: flex; gap: 8px; margin-top: 10px; }
+  #q { flex: 1; padding: 10px 14px; border-radius: 10px;
+       border: 1px solid var(--line); background: #141a25;
+       color: var(--text); font-size: 14px; }
+  #send { padding: 10px 20px; border-radius: 10px; border: 0;
+          background: var(--kw-green); color: #fff; font-weight: 700;
+          cursor: pointer; }
+  #send:disabled { opacity: .5; }
+  .hints { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .hints button { font-size: 11.5px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: #141a25; color: var(--muted);
+    cursor: pointer; }
+  .hints button:hover { color: var(--text); border-color: #46586f; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 4px 6px; text-align: left; border-bottom: 1px solid #232d3f; }
+  th { color: var(--muted); font-weight: 600; font-size: 10.5px;
+       text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .state-FREE { color: #4ade80; } .state-SLOW { color: var(--amber); }
+  .state-CONGESTED { color: #fb923c; } .state-JAMMED { color: #ff6b6b; }
+  .note { font-size: 11.5px; color: var(--muted); background: #0d1119;
+          border-radius: 8px; padding: 8px 10px; margin-top: 10px; }
+  .note b { color: #4ade80; }
+  .feedchip { display: inline-block; background: #123a20; color: #4ade80;
+    border-radius: 999px; padding: 1px 10px; font-size: 11px;
+    font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="flag"></span>Operations Copilot</h1>
+  <nav>
+    <a href="/">Live Map</a>
+    <a href="/driver">Driver</a>
+    <a href="/navigation">Navigation</a>
+    <a href="/operations">Operations</a>
+    <a href="/protocol">Protocol</a>
+    <a href="/how">How it works</a>
+    <a class="on" href="/copilot">Copilot</a>
+  </nav>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Ask the record — answers grounded in cases, protocol and live
+        analytics, with citations</h2>
+    <div id="chat">
+      <div class="msg a">Ask me anything the system has recorded: why a
+        junction was enabled, what an ambulance did, who decided a conflict,
+        which corridors are likely to jam. Every answer cites its sources
+        [in brackets] — and if the record doesn't contain the answer, I say
+        so instead of guessing.</div>
+    </div>
+    <div id="askrow">
+      <input id="q" placeholder="e.g. Was AMB_1 fined for speeding? · Which corridors jam most? · ماذا حدث للحالة P-003؟">
+      <button id="send">Ask</button>
+    </div>
+    <div class="hints">
+      <button>Why did the last ambulance get rerouted?</button>
+      <button>Which corridors are most likely to jam in 5 minutes?</button>
+      <button>What happens when two ambulances tie at a junction?</button>
+      <button>Draft an after-action report for the latest A-case</button>
+    </div>
+    <div class="note"><b>Cost design:</b> answers come from Haiku 4.5
+      (fractions of a cent), escalating to Sonnet 5 only for reports or when
+      grounding needs a second pass. Retrieval is hybrid — exact-entity
+      filters + BM25 — free and local. With no API key the copilot still
+      answers in extractive mode. It is <b>read-only</b>: no path to the
+      signal controls.</div>
+  </section>
+
+  <aside style="display:flex;flex-direction:column;gap:14px">
+    <section class="card">
+      <h2>Markov traffic analytics <span class="feedchip" id="feed">…</span></h2>
+      <table>
+        <thead><tr><th>corridor</th><th>now</th>
+          <th class="num">long-run congested</th>
+          <th class="num">P(jam, 5 min)</th></tr></thead>
+        <tbody id="mk-rows"></tbody>
+      </table>
+      <div class="note" id="mk-meta">Loading…</div>
+      <div class="note">Each corridor is a 4-state chain
+        (FREE/SLOW/CONGESTED/JAMMED). A <b>DTMC</b> gives the long-run
+        (stationary) congested share; a <b>CTMC</b> generator gives
+        P(state at any horizon) — that forecast feeds the router, which
+        weighs each road by its predicted speed <b>at the moment the
+        ambulance will reach it</b>, not just its speed now. The chains
+        learn from the running simulation and persist across sessions — the
+        model feeds itself constantly. (Learning source here is simulated
+        traffic; the identical estimator runs on real detector data when
+        available.)</div>
+    </section>
+  </aside>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const chat = $("chat");
+
+function add(cls, text, meta) {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.textContent = text;
+  if (meta && meta.sources && meta.sources.length) {
+    const s = document.createElement("div");
+    s.className = "srcs";
+    s.textContent = "sources: " + meta.sources.join(" · ");
+    div.appendChild(s);
+  }
+  if (meta && meta.model) {
+    const m = document.createElement("div");
+    m.className = "mode";
+    m.textContent = "answered by " + meta.model;
+    div.appendChild(m);
+  }
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+async function ask(question) {
+  if (!question.trim()) return;
+  add("q", question);
+  $("q").value = "";
+  $("send").disabled = true;
+  const pending = add("a", "…thinking (searching the record)…");
+  try {
+    const r = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const d = await r.json();
+    pending.remove();
+    add("a", d.answer || d.error || "no answer", d);
+  } catch (e) {
+    pending.textContent = "Server unreachable — is run_live.py running?";
+  }
+  $("send").disabled = false;
+}
+$("send").onclick = () => ask($("q").value);
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") ask($("q").value); });
+for (const b of document.querySelectorAll(".hints button"))
+  b.onclick = () => ask(b.textContent);
+
+async function pollMarkov() {
+  try {
+    const r = await fetch("/api/markov");
+    const d = await r.json();
+    if (d.error) { $("mk-meta").textContent = d.error; return; }
+    $("feed").textContent = d.total_observations + " obs, self-feeding";
+    $("mk-rows").innerHTML = (d.top_corridors || []).map(c =>
+      `<tr><td>${c.edge.length > 16 ? c.edge.slice(0, 15) + "…" : c.edge}</td>` +
+      `<td class="state-${c.state_now}">${c.state_now}</td>` +
+      `<td class="num">${(c.congested_share * 100).toFixed(0)}%</td>` +
+      `<td class="num">${(c.p_jam_5min * 100).toFixed(0)}%</td></tr>`
+    ).join("") || `<tr><td colspan="4" style="color:var(--muted)">Gathering
+      observations — corridors appear once each has enough history
+      (${d.monitored_edges} monitored).</td></tr>`;
+    $("mk-meta").textContent =
+      `${d.total_observations} total observations (` +
+      `${d.loaded_from_previous_sessions} carried over from previous ` +
+      `sessions) · sampling every ${d.sample_period_s} s · ` +
+      (d.network_major_stationary
+        ? `major-road long-run mix: ` +
+          Object.entries(d.network_major_stationary)
+            .map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", ")
+        : "network-level mix pending");
+  } catch (e) { /* retry */ }
+}
+pollMarkov();
+setInterval(pollMarkov, 5000);
+</script>
+</body>
+</html>

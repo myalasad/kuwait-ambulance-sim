@@ -251,6 +251,77 @@ async def api_analysis():
     return JSONResponse({"runs": runs, "aggregate": agg})
 
 
+_rag = {"index": None, "size": 0}
+
+
+def _rag_index():
+    """Build (or refresh) the copilot index; cheap, so refresh when the
+    operations log has grown materially — the corpus feeds itself too."""
+    from rag.ingest import build_corpus
+    from rag.index import Index
+    path = os.path.join(ROOT, "data", "operations.jsonl")
+    size = os.path.getsize(path) if os.path.exists(path) else 0
+    if _rag["index"] is None or size > _rag["size"] * 1.2 + 4096:
+        docs = build_corpus(ROOT)
+        if hub.sim is not None and hub.sim.markov is not None:
+            s = hub.sim.markov.summary()
+            lines = [f"Live Markov traffic analytics "
+                     f"({s['total_observations']} observations, "
+                     f"{s['loaded_from_previous_sessions']} carried over from "
+                     f"previous sessions; DTMC+CTMC on "
+                     f"{s['monitored_edges']} corridors):"]
+            for r in s["top_corridors"]:
+                lines.append(
+                    f"corridor {r['edge']}: now {r['state_now']}, long-run "
+                    f"congested share {r['congested_share']:.0%}, P(jam in "
+                    f"5 min) {r['p_jam_5min']:.0%}, stationary "
+                    f"{r['stationary']}")
+            if s.get("network_major_stationary"):
+                lines.append(f"major-road network stationary distribution: "
+                             f"{s['network_major_stationary']}")
+            docs.append({"id": "markov:live", "type": "markov",
+                         "title": "Markov traffic analytics (live)",
+                         "text": "\n".join(lines),
+                         "meta": {"ambs": [], "cases": [],
+                                  "tls": [r["edge"] for r in
+                                          s["top_corridors"]],
+                                  "kinds": ["markov"]}})
+        _rag["index"] = Index(docs)
+        _rag["size"] = size
+    return _rag["index"]
+
+
+@app.post("/api/ask")
+async def api_ask(body: dict):
+    """Operations Copilot: retrieval-grounded Q&A over the system's records.
+    Runs in a worker thread so the simulation loop never blocks on it."""
+    question = str(body.get("question", ""))[:1000].strip()
+    if not question:
+        return JSONResponse({"error": "empty question"}, status_code=400)
+
+    def work():
+        from rag.answer import answer
+        index = _rag_index()
+        docs = index.search(question, k=6)
+        return answer(question, docs)
+
+    result = await asyncio.get_event_loop().run_in_executor(None, work)
+    return JSONResponse(result)
+
+
+@app.get("/api/markov")
+async def api_markov():
+    if hub.sim is None or hub.sim.markov is None:
+        return JSONResponse({"error": "simulation not running"},
+                            status_code=503)
+    return JSONResponse(hub.sim.markov.summary())
+
+
+@app.get("/copilot")
+async def copilot_page():
+    return _page("copilot.html")
+
+
 @app.post("/api/command")
 async def api_command(cmd: dict):
     """Same command surface as the WebSocket, for the auxiliary pages

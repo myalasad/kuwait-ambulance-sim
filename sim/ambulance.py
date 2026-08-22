@@ -86,7 +86,9 @@ class Dispatcher:
                 raise ValueError(f"No hospital can reach {to_desc}")
             from_desc = f"{best[0]} (nearest hospital to the scene)"
             route = best[1]
-            algorithm = "Dijkstra (live edge travel times)"
+            algorithm = ("Dijkstra (live + Markov-predicted travel times)"
+                             if self.router.predictor is not None
+                             else "Dijkstra (live edge travel times)")
         else:
             from_edges, from_desc = self._resolve(origin, "origin")
             for from_edge in from_edges:
@@ -95,7 +97,9 @@ class Dispatcher:
                         continue
                     route = self.router.route(from_edge.getID(),
                                               to_edge.getID(), live=live)
-                    algorithm = "Dijkstra (live edge travel times)"
+                    algorithm = ("Dijkstra (live + Markov-predicted travel times)"
+                             if self.router.predictor is not None
+                             else "Dijkstra (live edge travel times)")
                     if route is None:
                         stage = traci.simulation.findRoute(
                             from_edge.getID(), to_edge.getID(),

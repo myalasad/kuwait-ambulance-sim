@@ -64,6 +64,7 @@
     <a href="/operations">Operations</a>
     <a class="on" href="/protocol">Protocol</a>
     <a href="/how">How it works</a>
+    <a href="/copilot">Copilot</a>
   </nav>
 </header>
 
@@ -217,6 +218,25 @@
     camera ever sees it: detection confirms; the route predicts. Full
     node-by-node analysis is on the
     <a href="/navigation" style="color:#4ade80">Navigation</a> page.</p>
+  </div>
+  <div class="scenario">
+    <h3>Predictive (Markov) routing — the model feeds itself</h3>
+    <p>Every monitored corridor is described by a 4-state congestion chain
+    (FREE / SLOW / CONGESTED / JAMMED) estimated two ways from the same
+    observations: a <b>discrete-time Markov chain</b> (30 s steps — long-run
+    congested share per corridor) and a <b>continuous-time Markov chain</b>
+    (generator matrix — the probability of each state at ANY future moment).
+    The router uses the CTMC forecast to weigh each road by its predicted
+    speed <b>at the time the ambulance will reach it</b>, so routes avoid
+    where congestion <i>will be</i>, not just where it is. Observations
+    accumulate every 30 s and persist across sessions
+    (<code>data/markov_*.json</code>) — the model continuously feeds itself.
+    Sparse corridors fall back to pooled road-class chains rather than
+    guessing. The transition math is verified against closed-form solutions
+    in <code>tests/test_markov.py</code>. Learning source here is simulated
+    traffic; the identical estimator ingests real detector data unchanged.
+    Live analytics and the record-grounded Q&amp;A assistant are on the
+    <a href="/copilot" style="color:#4ade80">Copilot</a> page.</p>
   </div>
   <div class="scenario">
     <h3>Automatic reroute to the nearest hospital</h3>
