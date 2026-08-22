@@ -31,9 +31,10 @@ SERVING = "serving"
 
 
 class DemandResponsiveController:
-    def __init__(self, cfg, ops, enabled=True):
+    def __init__(self, cfg, ops, enabled=True, net=None):
         self.cfg = cfg
         self.ops = ops
+        self.net = net
         self.enabled = enabled
         self.tls_info = {}      # tls -> approach lanes, serving phase map
         self.claims = {}        # tls -> {"mode","edge","serve","until","since"}
@@ -70,12 +71,17 @@ class DemandResponsiveController:
                 continue
             if not logics:
                 continue
-            approach = {}   # in-edge -> set of in-lanes
+            approach = {}   # in-edge -> set of lanes in its DETECTION ZONE
             for group in links:
                 if group:
                     in_lane = group[0][0]
                     approach.setdefault(in_lane.rsplit("_", 1)[0],
                                         set()).add(in_lane)
+            # extend every approach upstream to the detection-zone length:
+            # the final edge before a merged junction is often a 5-40 m
+            # connector stub that cannot see a queue 30 m behind it
+            for edge_id in list(approach):
+                approach[edge_id] |= self._zone_lanes(edge_id)
             if len(approach) < 2:
                 continue    # nothing to arbitrate on a one-approach signal
             phases = logics[0].phases
@@ -106,6 +112,37 @@ class DemandResponsiveController:
                     traci.lane.subscribe(lane, [tc.LAST_STEP_VEHICLE_NUMBER])
             self.tls_info[tls_id] = {"approach": approach, "serve": serve,
                                      "phases": phases}
+
+    def _zone_lanes(self, edge_id):
+        """All lanes within detection_zone_m upstream of the stop line,
+        walking back across edge boundaries (all predecessors)."""
+        lanes = set()
+        if self.net is None:
+            return lanes
+        try:
+            start = self.net.getEdge(edge_id)
+        except Exception:
+            return lanes
+        frontier = [(start, 0.0)]
+        seen = {edge_id}
+        while frontier:
+            edge, covered = frontier.pop()
+            for lane in edge.getLanes():
+                lanes.add(lane.getID())
+            covered += edge.getLength()
+            if covered >= self.cfg.detection_zone_m:
+                continue
+            for prev in edge.getIncoming():
+                pid = prev.getID()
+                if pid in seen or pid.startswith(":"):
+                    continue
+                # stop at another signalized junction: that is its zone
+                if prev.getToNode().getType().startswith("traffic_light") \
+                        and prev.getID() != edge_id and covered > 0:
+                    continue
+                seen.add(pid)
+                frontier.append((prev, covered))
+        return lanes
 
     # -------------------------------------------------------------- queries
 

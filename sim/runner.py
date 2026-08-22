@@ -73,7 +73,8 @@ class Simulation:
         self.controller = GreenWaveController(
             self.cfg, self.ops, enabled=self._preemption_wanted)
         self.actuation = DemandResponsiveController(
-            self.cfg, self.ops, enabled=self.cfg.actuation_enabled)
+            self.cfg, self.ops, enabled=self.cfg.actuation_enabled,
+            net=self.net)
         self.markov = TrafficMarkov(self.net, self.cfg, self.root, self.ops)
         self._markov_next_save = self.cfg.markov_save_every_s
         self._fair_next_report = 300.0

@@ -226,6 +226,11 @@ class SimConfig:
     actuation_enabled: bool = True
     lone_confirm_s: float = 3.0       # all other approaches must be empty
     #                                   this long before an early green
+    detection_zone_m: float = 120.0   # each approach is watched over this
+    #                                   length upstream of the stop line
+    #                                   (across edge boundaries), like an
+    #                                   advance loop detector — never just
+    #                                   the final connector stub
     lone_quiet_s: float = 45.0        # ...and must not have carried ANY
     #                                   traffic within this window: a junction
     #                                   in use from several directions stays
