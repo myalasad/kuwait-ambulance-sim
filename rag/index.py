@@ -36,8 +36,40 @@ KIND_HINTS = {
 }
 
 
+DOC_WORDS = {
+    "what", "how", "why", "explain", "explains", "mean", "means", "does",
+    "describe", "install", "setup", "set", "run", "start", "page", "tab",
+    "config", "configuration", "parameter", "parameters", "setting",
+    "version", "release", "history", "who", "built", "architecture",
+    "module", "algorithm", "dijkstra", "markov", "dtmc", "ctmc", "dmm",
+    "matrix", "stack", "technology", "real", "calibrated", "provenance",
+    "limitation", "limitations", "scope", "copilot", "work", "works",
+    "purpose", "programme", "program", "system", "project", "feature",
+    "features", "hospital", "hospitals", "area", "areas", "governorate",
+    "scenario", "model", "exemption", "fine", "early", "green", "corridor",
+    "preemption", "arbitration", "pages", "driver", "navigation", "results",
+    "measured", "cost", "key", "api",
+}
+
+
+STOPWORDS = {
+    "what", "does", "do", "did", "the", "a", "an", "is", "are", "was", "were",
+    "how", "why", "of", "to", "in", "and", "or", "it", "this", "that", "for",
+    "with", "on", "at", "by", "be", "can", "could", "would", "should", "i",
+    "me", "my", "we", "you", "your", "its", "there", "which", "who", "when",
+    "where", "any", "all", "from", "into", "about", "explain", "tell", "show",
+    "please", "mean", "means", "s", "t",
+}
+
+
 def tokenize(text):
     return _TOKEN.findall(text.lower())
+
+
+def query_tokens(text):
+    """Question words are RARE in a corpus of terse records, so BM25 would
+    weight them absurdly; drop them and keep the content terms."""
+    return [t for t in tokenize(text) if t not in STOPWORDS]
 
 
 class Index:
@@ -49,8 +81,11 @@ class Index:
         self.df = Counter()
         self.lens = []
         for d in docs:
-            toks = tokenize(d["title"] + " " + d["text"])
+            toks = tokenize(d["text"])
             counts = Counter(toks)
+            for t in tokenize(d["title"]):      # titles count triple
+                counts[t] += 3
+                toks.append(t)
             self.tf.append(counts)
             self.lens.append(len(toks))
             for t in counts:
@@ -58,7 +93,8 @@ class Index:
         self.avg_len = (sum(self.lens) / len(self.lens)) if self.lens else 1.0
         self.n = len(docs)
         self._max_session = max((d["meta"].get("session", 0)
-                                 for d in docs), default=0)
+                                 for d in docs if d["type"] in ("case", "ops")),
+                                default=0)
 
     # ---------------------------------------------------------------- query
 
@@ -74,10 +110,16 @@ class Index:
         }
         want["ambs"] = {f"AMB_{n}" for n in want["ambs"]}
         want["cases"] = {f"{k}-{int(n):03d}" for k, n in want["cases"]}
-        for tok in tokenize(q):
+        toks = tokenize(q)
+        for tok in toks:
             for stem, kind in KIND_HINTS.items():
                 if tok.startswith(stem):
                     want["kinds"].add(kind)
+        # a question about the programme itself (no named entity, explanatory
+        # wording) prefers the documentation corpus
+        if (not want["ambs"] and not want["cases"] and not want["tls"]
+                and len(set(toks) & DOC_WORDS) >= 2):
+            want["kinds"].add("docs")
         return want
 
     def _bm25(self, q_tokens, i):
@@ -94,7 +136,9 @@ class Index:
 
     def search(self, question, k=6):
         want = self.parse_query(question)
-        q_tokens = tokenize(question)
+        q_tokens = query_tokens(question)
+        # identifiers such as camera_range_m or run_live.py are exact keys
+        exact = {t for t in q_tokens if "_" in t or t.endswith(".py")}
         scored = []
         for i, d in enumerate(self.docs):
             meta = d["meta"]
@@ -107,11 +151,15 @@ class Index:
                                     & {t.upper() for t in meta["tls"]}):
                 continue
             score = self._bm25(q_tokens, i)
+            if exact and exact & set(self.tf[i]):
+                score += 8.0                      # exact identifier match
             # soft boost when the doc carries a hinted event kind
             if want["kinds"] & set(meta.get("kinds", [])):
                 score += 2.5
-            # mild recency boost: current-session records outrank old runs
-            score += 0.6 * meta.get("session", 0) / max(self._max_session, 1)
+            # mild recency boost: current-session records outrank old runs;
+            # documentation is timeless and counts as current
+            sess = meta.get("session", 0)
+            score += 0.6 if sess >= 10**6 else 0.6 * sess / max(self._max_session, 1)
             if score > 0:
                 scored.append((score, i))
         scored.sort(reverse=True)

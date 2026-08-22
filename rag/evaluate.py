@@ -11,6 +11,7 @@ Run: .venv/bin/python rag/evaluate.py [--modes extractive haiku sonnet]
 Without API credentials only `extractive` runs (retrieval-quality check).
 """
 import argparse
+import json
 import os
 import re
 import sys
@@ -92,12 +93,14 @@ def run_mode(mode, pairs, index):
         docs = index.search(p["q"], k=6)
         res = answer_mod.answer(p["q"], docs, client=client)
         text = res["answer"]
-        if p["expect_source"] in (res["sources"] or []) and (
-                mode == "extractive" or p["expect_source"] in text):
+        srcs = res["sources"] or []
+        hit = [sid for sid in srcs if sid.startswith(p["expect_source"])]
+        if hit and (mode == "extractive" or any(h in text for h in hit)):
             grounded += 1
-        elif mode == "extractive" and p["expect_source"] in res["sources"]:
-            grounded += 1
-        if p["expect_text"].lower() in text.lower():
+        wants = p["expect_text"]
+        if isinstance(wants, str):
+            wants = [wants]
+        if all(w.lower() in text.lower() for w in wants):
             content += 1
     return grounded, content
 
@@ -106,11 +109,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--modes", nargs="+", default=["extractive"],
                     choices=["extractive", "haiku", "sonnet"])
+    ap.add_argument("--set", default="records",
+                    choices=["records", "knowledge"],
+                    help="records: Q/A derived from the operations log; "
+                         "knowledge: curated questions about the programme")
     args = ap.parse_args()
 
     docs = build_corpus(ROOT)
     index = Index(docs)
-    pairs = build_evalset(docs)
+    if args.set == "knowledge":
+        kpath = os.path.join(ROOT, "rag", "knowledge_eval.json")
+        pairs = [{"q": p["q"], "expect_source": p["source"],
+                  "expect_text": p["expect"]}
+                 for p in json.load(open(kpath, encoding="utf-8"))]
+    else:
+        pairs = build_evalset(docs)
     if not pairs:
         sys.exit("No eval pairs — run the simulation first to produce "
                  "operations data.")

@@ -819,13 +819,22 @@ function render(now) {
   // per-approach picture stays uncluttered
   if (zoom >= 13.5) {
     const hs = Math.min(1.15, Math.max(0.55, (zoom - 12.5) / 3.2));
-    for (const t of tlsStatic) {
+    const placed = [];   // badge positions already drawn this frame
+    // special-mode junctions first so they win any collision
+    const order = tlsStatic.slice().sort((a, b) => {
+      const sa = frame.tls[a.id], sb = frame.tls[b.id];
+      return ((sb && sb.m !== "normal") ? 1 : 0) - ((sa && sa.m !== "normal") ? 1 : 0);
+    });
+    for (const t of order) {
       const st = frame.tls[t.id];
       if (!st) continue;
       if (zoom >= 15.5 && st.m === "normal"
           && !(restoredBadges.get(t.id) > Date.now())) continue;
       const c = map.latLngToContainerPoint([t.lat, t.lon]);
       if (c.x < -30 || c.y < -30 || c.x > vw + 30 || c.y > vh + 30) continue;
+      // joined/adjacent junctions a few pixels apart share one badge
+      if (placed.some(q => Math.hypot(q[0] - c.x, q[1] - c.y) < 26 * hs)) continue;
+      placed.push([c.x, c.y]);
       let label = null;
       if (zoom >= 14.5) {
         const who = `${t.code} ${t.name}`;
@@ -847,11 +856,14 @@ function render(now) {
   // junction name tags: code + real streets, so the map reads like a city
   if (zoom >= 16.5) {
     ctx.font = "600 10.5px -apple-system, sans-serif";
+    const tagged = [];
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st || st.m !== "normal") continue;
       const c = map.latLngToContainerPoint([t.lat, t.lon]);
       if (c.x < -40 || c.y < -40 || c.x > vw + 40 || c.y > vh + 40) continue;
+      if (tagged.some(q => Math.hypot(q[0] - c.x, q[1] - c.y) < 34)) continue;
+      tagged.push([c.x, c.y]);
       const txt = `${t.code} · ${t.name}`;
       ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.lineWidth = 3;
       ctx.fillStyle = "#aab7cc";

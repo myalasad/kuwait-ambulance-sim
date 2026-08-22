@@ -103,5 +103,127 @@ def build_corpus(root):
                          "title": f"Protocol — {title[:60]}",
                          "text": "Operating protocol section: " + text,
                          "meta": {"ambs": [], "cases": [], "tls": [],
-                                  "kinds": ["protocol"]}})
+                                  "kinds": ["protocol", "docs"],
+                                  "session": 10**6}})
+    # --- the programme's own documentation: handbook, README, config,
+    #     module docstrings, version history ---
+    docs += programme_docs(root)
+    return docs
+
+
+# ------------------------------------------------------------ programme docs
+
+def _md_sections(path, prefix):
+    """Split a markdown file into one document per heading."""
+    docs = []
+    if not os.path.exists(path):
+        return docs
+    text = open(path, encoding="utf-8").read()
+    parts = re.split(r"^(#{1,3} .+)$", text, flags=re.M)
+    title = os.path.basename(path)
+    for i in range(1, len(parts), 2):
+        head = parts[i].lstrip("# ").strip()
+        body = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        if len(body) < 40:
+            continue
+        docs.append({
+            "id": f"{prefix}:{head[:48]}", "type": "doc",
+            "title": f"{prefix.capitalize()} — {head}",
+            "text": f"{head}\n{body}"[:5000],
+            "meta": {"ambs": [], "cases": [], "tls": [],
+                     "kinds": ["docs", prefix], "session": 10**6},
+        })
+    return docs
+
+
+def _config_reference(root):
+    """Every SimConfig field with its inline comment, as one document per
+    parameter group, so 'what does camera_range_m mean?' is answerable."""
+    path = os.path.join(root, "sim", "config.py")
+    if not os.path.exists(path):
+        return []
+    src = open(path, encoding="utf-8").read()
+    body = src.split("class SimConfig", 1)[-1].split("def __post_init__", 1)[0]
+    groups, current, lines = [], "General", []
+    for raw in body.splitlines():
+        line = raw.strip()
+        m = re.match(r"#\s*---\s*(.+?)\s*---", line)
+        if m:
+            if lines:
+                groups.append((current, lines))
+            current, lines = m.group(1), []
+            continue
+        m = re.match(r"(\w+):\s*[\w\[\], ]+=\s*([^#]+?)\s*(?:#\s*(.*))?$", line)
+        if m:
+            lines.append(f"{m.group(1)} = {m.group(2).strip()}"
+                         + (f" — {m.group(3).strip()}" if m.group(3) else ""))
+        elif line.startswith("#") and lines:
+            lines[-1] += " " + line.lstrip("# ").strip()
+    if lines:
+        groups.append((current, lines))
+    docs = []
+    for name, items in groups:
+        docs.append({
+            "id": f"config:{name[:40]}", "type": "doc",
+            "title": f"Configuration — {name}",
+            "text": f"Configuration parameters ({name}), file sim/config.py:\n"
+                    + "\n".join(items),
+            "meta": {"ambs": [], "cases": [], "tls": [],
+                     "kinds": ["docs", "config"], "session": 10**6},
+        })
+    return docs
+
+
+def _module_docs(root):
+    """Module docstrings: what each part of the code does."""
+    docs = []
+    for rel in ("sim", "rag", "web", "scripts"):
+        folder = os.path.join(root, rel)
+        if not os.path.isdir(folder):
+            continue
+        for fn in sorted(os.listdir(folder)):
+            if not fn.endswith(".py"):
+                continue
+            src = open(os.path.join(folder, fn), encoding="utf-8").read()
+            m = re.match(r'\s*(?:#![^\n]*\n)?\s*"""(.*?)"""', src, flags=re.S)
+            if not m or len(m.group(1)) < 60:
+                continue
+            docs.append({
+                "id": f"module:{rel}/{fn}", "type": "doc",
+                "title": f"Module {rel}/{fn}",
+                "text": f"Source module {rel}/{fn} — purpose and design:\n"
+                        + m.group(1).strip()[:4000],
+                "meta": {"ambs": [], "cases": [], "tls": [],
+                         "kinds": ["docs", "module"], "session": 10**6},
+            })
+    return docs
+
+
+def _version_history(root):
+    """Release notes from git tags, if git is available."""
+    try:
+        import subprocess
+        out = subprocess.run(["git", "tag", "-n40", "--sort=v:refname"],
+                             cwd=root, capture_output=True, text=True,
+                             timeout=10).stdout
+    except Exception:
+        return []
+    if not out.strip():
+        return []
+    return [{
+        "id": "docs:version-history", "type": "doc",
+        "title": "Version history (git releases)",
+        "text": "Version history of the programme, newest last:\n" + out[:6000],
+        "meta": {"ambs": [], "cases": [], "tls": [],
+                 "kinds": ["docs", "version"], "session": 10**6},
+    }]
+
+
+def programme_docs(root):
+    docs = []
+    docs += _md_sections(os.path.join(root, "docs", "knowledge.md"), "handbook")
+    docs += _md_sections(os.path.join(root, "README.md"), "readme")
+    docs += _config_reference(root)
+    docs += _module_docs(root)
+    docs += _version_history(root)
     return docs
