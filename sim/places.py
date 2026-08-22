@@ -120,6 +120,26 @@ class Places:
             return "junction box"
         return self.edges.get(edge_id) or "unnamed road"
 
+    def corridor(self, edge_id):
+        """Self-explanatory corridor descriptor for analytics tables:
+        road name, nearest area, and compass direction of travel."""
+        try:
+            e = self.net.getEdge(edge_id)
+        except Exception:
+            return {"road": self.road(edge_id), "area": "", "dir": ""}
+        shape = e.getShape()
+        (x0, y0), (x1, y1) = shape[0], shape[-1]
+        xm, ym = (x0 + x1) / 2, (y0 + y1) / 2
+        lon, lat = self.net.convertXY2LonLat(xm, ym)
+        bearing = math.degrees(math.atan2(x1 - x0, y1 - y0)) % 360
+        compass = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][
+            int((bearing + 22.5) // 45) % 8]
+        dirs = {"N": "northbound", "NE": "north-east", "E": "eastbound",
+                "SE": "south-east", "S": "southbound", "SW": "south-west",
+                "W": "westbound", "NW": "north-west"}
+        return {"road": self.road(edge_id), "area": self.area_of(lat, lon),
+                "dir": dirs[compass], "class": self.road_class(edge_id)}
+
     def road_class(self, edge_id):
         return CLASS_LABEL.get(self.edge_class.get(edge_id, ""), "Road")
 

@@ -122,9 +122,9 @@
     <section class="card">
       <h2>Markov traffic analytics <span class="feedchip" id="feed">…</span></h2>
       <table>
-        <thead><tr><th>road</th><th>now</th>
-          <th class="num">long-run congested</th>
-          <th class="num">P(jam, 5 min)</th></tr></thead>
+        <thead><tr><th>corridor</th><th>now</th>
+          <th>time spent congested</th>
+          <th class="num">jam risk · 5 min</th></tr></thead>
         <tbody id="mk-rows"></tbody>
       </table>
       <div class="note" id="mk-meta">Loading…</div>
@@ -199,12 +199,21 @@ async function pollMarkov() {
     const d = await r.json();
     if (d.error) { $("mk-meta").textContent = d.error; return; }
     $("feed").textContent = d.total_observations + " obs, self-feeding";
-    $("mk-rows").innerHTML = (d.top_corridors || []).map(c =>
-      `<tr><td>${c.edge.length > 16 ? c.edge.slice(0, 15) + "…" : c.edge}</td>` +
-      `<td class="state-${c.state_now}">${c.state_now}</td>` +
-      `<td class="num">${(c.congested_share * 100).toFixed(0)}%</td>` +
-      `<td class="num">${(c.p_jam_5min * 100).toFixed(0)}%</td></tr>`
-    ).join("") || `<tr><td colspan="4" style="color:var(--muted)">Gathering
+    const STATE_WORD = { FREE: "flowing", SLOW: "slow", CONGESTED: "congested",
+                         JAMMED: "jammed" };
+    $("mk-rows").innerHTML = (d.top_corridors || []).map(c => {
+      const pct = Math.round(c.congested_share * 100);
+      const jam = Math.round(c.p_jam_5min * 100);
+      const sub = [c.area, c.dir].filter(Boolean).join(" · ");
+      return `<tr><td><div style="font-weight:600">${c.road}</div>` +
+        `<div style="font-size:10.5px;color:var(--muted)">${sub}</div></td>` +
+        `<td class="state-${c.state_now}">${STATE_WORD[c.state_now] || c.state_now}</td>` +
+        `<td><div style="display:flex;align-items:center;gap:6px">` +
+        `<div style="flex:1;height:7px;background:#0d1119;border-radius:4px;overflow:hidden">` +
+        `<div style="width:${pct}%;height:100%;background:${pct > 30 ? "#e5484d" : pct > 10 ? "#f0b429" : "#22c55e"}"></div></div>` +
+        `<span class="num" style="min-width:34px;text-align:right">${pct}%</span></div></td>` +
+        `<td class="num" style="color:${jam > 25 ? "#ff6b6b" : jam > 8 ? "#f0b429" : "var(--muted)"}">${jam}%</td></tr>`;
+    }).join("") || `<tr><td colspan="4" style="color:var(--muted)">Gathering
       observations — corridors appear once each has enough history
       (${d.monitored_edges} monitored).</td></tr>`;
     $("mk-meta").textContent =

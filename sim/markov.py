@@ -296,9 +296,12 @@ class TrafficMarkov:
             p = chain.P()
             pi = stationary(p)
             congested_share = pi[2] + pi[3]
+            desc = (self.places.corridor(eid) if self.places
+                    else {"road": eid, "area": "", "dir": "", "class": ""})
             rows.append({
                 "edge": eid,
-                "road": (self.places.road(eid) if self.places else eid),
+                "road": desc["road"], "area": desc["area"],
+                "dir": desc["dir"], "class": desc["class"],
                 "observations": chain.n,
                 "state_now": STATE_NAMES[self.state_now.get(eid, 0)],
                 "stationary": {STATE_NAMES[s]: round(pi[s], 3)
