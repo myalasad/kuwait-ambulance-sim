@@ -280,7 +280,16 @@
         no public live traffic feed. When MOI/Municipality counts are
         available, drop them in <code>data/real_counts.csv</code>
         (<code>hour,multiplier</code>) and rebuild: they override the
-        calibrated profile.</li>
+        calibrated profile. Commercial sources exist for exactly this —
+        e.g. the <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data"
+        style="color:#4ade80">xMap Kuwait road traffic catalog</a> (speeds,
+        travel times, congestion trends across Kuwait's road network; licensed
+        product, procurable by MOI) — and its hourly figures drop straight
+        into that CSV hook.</li>
+    <li><b>Time of day is selectable</b> (Live Map → "Kuwait clock start"):
+        one flat peak-rate demand base is scaled live each hour by the
+        profile, so 01:00–05:00 gives the near-empty night grid and
+        07:00/18:00 the full peaks — no rebuild.</li>
     <li><b>Synthetic:</b> individual signal timing plans (static 72–90 s
         cycles generated per junction; the real KMoI plans can be substituted
         in the network file when obtained).</li>

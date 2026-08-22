@@ -51,9 +51,13 @@ class SimConfig:
     #                                      default policy applies (nearest)
 
     # --- demand calendar ---
-    start_hour: int = 7                  # simulated clock at t=0 (07:00,
-    #                                      Kuwait morning peak)
-    demand_hours: float = 2.0            # hours of background demand to build
+    start_hour: int = 7                  # simulated clock at t=0; choose any
+    #                                      hour 0-23 (01:00-05:00 gives the
+    #                                      near-empty Kuwaiti night streets).
+    #                                      Demand is one flat peak-rate base
+    #                                      scaled at runtime by the hourly
+    #                                      profile, so no rebuild is needed.
+    demand_hours: float = 3.0            # hours of base demand to build
 
     # --- routing ---
     route_live_weights: bool = True      # Dijkstra uses live travel times;
@@ -92,4 +96,22 @@ HOSPITALS = {
     "Amiri Hospital": (29.3857, 47.9931),
     "Al-Sabah Hospital (west anchor)": (29.3630, 47.9560),
     "Dar Al Shifa Hospital (east anchor)": (29.3745, 48.0025),
+}
+
+# Named incident areas inside the downtown cutout (lat, lon) — real
+# localities and landmarks, snapped to the nearest drivable edge at dispatch.
+# Ambulances always ORIGINATE at a hospital; these are where incidents occur.
+AREAS = {
+    "Mirqab": (29.3719, 47.9852),
+    "Salhiya": (29.3701, 47.9723),
+    "Qibla (Old Souq)": (29.3762, 47.9682),
+    "Souq Al-Mubarakiya": (29.3737, 47.9767),
+    "Sharq (Souq Sharq)": (29.3853, 47.9880),
+    "Dasman": (29.3868, 48.0007),
+    "Kuwait Towers area": (29.3880, 48.0040),
+    "Grand Mosque / Seif": (29.3800, 47.9740),
+    "Liberation Tower": (29.3787, 47.9902),
+    "Ministries area (south)": (29.3625, 47.9705),
+    "Jibla waterfront": (29.3845, 47.9660),
+    "Bneid Al-Qar edge": (29.3700, 48.0080),
 }

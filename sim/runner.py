@@ -6,7 +6,7 @@ import traci
 import traci.constants as tc
 import sumolib
 
-from .config import SimConfig, HOSPITALS
+from .config import SimConfig, HOSPITALS, AREAS
 from .sumo_env import ensure_sumo_home, sumo_binary
 from .preemption import GreenWaveController
 from .actuation import DemandResponsiveController
@@ -14,6 +14,7 @@ from .ambulance import Dispatcher
 from .metrics import Metrics
 from .operations import OperationsLog
 from .router import Router
+from .traffic_profile import hourly_profile
 
 VEH_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED]
 
@@ -52,6 +53,11 @@ class Simulation:
         ]
         if self.cfg.lateral_resolution > 0:
             cmd += ["--lateral-resolution", str(self.cfg.lateral_resolution)]
+        # time-of-day realism: the flat peak-rate demand base is scaled to
+        # the chosen clock hour (01:00-05:00 -> near-empty Kuwaiti streets)
+        self._profile = hourly_profile(self.root)
+        self._scale_hour = self.cfg.start_hour % 24
+        cmd += ["--scale", f"{self._profile.get(self._scale_hour, 0.3):.3f}"]
         cmd += self.extra_args
         traci.start(cmd)
         self.ops = OperationsLog(self.root)
@@ -65,6 +71,13 @@ class Simulation:
         for tls_id in traci.trafficlight.getIDList():
             traci.trafficlight.subscribe(tls_id, [tc.TL_RED_YELLOW_GREEN_STATE])
         self._tls_static = self._locate_tls()
+        # node id -> tls id (joined signals have prefixed ids like GS_<node>)
+        for tls_id in traci.trafficlight.getIDList():
+            for group in traci.trafficlight.getControlledLinks(tls_id):
+                for _in, _out, via in group:
+                    if via.startswith(":"):
+                        node = via[1:].rsplit("_", 2)[0]
+                        self.router.tls_map[node] = tls_id
         self.ops.emit(0.0, "system",
                       f"Simulation started: downtown Kuwait City, "
                       f"{len(self._tls_static)} signalized junctions, "
@@ -83,6 +96,18 @@ class Simulation:
     def step(self):
         traci.simulationStep()
         self.time = traci.simulation.getTime()
+        hour = int(self.cfg.start_hour + self.time / 3600) % 24
+        if hour != self._scale_hour:
+            self._scale_hour = hour
+            mult = self._profile.get(hour, 0.3)
+            try:
+                traci.simulation.setScale(mult)
+                self.ops.emit(self.time, "system",
+                              f"Clock reached {hour:02d}:00 — background "
+                              f"demand multiplier now {mult:.2f} of peak "
+                              f"(calibrated Kuwaiti profile)", "info")
+            except traci.TraCIException:
+                pass
         for veh_id in traci.simulation.getDepartedIDList():
             traci.vehicle.subscribe(veh_id, VEH_VARS)
             self.dispatcher.on_depart(veh_id, self.time)
@@ -225,6 +250,9 @@ class Simulation:
             "tls": self._tls_static,
             "hospitals": [{"name": name, "lat": lat, "lon": lon}
                           for name, (lat, lon) in HOSPITALS.items()],
+            "areas": [{"name": name, "lat": lat, "lon": lon}
+                      for name, (lat, lon) in AREAS.items()],
+            "start_hour": self.cfg.start_hour,
             "bounds": [[lat0, lon0], [lat1, lon1]],
         }
 

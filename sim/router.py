@@ -22,6 +22,9 @@ class Router:
     def __init__(self, net, vclass="passenger"):
         self.net = net
         self.vclass = vclass
+        # junction node id -> actual TLS id (joined signals get prefixed ids
+        # like "GS_<node>"); filled in by the runner once TraCI is up
+        self.tls_map = {}
         # edge id -> list of (successor edge id, successor static cost)
         self.succ = {}
         self.static_cost = {}
@@ -102,7 +105,7 @@ class Router:
                 "street": edge.getName() or eid,
                 "dist_m": round(cum_d, 0),
                 "eta_s": round(cum_t, 0),
-                "signal": node.getID()
+                "signal": self.tls_map.get(node.getID(), node.getID())
                           if node.getType().startswith("traffic_light") else None,
             })
         return rows

@@ -12,7 +12,7 @@ import random
 
 import traci
 
-from .config import HOSPITALS
+from .config import HOSPITALS, AREAS
 
 
 class Dispatcher:
@@ -45,33 +45,65 @@ class Dispatcher:
     # -------------------------------------------------------------- dispatch
 
     def dispatch(self, origin=None, destination=None, now=0.0):
-        """Insert an ambulance, lights on.  Returns the new ambulance id."""
-        from_edges, from_desc = self._resolve(origin, "origin")
-        if destination is not None:
-            to_edges, to_desc = self._resolve(destination, "destination")
+        """Insert an ambulance, lights on.  Ambulances always originate at a
+        hospital: origin None/"auto" selects the hospital NEAREST to the
+        incident scene by Dijkstra travel time.  destination None picks a
+        random named incident area.  Returns the new ambulance id."""
+        if destination is None:
+            area = self._rng.choice(sorted(AREAS))
+            lat, lon = AREAS[area]
+            to_edges = self.nearest_edges(lat, lon)
+            to_desc = f"{area} (random area)"
+            if not to_edges:
+                raise ValueError(f"No road near area {area}")
         else:
-            to_edges = [self.random_edge() for _ in range(12)]
-            to_desc = "random destination"
+            to_edges, to_desc = self._resolve(destination, "destination")
 
-        route, algorithm = None, None
-        for from_edge in from_edges:
-            for to_edge in to_edges:
-                if to_edge.getID() == from_edge.getID():
-                    continue
-                route = self.router.route(from_edge.getID(), to_edge.getID(),
-                                          live=self.cfg.route_live_weights)
-                algorithm = "Dijkstra (live edge travel times)"
-                if route is None:
-                    stage = traci.simulation.findRoute(
-                        from_edge.getID(), to_edge.getID(),
-                        vType=self.cfg.ambulance_type)
-                    if stage.edges:
-                        route = list(stage.edges)
-                        algorithm = "SUMO fallback router"
+        route, algorithm, from_desc = None, None, None
+        live = self.cfg.route_live_weights
+        if origin in (None, "auto"):
+            best = None
+            for name, (lat, lon) in HOSPITALS.items():
+                for cand in self.nearest_edges(lat, lon, k=3):
+                    r = None
+                    for to_edge in to_edges:
+                        if to_edge.getID() == cand.getID():
+                            continue
+                        r = self.router.route(cand.getID(), to_edge.getID(),
+                                              live=live)
+                        if r:
+                            eta = self.router.nodal_analysis(
+                                r, live=live)[-1]["eta_s"]
+                            if best is None or eta < best[2]:
+                                best = (name, r, eta)
+                            break
+                    if r:
+                        break
+            if best is None:
+                raise ValueError(f"No hospital can reach {to_desc}")
+            from_desc = f"{best[0]} (nearest hospital to the scene)"
+            route = best[1]
+            algorithm = "Dijkstra (live edge travel times)"
+        else:
+            from_edges, from_desc = self._resolve(origin, "origin")
+            for from_edge in from_edges:
+                for to_edge in to_edges:
+                    if to_edge.getID() == from_edge.getID():
+                        continue
+                    route = self.router.route(from_edge.getID(),
+                                              to_edge.getID(), live=live)
+                    algorithm = "Dijkstra (live edge travel times)"
+                    if route is None:
+                        stage = traci.simulation.findRoute(
+                            from_edge.getID(), to_edge.getID(),
+                            vType=self.cfg.ambulance_type)
+                        if stage.edges:
+                            route = list(stage.edges)
+                            algorithm = "SUMO fallback router"
+                    if route:
+                        break
                 if route:
                     break
-            if route:
-                break
         if not route:
             raise ValueError(f"No route from {from_desc} to {to_desc}")
 
@@ -175,9 +207,12 @@ class Dispatcher:
         if spec is None:
             return [self.random_edge()], f"random {kind}"
         if isinstance(spec, str):
-            if spec not in HOSPITALS:
-                raise ValueError(f"Unknown hospital: {spec}")
-            lat, lon = HOSPITALS[spec]
+            if spec in HOSPITALS:
+                lat, lon = HOSPITALS[spec]
+            elif spec in AREAS:
+                lat, lon = AREAS[spec]
+            else:
+                raise ValueError(f"Unknown place: {spec}")
             edges = self.nearest_edges(lat, lon)
             if not edges:
                 raise ValueError(f"No road near {spec}")

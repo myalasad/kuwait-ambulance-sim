@@ -89,37 +89,35 @@ def main() -> None:
         "--no-warnings",
     ])
 
-    # Background demand: one slice per clock hour, insertion rate from the
-    # calibrated Kuwaiti profile (see sim/traffic_profile.py for provenance).
+    # Background demand: ONE flat base generated at the daily-peak insertion
+    # rate.  The running simulation scales it each hour with the calibrated
+    # Kuwaiti profile (sumo --scale + traci.simulation.setScale), so any
+    # start hour 0-23 works without rebuilding — 03:00 gives the near-empty
+    # night grid, 07:00 the full morning peak.
     cfg = SimConfig()
-    profile = hourly_profile(ROOT)
-    route_files = []
-    for i in range(int(cfg.demand_hours)):
-        hour = (cfg.start_hour + i) % 24
-        period = period_for_hour(profile, hour)
-        routes = os.path.join(DATA, f"background_h{hour:02d}.rou.xml")
-        print(f"  hour {hour:02d}:00  multiplier {profile[hour]:.2f}  "
-              f"period {period:.2f} s/veh")
-        run([
-            sys.executable, os.path.join(tools_dir(), "randomTrips.py"),
-            "-n", NET,
-            "-o", os.path.join(DATA, f"background_h{hour:02d}.trips.xml"),
-            "-r", routes,
-            "-b", str(i * 3600), "-e", str((i + 1) * 3600),
-            "--period", f"{period:.3f}",
-            "--fringe-factor", "5",
-            "--seed", str(42 + i),
-            "--validate",
-            "--vehicle-class", "passenger",
-            "--prefix", f"bg{hour:02d}_",
-            "--trip-attributes", 'departLane="best" departSpeed="max"',
-        ])
-        route_files.append(os.path.basename(routes))
+    from sim.traffic_profile import PEAK_PERIOD_S
+    routes = os.path.join(DATA, "background_base.rou.xml")
+    print(f"  flat peak-rate base: period {PEAK_PERIOD_S:.2f} s/veh for "
+          f"{cfg.demand_hours:.0f} h (scaled live by the hourly profile)")
+    run([
+        sys.executable, os.path.join(tools_dir(), "randomTrips.py"),
+        "-n", NET,
+        "-o", os.path.join(DATA, "background_base.trips.xml"),
+        "-r", routes,
+        "-b", "0", "-e", str(int(cfg.demand_hours * 3600)),
+        "--period", f"{PEAK_PERIOD_S:.3f}",
+        "--fringe-factor", "5",
+        "--seed", "42",
+        "--validate",
+        "--vehicle-class", "passenger",
+        "--prefix", "bg",
+        "--trip-attributes", 'departLane="best" departSpeed="max"',
+    ])
 
     with open(VTYPES, "w") as f:
         f.write(VTYPES_XML)
     with open(SUMOCFG, "w") as f:
-        f.write(SUMOCFG_XML.format(routes=",".join(route_files)))
+        f.write(SUMOCFG_XML.format(routes=os.path.basename(routes)))
     print(f"\nScenario ready: {SUMOCFG}")
 
 

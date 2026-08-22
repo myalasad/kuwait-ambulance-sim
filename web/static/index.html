@@ -139,13 +139,17 @@
   </nav>
 
   <div class="card stack">
-    <h2>Dispatch</h2>
+    <h2>Dispatch — ambulances start at a hospital</h2>
     <div>
-      <label for="origin">Origin</label>
+      <label for="origin">Origin hospital</label>
       <select id="origin"></select>
     </div>
-    <button class="primary" id="btn-pick">🚑 Dispatch — pick incident scene on map</button>
-    <button id="btn-random">Dispatch to random incident</button>
+    <div>
+      <label for="scene">Incident scene</label>
+      <select id="scene"></select>
+    </div>
+    <button class="primary" id="btn-dispatch">🚑 Dispatch ambulance</button>
+    <button id="btn-random">Dispatch to random area</button>
   </div>
 
   <div class="card stack">
@@ -165,6 +169,12 @@
     <div class="row">
       <button id="btn-pause">Pause</button>
       <button id="btn-reset">Reset</button>
+    </div>
+    <div>
+      <label>Kuwait clock start: <span id="hourval">07:00</span>
+        <span style="float:right;color:var(--muted)">01–05 ≈ empty streets</span></label>
+      <input type="range" id="hour" min="0" max="23" step="1" value="7">
+      <button id="btn-applytime">Apply time of day (restarts)</button>
     </div>
   </div>
 
@@ -250,6 +260,10 @@ fetch("/api/network").then(r => r.json()).then(net => {
   L.polyline(major, { color: "#33415c", weight: 3, opacity: .9, interactive: false }).addTo(map);
   tlsStatic = net.tls;
   const sel = $("origin");
+  const auto = document.createElement("option");
+  auto.value = "auto";
+  auto.textContent = "Auto — nearest hospital to the scene";
+  sel.appendChild(auto);
   for (const h of net.hospitals) {
     L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "",
       html: '<div style="font-size:20px;filter:drop-shadow(0 0 3px #000)">🏥</div>',
@@ -260,9 +274,24 @@ fetch("/api/network").then(r => r.json()).then(net => {
     o.value = "H:" + h.name; o.textContent = h.name;
     sel.appendChild(o);
   }
-  for (const [v, t] of [["random", "Random edge"], ["pick", "Pick origin on map"]]) {
+  const ssel = $("scene");
+  const pick = document.createElement("option");
+  pick.value = "pick";
+  pick.textContent = "Pick on map (click)";
+  ssel.appendChild(pick);
+  for (const a of net.areas || []) {
+    L.marker([a.lat, a.lon], { icon: L.divIcon({ className: "",
+      html: '<div style="width:8px;height:8px;border-radius:50%;background:#22d3ee;box-shadow:0 0 6px #22d3ee"></div>',
+      iconSize: [8, 8], iconAnchor: [4, 4] }) })
+      .addTo(map).bindTooltip(a.name)
+      .on("click", e => map.fire("click", { latlng: e.latlng }));
     const o = document.createElement("option");
-    o.value = v; o.textContent = t; sel.appendChild(o);
+    o.value = "A:" + a.name; o.textContent = a.name;
+    ssel.appendChild(o);
+  }
+  if (net.start_hour !== undefined) {
+    $("hour").value = net.start_hour;
+    $("hourval").textContent = String(net.start_hour).padStart(2, "0") + ":00";
   }
   if (net.bounds) {
     let verifyTries = 0;
@@ -676,37 +705,47 @@ function setPickHint(text) {
   map.getContainer().style.cursor = text ? "crosshair" : "";
 }
 
-function beginDispatch(randomDest) {
+const originSpec = () => {
+  const v = $("origin").value;
+  return v.startsWith("H:") ? v.slice(2) : null;   // null = auto-nearest
+};
+
+$("btn-dispatch").onclick = () => {
   picking = null;
   setPickHint(null);
-  const val = $("origin").value;
-  if (randomDest) {
-    if (val === "pick") { picking = { stage: "origin", randomDest: true }; setPickHint("Click the ambulance ORIGIN"); }
-    else send({ cmd: "dispatch", origin: originSpec(val), dest: null });
-    return;
+  const scene = $("scene").value;
+  if (scene === "pick") {
+    picking = { stage: "dest" };
+    setPickHint("Click the INCIDENT SCENE");
+  } else {
+    send({ cmd: "dispatch", origin: originSpec(), dest: scene.slice(2) });
   }
-  if (val === "pick") { picking = { stage: "origin", randomDest: false }; setPickHint("Click the ambulance ORIGIN"); }
-  else { picking = { stage: "dest", origin: originSpec(val) }; setPickHint("Click the INCIDENT SCENE"); }
-}
-const originSpec = v => v === "random" ? null : v.startsWith("H:") ? v.slice(2) : null;
+};
+$("btn-random").onclick = () => {
+  picking = null;
+  setPickHint(null);
+  send({ cmd: "dispatch", origin: originSpec(), dest: null });
+};
 
 map.on("click", e => {
   if (!picking) return;
-  const ll = [e.latlng.lat, e.latlng.lng];
-  if (picking.stage === "origin") {
-    if (picking.randomDest) { send({ cmd: "dispatch", origin: ll, dest: null }); picking = null; setPickHint(null); }
-    else { picking = { stage: "dest", origin: ll }; setPickHint("Click the INCIDENT SCENE"); }
-  } else {
-    send({ cmd: "dispatch", origin: picking.origin, dest: ll });
-    picking = null; setPickHint(null);
-  }
+  send({ cmd: "dispatch", origin: originSpec(),
+         dest: [e.latlng.lat, e.latlng.lng] });
+  picking = null; setPickHint(null);
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && picking) { picking = null; setPickHint(null); }
 });
 
-$("btn-pick").onclick = () => beginDispatch(false);
-$("btn-random").onclick = () => beginDispatch(true);
+$("hour").oninput = e =>
+  $("hourval").textContent = String(e.target.value).padStart(2, "0") + ":00";
+$("btn-applytime").onclick = () => {
+  const h = +$("hour").value;
+  if (confirm(`Restart the simulation at ${String(h).padStart(2, "0")}:00 Kuwait time?`)) {
+    send({ cmd: "reset", hour: h });
+    carPos.clear(); ambPos.clear();
+  }
+};
 $("preemption").onchange = e => send({ cmd: "preemption", on: e.target.checked });
 $("speed").oninput = e => {
   const v = SPEEDS[+e.target.value];

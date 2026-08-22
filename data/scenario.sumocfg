@@ -1,7 +1,7 @@
 <configuration>
     <input>
         <net-file value="kuwait_downtown.net.xml"/>
-        <route-files value="background_h07.rou.xml,background_h08.rou.xml"/>
+        <route-files value="background_base.rou.xml"/>
         <additional-files value="vtypes.add.xml"/>
     </input>
     <time>

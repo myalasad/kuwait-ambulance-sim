@@ -22,30 +22,39 @@
     box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 1px 3px rgba(0,0,0,.45);
     background: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 12%22><rect width=%2224%22 height=%224%22 fill=%22%23007A3D%22/><rect y=%224%22 width=%2224%22 height=%224%22 fill=%22%23ffffff%22/><rect y=%228%22 width=%2224%22 height=%224%22 fill=%22%23CE1126%22/><path d=%22M0 0 L6 4 L6 8 L0 12 Z%22/></svg>') center/cover no-repeat; }
   nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
-  nav a { transition: background .15s, color .15s, border-color .15s; padding: 6px 12px; font-size: 12px; font-weight: 600;
+  nav a { transition: background .15s, color .15s, border-color .15s;
+    padding: 6px 12px; font-size: 12px; font-weight: 600;
     color: var(--muted); text-decoration: none; border: 1px solid var(--line);
     border-radius: 8px; background: #141a25; }
   nav a.on { background: var(--kw-green); border-color: var(--kw-green); color: #fff; }
 
   main { max-width: 1000px; margin: 0 auto; padding: 22px 20px 60px; }
-  .lede { text-align: center; max-width: 640px; margin: 0 auto 18px;
+  .lede { text-align: center; max-width: 660px; margin: 0 auto 14px;
           color: #c6d0e0; text-wrap: balance; }
+  #tabs { display: flex; justify-content: center; gap: 8px; margin: 0 0 14px;
+          flex-wrap: wrap; }
+  #tabs button { padding: 9px 18px; font-size: 14px; font-weight: 700;
+    border-radius: 10px; border: 1px solid var(--line); background: #141a25;
+    color: var(--muted); cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s; }
+  #tabs button.on { background: var(--kw-green); border-color: var(--kw-green);
+    color: #fff; }
   #scene-wrap { background: #0b0e14; border: 1px solid var(--line);
     border-radius: 16px; overflow: hidden; }
   #scene { width: 100%; display: block; }
-  #caption { text-align: center; padding: 18px 20px 8px; min-height: 96px; }
+  #caption { text-align: center; padding: 18px 20px 8px; min-height: 100px; }
   #cap-en { font-size: 21px; font-weight: 800; text-wrap: balance; }
   #cap-ar { font-size: 17px; color: #9db4d8; margin-top: 4px; direction: rtl; }
   #dots { display: flex; justify-content: center; gap: 8px; padding: 6px 0 18px; }
   #dots i { width: 9px; height: 9px; border-radius: 50%; background: #2a3547; }
   #dots i.on { background: var(--kw-green); box-shadow: 0 0 8px var(--kw-green); }
 
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
            margin: 22px 0; }
-  @media (max-width: 700px) { .stats { grid-template-columns: 1fr; } }
+  @media (max-width: 800px) { .stats { grid-template-columns: 1fr 1fr; } }
   .stat { background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px; padding: 14px 16px; text-align: center; }
-  .stat .v { font-size: 26px; font-weight: 800; color: #4ade80; }
+  .stat .v { font-size: 24px; font-weight: 800; color: #4ade80; }
   .stat .l { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .try { text-align: center; margin-top: 8px; }
   .try a { display: inline-block; background: var(--kw-green); color: #fff;
@@ -57,7 +66,7 @@
 </head>
 <body>
 <header>
-  <h1><span class="flag"></span>How the Green Wave Works</h1>
+  <h1><span class="flag"></span>How the System Works</h1>
   <nav>
     <a href="/">Live Map</a>
     <a href="/driver">Driver</a>
@@ -69,9 +78,15 @@
 </header>
 
 <main>
-  <p class="lede">Watch one junction help one ambulance — the loop below runs
-  continuously and needs no engineering background. This exact logic runs live
-  on the real downtown Kuwait City network in the rest of this system.</p>
+  <p class="lede">Three continuous loops — no engineering background needed.
+  This exact logic runs live on the real downtown Kuwait City network in the
+  rest of this system.</p>
+
+  <div id="tabs">
+    <button data-m="amb" class="on">🚑 For the ambulance</button>
+    <button data-m="drv">🚗 For the normal driver</button>
+    <button data-m="vs">⚖️ Normal vs ambulance</button>
+  </div>
 
   <div id="scene-wrap">
     <canvas id="scene"></canvas>
@@ -83,14 +98,16 @@
   </div>
 
   <div class="stats">
-    <div class="stat"><div class="v">200 m</div><div class="l">camera sees the
-      lights this far out — the route tells signals even earlier</div></div>
-    <div class="stat"><div class="v">3 s + 2 s</div><div class="l">amber, then
-      all-red, before the corridor green — never straight to red, never
-      dark</div></div>
     <div class="stat"><div class="v">up to +117%</div><div class="l">faster
-      through congested runs, measured in this simulation (same traffic, same
+      ambulance runs through congestion (measured, same traffic and
       route)</div></div>
+    <div class="stat"><div class="v">−42.5%</div><div class="l">vehicles stuck
+      waiting with early green, at identical peak demand (measured)</div></div>
+    <div class="stat"><div class="v">+9.1%</div><div class="l">mean network
+      speed for everyone with early green (measured A/B)</div></div>
+    <div class="stat"><div class="v">3 s + 2 s</div><div class="l">amber, then
+      all-red, before any takeover — never straight to red, never
+      dark</div></div>
   </div>
 
   <div class="try">
@@ -110,24 +127,7 @@ function fit() {
 }
 fit(); addEventListener("resize", fit);
 
-const T = 26;   // seconds per loop
-const STEPS = [
-  [0,   "An ambulance turns on its emergency lights",
-        "سيارة الإسعاف تُشغّل أنوار الطوارئ"],
-  [4,   "The camera on the traffic light detects it, 200 metres away",
-        "الكاميرا على الإشارة ترصدها من مسافة ٢٠٠ متر"],
-  [7,   "Cross traffic gets amber, then all-red — the junction empties safely",
-        "الاتجاه المتقاطع يأخذ الأصفر ثم أحمر شامل — يفرغ التقاطع بأمان"],
-  [10,  "The ambulance's road turns GREEN — the cars in front clear the way",
-        "طريق الإسعاف يتحول إلى الأخضر — السيارات أمامه تفسح الطريق"],
-  [13.5,"Over the speed limit with lights on? Exempt — the camera issues NO fine",
-        "فوق حد السرعة والأنوار تعمل؟ معفاة — الكاميرا لا تُصدر أي مخالفة"],
-  [17.5,"The ambulance has passed — the light returns to normal for everyone",
-        "مرّت سيارة الإسعاف — تعود الإشارة إلى وضعها الطبيعي للجميع"],
-];
-const dots = document.getElementById("dots");
-STEPS.forEach(() => dots.appendChild(document.createElement("i")));
-
+/* --------------------------- drawing helpers --------------------------- */
 function roundRect(c, x, y, w, h, r) {
   c.beginPath();
   c.moveTo(x + r, y);
@@ -138,14 +138,13 @@ function roundRect(c, x, y, w, h, r) {
   c.closePath();
 }
 
-// big pseudo-3D signal head with visor hoods
 function signal(c, x, y, scale, lit, now) {
   c.save();
   c.translate(x, y);
   c.scale(scale, scale);
   c.beginPath(); c.ellipse(4, 66, 20, 6, 0, 0, 7);
   c.fillStyle = "rgba(0,0,0,.5)"; c.fill();
-  c.fillStyle = "#2b3345"; c.fillRect(-3, 8, 6, 58);          // pole
+  c.fillStyle = "#2b3345"; c.fillRect(-3, 8, 6, 58);
   const grad = c.createLinearGradient(-16, 0, 16, 0);
   grad.addColorStop(0, "#454f63"); grad.addColorStop(.5, "#171c26");
   grad.addColorStop(1, "#0a0d13");
@@ -156,7 +155,7 @@ function signal(c, x, y, scale, lit, now) {
   const dark = ["#3a1414", "#3a2f10", "#123a20"];
   for (let i = 0; i < 3; i++) {
     const ly = -32 + i * 21;
-    c.beginPath(); c.ellipse(0, ly - 7.5, 12, 4, 0, Math.PI, 0);  // visor
+    c.beginPath(); c.ellipse(0, ly - 7.5, 12, 4, 0, Math.PI, 0);
     c.fillStyle = "#0a0d13"; c.fill();
     c.beginPath(); c.arc(0, ly, 7.5, 0, 7);
     if (i === lit) {
@@ -165,7 +164,6 @@ function signal(c, x, y, scale, lit, now) {
       c.fill(); c.shadowBlur = 0;
     } else { c.fillStyle = dark[i]; c.fill(); }
   }
-  // the camera on top
   roundRect(c, -8, -58, 16, 9, 3);
   c.fillStyle = "#1d2534"; c.fill();
   c.strokeStyle = "#525f78"; c.lineWidth = 1.2; c.stroke();
@@ -178,8 +176,6 @@ function car(c, x, y, angle, color) {
   c.save(); c.translate(x, y); c.rotate(angle);
   c.beginPath(); c.ellipse(1.5, 2.5, 15, 8.5, 0, 0, 7);
   c.fillStyle = "rgba(0,0,0,.4)"; c.fill();
-  const g = c.createLinearGradient(0, -8, 0, 8);
-  g.addColorStop(0, color); g.addColorStop(1, "#00000055");
   roundRect(c, -13, -7.5, 26, 15, 5);
   c.fillStyle = color; c.fill();
   c.fillStyle = "rgba(255,255,255,.25)";
@@ -193,8 +189,8 @@ function ambulance(c, x, y, now, lightsOn) {
   c.save(); c.translate(x, y);
   c.beginPath(); c.ellipse(2, 4, 22, 11, 0, 0, 7);
   c.fillStyle = "rgba(0,0,0,.45)"; c.fill();
+  const blue = Math.floor(now / 240) % 2 === 0;
   if (lightsOn) {
-    const blue = Math.floor(now / 240) % 2 === 0;
     const g = c.createRadialGradient(0, 0, 5, 0, 0, 44);
     g.addColorStop(0, blue ? "rgba(59,130,246,.5)" : "rgba(255,45,45,.5)");
     g.addColorStop(1, "rgba(0,0,0,0)");
@@ -207,12 +203,10 @@ function ambulance(c, x, y, now, lightsOn) {
   c.fillStyle = g2; c.fill();
   c.strokeStyle = "#7d8aa0"; c.lineWidth = 1.4; c.stroke();
   c.fillStyle = "#ce1126"; c.fillRect(-19, -2.5, 38, 5);
-  c.fillStyle = "#ce1126";
-  c.fillRect(-8.5, -8.5, 5, 13); c.fillRect(-12.5, -4.5, 13, 5);   // cross
+  c.fillRect(-8.5, -8.5, 5, 13); c.fillRect(-12.5, -4.5, 13, 5);
   roundRect(c, 10, -8.5, 7.5, 17, 2.5);
   c.fillStyle = "#233043"; c.fill();
   if (lightsOn) {
-    const blue = Math.floor(now / 240) % 2 === 0;
     c.shadowBlur = 14;
     c.shadowColor = blue ? "#3b82f6" : "#ff2d2d";
     c.fillStyle = blue ? "#3b82f6" : "#ff2d2d";
@@ -224,25 +218,8 @@ function ambulance(c, x, y, now, lightsOn) {
   c.restore();
 }
 
-const lerp = (a, b, u) => a + (b - a) * Math.min(1, Math.max(0, u));
-
-function tick(now) {
-  requestAnimationFrame(tick);
-  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-  const W = cv.clientWidth, H = cv.height / devicePixelRatio;
-  const t = (now / 1000) % T;
-
-  // caption + dots
-  let step = 0;
-  for (let i = 0; i < STEPS.length; i++) if (t >= STEPS[i][0]) step = i;
-  document.getElementById("cap-en").textContent = STEPS[step][1];
-  document.getElementById("cap-ar").textContent = STEPS[step][2];
-  [...dots.children].forEach((d, i) => d.className = i === step ? "on" : "");
-
+function drawRoads(W, H, cx, cy, RW) {
   ctx.fillStyle = "#0e131c"; ctx.fillRect(0, 0, W, H);
-  const cx = W * 0.56, cy = H * 0.5, RW = 74;
-
-  // roads
   ctx.fillStyle = "#1c2434";
   ctx.fillRect(0, cy - RW / 2, W, RW);
   ctx.fillRect(cx - RW / 2, 0, RW, H);
@@ -253,87 +230,253 @@ function tick(now) {
   ctx.moveTo(cx, cy + RW / 2 + 4); ctx.lineTo(cx, H); ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = "#e8edf6";
-  const stopX = cx - RW / 2 - 14;
-  ctx.fillRect(stopX, cy - RW / 2, 5, RW);            // stop line (main)
-  ctx.fillRect(cx - RW / 2, cy - RW / 2 - 19, RW, 5); // stop line (cross)
+  ctx.fillRect(cx - RW / 2 - 19, cy - RW / 2, 5, RW);
+  ctx.fillRect(cx - RW / 2, cy - RW / 2 - 19, RW, 5);
+}
 
-  // ---- phase logic ----
-  // main light: red until 10 (amber for cross 7-8.5, all-red 8.5-10),
-  // green 10-17.5, back to red after
-  const mainLit = t < 10 ? 0 : t < 17.5 ? 2 : 0;
-  const crossLit = t < 7 ? 2 : t < 8.5 ? 1 : t < 19.5 ? 0 : 2;
+function tag(text, x, y, bg) {
+  ctx.font = "800 14px ui-monospace, monospace";
+  const w = ctx.measureText(text).width;
+  roundRect(ctx, x - w / 2 - 10, y - 18, w + 20, 26, 8);
+  ctx.fillStyle = bg; ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillText(text, x - w / 2, y);
+}
 
-  // cross cars: flow while cross is green
-  const crossFlow = (crossLit === 2);
-  for (let i = 0; i < 3; i++) {
-    let base = ((now / 22) + i * 150) % (H + 200) - 100;
-    let yy;
-    if (crossFlow) yy = base;
-    else {
-      yy = Math.min(base, cy - RW / 2 - 34 - i * 34);   // queue at the line
-      if (base > cy + RW) yy = base;                    // already past: keep going
-    }
-    car(ctx, cx + 18, yy, Math.PI / 2, ["#5b7ea8", "#7a6a9c", "#4f8f7a"][i]);
-  }
+const lerp = (a, b, u) => a + (b - a) * Math.min(1, Math.max(0, u));
 
-  // main-road queue: 3 cars wait at the line until green, then clear
-  for (let i = 0; i < 3; i++) {
-    const qx = stopX - 26 - i * 34;
-    let xx = qx;
-    if (t >= 10) {
-      const u = (t - 10 - i * 0.55) / 2.2;
-      if (u > 0) xx = qx + u * u * 480;
-    }
-    if (xx < W + 60) car(ctx, xx, cy + 18, 0, ["#8fa3bd", "#a08f6e", "#6e8fa0"][i]);
-  }
+/* ------------------------------- scenes -------------------------------- */
+const SCENES = {
+  amb: {
+    T: 26,
+    steps: [
+      [0, "An ambulance turns on its emergency lights",
+          "سيارة الإسعاف تُشغّل أنوار الطوارئ"],
+      [4, "The camera on the traffic light detects it, 200 metres away",
+          "الكاميرا على الإشارة ترصدها من مسافة ٢٠٠ متر"],
+      [7, "Cross traffic gets amber, then all-red — the junction empties safely",
+          "الاتجاه المتقاطع يأخذ الأصفر ثم أحمر شامل — يفرغ التقاطع بأمان"],
+      [10, "The ambulance's road turns GREEN — the cars in front clear the way",
+           "طريق الإسعاف يتحول إلى الأخضر — السيارات أمامه تفسح المجال"],
+      [13.5, "Over the speed limit with lights on? Exempt — NO fine issued",
+             "فوق حد السرعة والأنوار تعمل؟ معفاة — لا مخالفة"],
+      [17.5, "It has passed — the light returns to normal for everyone",
+             "مرّت — تعود الإشارة إلى وضعها الطبيعي للجميع"],
+    ],
+    draw(t, now, W, H, cx, cy, RW) {
+      const stopX = cx - RW / 2 - 14;
+      const mainLit = t < 10 ? 0 : t < 17.5 ? 2 : 0;
+      const crossLit = t < 7 ? 2 : t < 8.5 ? 1 : t < 19.5 ? 0 : 2;
+      const crossFlow = crossLit === 2;
+      for (let i = 0; i < 3; i++) {
+        let base = ((now / 22) + i * 150) % (H + 200) - 100;
+        let yy = crossFlow || base > cy + RW ? base
+               : Math.min(base, cy - RW / 2 - 34 - i * 34);
+        car(ctx, cx + 18, yy, Math.PI / 2, ["#5b7ea8", "#7a6a9c", "#4f8f7a"][i]);
+      }
+      for (let i = 0; i < 3; i++) {
+        const qx = stopX - 26 - i * 34;
+        let xx = qx;
+        if (t >= 10) {
+          const u = (t - 10 - i * 0.55) / 2.2;
+          if (u > 0) xx = qx + u * u * 480;
+        }
+        if (xx < W + 60)
+          car(ctx, xx, cy + 18, 0, ["#8fa3bd", "#a08f6e", "#6e8fa0"][i]);
+      }
+      let ax;
+      if (t < 10) ax = lerp(-60, stopX - 150, t / 10);
+      else if (t < 17.5) { const u = (t - 10) / 7.5; ax = lerp(stopX - 150, W + 80, u * u); }
+      else ax = W + 80;
+      if (t < 19) ambulance(ctx, ax, cy - 20, now, t > 2);
+      if (t >= 4 && t < 7) {
+        const sx = cx + RW / 2 + 34, sy = cy - RW / 2 - 96;
+        ctx.beginPath(); ctx.moveTo(sx, sy);
+        ctx.lineTo(ax - 10, cy - 34); ctx.lineTo(ax + 26, cy - 34);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(78,160,255,${0.18 + 0.1 * Math.sin(now / 120)})`;
+        ctx.fill();
+        ctx.font = "800 15px -apple-system, sans-serif";
+        ctx.fillStyle = "#4ea0ff";
+        ctx.fillText("DETECTED ✓", ax - 34, cy - 66);
+      }
+      if (t >= 13.5 && t < 17.5)
+        tag("112 km/h · limit 80 · NO FINE — EXEMPT", ax, cy - 62,
+            "rgba(0,154,78,.95)");
+      if (t >= 17.5 && t < 22) {
+        ctx.font = "800 15px -apple-system, sans-serif";
+        ctx.fillStyle = "#8be9b6";
+        ctx.fillText("BACK TO NORMAL ✓", cx + RW / 2 + 24, cy + RW / 2 + 44);
+      }
+      signal(ctx, cx + RW / 2 + 34, cy - RW / 2 - 40, 1.25, mainLit, now);
+      signal(ctx, cx - RW / 2 - 34, cy + RW / 2 + 26, 0.95, crossLit, now);
+      label("ambulance's signal + camera", cx + RW / 2 + 4, cy - RW / 2 - 120);
+      label("cross-traffic signal", cx - RW / 2 - 92, cy + RW / 2 + 108);
+    },
+  },
 
-  // ambulance on the main road
-  let axp;
-  if (t < 10) axp = lerp(-60, stopX - 150, t / 10);           // approaching
-  else if (t < 17.5) { const u = (t - 10) / 7.5; axp = lerp(stopX - 150, W + 80, u * u); }
-  else axp = W + 80;
-  const lightsOn = t > 2;
-  if (t < 19) ambulance(ctx, axp, cy - 20, now, lightsOn);
+  drv: {
+    T: 24,
+    steps: [
+      [0, "A driver arrives at a red light — the crossing is completely empty",
+          "سائق يصل إلى إشارة حمراء — والتقاطع فارغ تماماً"],
+      [3.5, "The system confirms: every other approach empty for 3 seconds",
+            "النظام يتأكد: كل الاتجاهات الأخرى فارغة منذ ٣ ثوانٍ"],
+      [6.5, "EARLY GREEN — through the normal amber; nobody waits on a timer for an empty road",
+            "أخضر مبكر — عبر الأصفر المعتاد؛ لا انتظار على مؤقّت لطريق فارغ"],
+      [11.5, "Another car arrives on the cross street…",
+             "سيارة أخرى تصل من الشارع المتقاطع…"],
+      [14, "…fairness is instant: normal timers — with traffic on several sides everyone takes turns",
+           "…العدالة فورية: مؤقّتات عادية — عند وجود حركة من عدة جهات يتناوب الجميع"],
+      [19, "Measured result: −42% cars stuck waiting, +9% network speed for everyone",
+           "النتيجة المقاسة: −٤٢٪ سيارات متوقفة، +٩٪ سرعة الشبكة للجميع"],
+    ],
+    draw(t, now, W, H, cx, cy, RW) {
+      const stopX = cx - RW / 2 - 14;
+      // main: red until early green at 8, green 8-14, amber 14-15.5, red after
+      const mainLit = t < 8 ? 0 : t < 14 ? 2 : t < 15.5 ? 1 : 0;
+      // cross: empty green until amber 6.5-8, red 8-15.5, green after (fair)
+      const crossLit = t < 6.5 ? 2 : t < 8 ? 1 : t < 15.5 ? 0 : 2;
+      // the lone driver on main
+      let ax;
+      if (t < 4) ax = lerp(-60, stopX - 22, t / 4);
+      else if (t < 8) ax = stopX - 22;
+      else { const u = (t - 8) / 3; ax = lerp(stopX - 22, W + 60, u * u); }
+      car(ctx, ax, cy + 18, 0, "#8fa3bd");
+      // cross-street car arriving at 11.5, served at 15.5
+      if (t >= 11.5) {
+        let yy;
+        if (t < 14.5) yy = lerp(-50, cy - RW / 2 - 32, (t - 11.5) / 3);
+        else if (t < 15.5) yy = cy - RW / 2 - 32;
+        else { const u = (t - 15.5) / 3; yy = lerp(cy - RW / 2 - 32, H + 60, u * u); }
+        car(ctx, cx + 18, yy, Math.PI / 2, "#7a6a9c");
+      }
+      // second main car in the fair phase, waiting its turn
+      if (t >= 16.5) {
+        const xx = lerp(-60, stopX - 22, (t - 16.5) / 3.5);
+        car(ctx, Math.min(xx, stopX - 22), cy + 18, 0, "#a08f6e");
+      }
+      if (t >= 3.5 && t < 6.5) {
+        ctx.font = "800 15px -apple-system, sans-serif";
+        ctx.fillStyle = "#22d3ee";
+        ctx.fillText("ALL OTHER APPROACHES EMPTY ✓", cx - 120, cy - RW / 2 - 116);
+      }
+      if (t >= 6.5 && t < 11.5)
+        tag("EARLY GREEN · lone traffic", cx - 40, cy - RW / 2 - 60,
+            "rgba(34,211,238,.9)");
+      if (t >= 14 && t < 19)
+        tag("FAIR TIMERS — everyone takes turns", cx - 30, cy - RW / 2 - 60,
+            "rgba(240,180,41,.92)");
+      signal(ctx, cx + RW / 2 + 34, cy - RW / 2 - 40, 1.25, mainLit, now);
+      signal(ctx, cx - RW / 2 - 34, cy + RW / 2 + 26, 0.95, crossLit, now);
+      label("driver's signal", cx + RW / 2 + 12, cy - RW / 2 - 120);
+      label("cross-traffic signal", cx - RW / 2 - 92, cy + RW / 2 + 108);
+    },
+  },
 
-  // camera detection beam (step 2)
-  if (t >= 4 && t < 7) {
-    const sx = cx + RW / 2 + 34, sy = cy - RW / 2 - 96;
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.lineTo(axp - 10, cy - 34); ctx.lineTo(axp + 26, cy - 34);
-    ctx.closePath();
-    ctx.fillStyle = `rgba(78,160,255,${0.18 + 0.1 * Math.sin(now / 120)})`;
-    ctx.fill();
-    ctx.font = "800 15px -apple-system, sans-serif";
-    ctx.fillStyle = "#4ea0ff";
-    ctx.fillText("DETECTED ✓", axp - 34, cy - 66);
-  }
+  vs: {
+    T: 24,
+    steps: [
+      [0, "A normal driver waits on the cross street; traffic flows on the main road",
+          "سائق عادي ينتظر في الشارع المتقاطع؛ والحركة تمر في الطريق الرئيسي"],
+      [4, "An ambulance approaches — the Decision Matrix ranks life above wait time",
+          "سيارة إسعاف تقترب — مصفوفة القرار تُقدّم الحياة على وقت الانتظار"],
+      [8, "The corridor holds green for the ambulance; the driver waits a few seconds longer",
+          "الممر يُبقي الأخضر للإسعاف؛ السائق ينتظر ثوانيَ إضافية فقط"],
+      [13, "The instant it passes, the junction is released…",
+           "لحظة مرورها، يُحرَّر التقاطع…"],
+      [15.5, "…and the waiting driver is served immediately — fair for people, decisive for life",
+             "…ويُخدَم السائق المنتظر فوراً — عدلٌ للناس وحسمٌ للحياة"],
+      [20, "Every second of that hold is on the operations record, case by case",
+           "كل ثانية من ذلك التثبيت مسجّلة في سجل العمليات، حالةً بحالة"],
+    ],
+    draw(t, now, W, H, cx, cy, RW) {
+      const stopX = cx - RW / 2 - 14;
+      // main green 0-13 (held for corridor), amber 13-14.5, red after
+      const mainLit = t < 13 ? 2 : t < 14.5 ? 1 : 0;
+      // cross red until 14.5, then green (driver served)
+      const crossLit = t < 14.5 ? 0 : 2;
+      // waiting cross-street driver (arrives at start)
+      let wy;
+      if (t < 2.5) wy = lerp(-50, cy - RW / 2 - 32, t / 2.5);
+      else if (t < 14.5) wy = cy - RW / 2 - 32;
+      else { const u = (t - 14.5) / 3; wy = lerp(cy - RW / 2 - 32, H + 60, u * u); }
+      car(ctx, cx + 18, wy, Math.PI / 2, "#7a6a9c");
+      // main-road flow + the ambulance behind it
+      for (let i = 0; i < 2; i++) {
+        const xx = ((now / 16) + i * 260) % (W + 160) - 80;
+        if (t < 14.5) car(ctx, xx, cy + 18, 0, ["#8fa3bd", "#6e8fa0"][i]);
+      }
+      let ax;
+      if (t < 4) ax = -70;
+      else if (t < 13) { const u = (t - 4) / 9; ax = lerp(-70, W + 80, u * u * 0.6 + u * 0.4); }
+      else ax = W + 90;
+      if (t >= 4 && t < 13.5) ambulance(ctx, ax, cy - 20, now, true);
+      if (t >= 4 && t < 8) {
+        ctx.font = "800 15px -apple-system, sans-serif";
+        ctx.fillStyle = "#4ea0ff";
+        ctx.fillText("DMM: SAFETY > CONTINUITY > TIMER > FAIRNESS",
+                     cx - 190, cy - RW / 2 - 116);
+      }
+      if (t >= 8 && t < 13)
+        tag("PURPOSELY ENABLED — corridor held", cx - 20, cy - RW / 2 - 60,
+            "rgba(0,154,78,.95)");
+      if (t >= 8 && t < 13) {
+        ctx.font = "800 13px ui-monospace, monospace";
+        ctx.fillStyle = "#f0b429";
+        ctx.fillText("waiting +6 s", cx + 34, cy - RW / 2 - 40);
+      }
+      if (t >= 13 && t < 18)
+        tag("RELEASED — waiting driver served next", cx - 10, cy - RW / 2 - 60,
+            "rgba(34,197,94,.92)");
+      signal(ctx, cx + RW / 2 + 34, cy - RW / 2 - 40, 1.25, mainLit, now);
+      signal(ctx, cx - RW / 2 - 34, cy + RW / 2 + 26, 0.95, crossLit, now);
+      label("ambulance corridor signal", cx + RW / 2 + 4, cy - RW / 2 - 120);
+      label("waiting driver's signal", cx - RW / 2 - 96, cy + RW / 2 + 108);
+    },
+  },
+};
 
-  // exemption tag (step 5)
-  if (t >= 13.5 && t < 17.5) {
-    ctx.font = "800 14px ui-monospace, monospace";
-    const msg = "112 km/h · limit 80 · NO FINE — EXEMPT";
-    const wtx = ctx.measureText(msg).width;
-    roundRect(ctx, axp - wtx / 2 - 10, cy - 78, wtx + 20, 26, 8);
-    ctx.fillStyle = "rgba(0,154,78,.95)"; ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText(msg, axp - wtx / 2, cy - 60);
-  }
-
-  // "back to normal" tag (step 6)
-  if (t >= 17.5 && t < 22) {
-    ctx.font = "800 15px -apple-system, sans-serif";
-    ctx.fillStyle = "#8be9b6";
-    ctx.fillText("BACK TO NORMAL ✓", cx + RW / 2 + 24, cy + RW / 2 + 44);
-  }
-
-  // the two signals (main-road signal bottom-left of junction, cross top-right)
-  signal(ctx, cx + RW / 2 + 34, cy - RW / 2 - 40, 1.25, mainLit, now);
+function label(text, x, y) {
   ctx.font = "700 11px -apple-system, sans-serif";
   ctx.fillStyle = "#8b98ad";
-  ctx.fillText("ambulance's signal + camera", cx + RW / 2 + 4, cy - RW / 2 - 120);
-  signal(ctx, cx - RW / 2 - 34, cy + RW / 2 + 26, 0.95, crossLit, now);
-  ctx.fillText("cross-traffic signal", cx - RW / 2 - 92, cy + RW / 2 + 108);
+  ctx.fillText(text, x, y);
+}
+
+/* ------------------------------ main loop ------------------------------ */
+let mode = "amb";
+let modeStart = performance.now();
+const dots = document.getElementById("dots");
+
+function setMode(m) {
+  mode = m;
+  modeStart = performance.now();
+  for (const b of document.querySelectorAll("#tabs button"))
+    b.classList.toggle("on", b.dataset.m === m);
+  dots.innerHTML = "";
+  SCENES[m].steps.forEach(() => dots.appendChild(document.createElement("i")));
+}
+for (const b of document.querySelectorAll("#tabs button"))
+  b.onclick = () => setMode(b.dataset.m);
+setMode("amb");
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  const W = cv.clientWidth, H = cv.height / devicePixelRatio;
+  const scene = SCENES[mode];
+  const t = ((now - modeStart) / 1000) % scene.T;
+
+  let step = 0;
+  for (let i = 0; i < scene.steps.length; i++)
+    if (t >= scene.steps[i][0]) step = i;
+  document.getElementById("cap-en").textContent = scene.steps[step][1];
+  document.getElementById("cap-ar").textContent = scene.steps[step][2];
+  [...dots.children].forEach((d, i) => d.className = i === step ? "on" : "");
+
+  const cx = W * 0.56, cy = H * 0.5, RW = 74;
+  drawRoads(W, H, cx, cy, RW);
+  scene.draw(t, now, W, H, cx, cy, RW);
 }
 requestAnimationFrame(tick);
 </script>
