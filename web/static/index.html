@@ -533,21 +533,38 @@ function apprColor(state, idx) {
   return amber ? "#f0b429" : "#ef4444";
 }
 
-// standing per-approach signal head: pole, casing, lit lamp
-function drawHeadLollipop(x, y, color, zoom) {
-  const s = zoom >= 17 ? 1.25 : zoom >= 16 ? 1.0 : 0.8;
+// per-approach signal: the SAME 3-lamp fixture as the junction housing,
+// scaled down — casing, three lamps, the approach's lamp lit and glowing
+function drawApproachSignal(x, y, color, zoom) {
+  const s = zoom >= 17 ? 0.85 : zoom >= 16 ? 0.68 : zoom >= 15.5 ? 0.58
+          : zoom >= 14.5 ? 0.48 : 0.4;
+  const w = 13, h = 30;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
   ctx.beginPath();
-  ctx.ellipse(x + 1, y + 3 * s, 3.5 * s, 1.6 * s, 0, 0, 7);
-  ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.fill();
-  ctx.fillStyle = "#2b3345";
-  ctx.fillRect(x - 0.9 * s, y - 6 * s, 1.8 * s, 8 * s);
-  ctx.beginPath(); ctx.arc(x, y - 8 * s, 3.2 * s, 0, 7);
-  ctx.fillStyle = "#171c26"; ctx.fill();
-  ctx.strokeStyle = "#4a586d"; ctx.lineWidth = 1; ctx.stroke();
-  ctx.beginPath(); ctx.arc(x, y - 8 * s, 1.9 * s, 0, 7);
-  ctx.fillStyle = color;
-  ctx.shadowColor = color; ctx.shadowBlur = 5;
-  ctx.fill(); ctx.shadowBlur = 0;
+  ctx.ellipse(1, h / 2 + 3, 8, 3, 0, 0, 7);
+  ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fill();
+  const grad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+  grad.addColorStop(0, "#3a4454");
+  grad.addColorStop(.5, "#181d27");
+  grad.addColorStop(1, "#0c0f15");
+  roundRect(ctx, -w / 2, -h / 2, w, h, 6);
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.strokeStyle = "#4a586d"; ctx.lineWidth = 1.2; ctx.stroke();
+  const lamps = [["#ef4444", "#3a1414"], ["#f0b429", "#3a2f10"],
+                 ["#22c55e", "#123a20"]];
+  const lit = color === "#22c55e" ? 2 : color === "#f0b429" ? 1 : 0;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(0, -h / 2 + 6.5 + i * 8.5, 3.4, 0, 7);
+    if (i === lit) {
+      ctx.fillStyle = lamps[i][0];
+      ctx.shadowColor = lamps[i][0]; ctx.shadowBlur = 9;
+      ctx.fill(); ctx.shadowBlur = 0;
+    } else { ctx.fillStyle = lamps[i][1]; ctx.fill(); }
+  }
+  ctx.restore();
 }
 
 function roundRect(c, x, y, w, h, r) {
@@ -755,27 +772,20 @@ function render(now) {
     }
   }
 
-  // ONE signal head per approach: standing lollipop placed on the right of
-  // its traffic (like a real signal), dots at mid zoom
+  // ONE signal per approach — always the full 3-lamp fixture, standing on
+  // the right of its traffic like a real installation
   if (zoom >= 13.5) {
-    const mini = zoom >= 15.5;
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st) continue;
       for (const ap of t.appr || []) {
         const p = map.latLngToContainerPoint([ap.lat, ap.lon]);
-        if (p.x < -20 || p.y < -20 || p.x > vw + 20 || p.y > vh + 20) continue;
+        if (p.x < -24 || p.y < -24 || p.x > vw + 24 || p.y > vh + 24) continue;
         const color = apprColor(st.s, ap.idx);
-        if (mini) {
-          const a = (ap.dir || 0) * Math.PI / 180;
-          drawHeadLollipop(p.x + Math.cos(a) * 9, p.y + Math.sin(a) * 9,
+        const a = (ap.dir || 0) * Math.PI / 180;
+        const off = zoom >= 15.5 ? 11 : 7;
+        drawApproachSignal(p.x + Math.cos(a) * off, p.y + Math.sin(a) * off,
                            color, zoom);
-        } else {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 2.6, 0, 7);
-          ctx.fillStyle = color;
-          ctx.fill();
-        }
       }
     }
   }
