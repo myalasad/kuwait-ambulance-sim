@@ -261,43 +261,57 @@ class Simulation:
         }
 
     def _locate_tls(self):
-        """Per traffic light: junction centre + one point per signal head
-        (the end of each controlled approach lane), so the map can show the
-        red/green state of every approach individually."""
+        """Per traffic light: junction centre + ONE signal head per APPROACH
+        (all lanes of an approach grouped), each with its travel bearing and
+        the state-string indices it aggregates — a 4-way junction shows 4
+        heads, which is what a non-engineer expects to see."""
         out = []
         for tls_id in traci.trafficlight.getIDList():
             links = traci.trafficlight.getControlledLinks(tls_id)
-            heads, xs, ys = [], [], []
-            for group in links:
+            by_edge = {}   # in-edge -> {"xs", "ys", "bearings", "idx"}
+            xs_all, ys_all = [], []
+            for i, group in enumerate(links):
                 if not group:
-                    heads.append(None)
                     continue
                 in_lane = group[0][0]
                 try:
                     shape = traci.lane.getShape(in_lane)
                     x, y = shape[-1]
                 except traci.TraCIException:
-                    heads.append(None)
                     continue
-                # approach bearing (deg, 0=N clockwise) so the map can draw
-                # the stop bar perpendicular and the head facing traffic
                 if len(shape) >= 2:
                     px, py = shape[-2]
-                    bearing = round(math.degrees(
-                        math.atan2(x - px, y - py)) % 360)
+                    bearing = math.degrees(math.atan2(x - px, y - py)) % 360
                 else:
-                    bearing = 0
+                    bearing = 0.0
+                edge = in_lane.rsplit("_", 1)[0]
+                rec = by_edge.setdefault(
+                    edge, {"xs": [], "ys": [], "b": [], "idx": []})
+                rec["xs"].append(x)
+                rec["ys"].append(y)
+                rec["b"].append(bearing)
+                rec["idx"].append(i)
+                xs_all.append(x)
+                ys_all.append(y)
+            approaches = []
+            for rec in by_edge.values():
+                x = sum(rec["xs"]) / len(rec["xs"])
+                y = sum(rec["ys"]) / len(rec["ys"])
+                # circular mean of the lane bearings
+                sx = sum(math.sin(math.radians(b)) for b in rec["b"])
+                cy = sum(math.cos(math.radians(b)) for b in rec["b"])
+                bearing = round(math.degrees(math.atan2(sx, cy)) % 360)
                 lon, lat = self.net.convertXY2LonLat(x, y)
-                heads.append([round(lat, 6), round(lon, 6), bearing])
-                xs.append(x)
-                ys.append(y)
-            if xs:
+                approaches.append({"lat": round(lat, 6), "lon": round(lon, 6),
+                                   "dir": bearing,
+                                   "idx": sorted(set(rec["idx"]))})
+            if xs_all:
                 lon, lat = self.net.convertXY2LonLat(
-                    sum(xs) / len(xs), sum(ys) / len(ys))
+                    sum(xs_all) / len(xs_all), sum(ys_all) / len(ys_all))
             else:
                 lat = lon = 0.0
             out.append({"id": tls_id, "lat": round(lat, 6),
-                        "lon": round(lon, 6), "heads": heads})
+                        "lon": round(lon, 6), "appr": approaches})
         return out
 
     # ---------------------------------------------------------------- helpers

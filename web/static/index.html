@@ -521,6 +521,18 @@ function drawMiniCar(x, y, angDeg, color, mode, zoom) {
   ctx.restore();
 }
 
+// aggregate colour for one approach: green if any lane may go, amber if
+// any lane is ambering, else red
+function apprColor(state, idx) {
+  let amber = false;
+  for (const i of idx) {
+    const ch = state[i];
+    if (ch === "G" || ch === "g") return "#22c55e";
+    if (ch === "y" || ch === "Y") amber = true;
+  }
+  return amber ? "#f0b429" : "#ef4444";
+}
+
 // standing per-approach signal head: pole, casing, lit lamp
 function drawHeadLollipop(x, y, color, zoom) {
   const s = zoom >= 17 ? 1.25 : zoom >= 16 ? 1.0 : 0.8;
@@ -689,22 +701,37 @@ function render(now) {
     }
   }
 
-  // white stop bars across each signalized approach (under the cars)
+  // stop bars + direction chevrons, one per APPROACH (under the cars):
+  // the chevron points the way that approach travels and wears its colour,
+  // so "who is this light for, and may they go?" is one glyph
   if (zoom >= 15.5) {
-    ctx.strokeStyle = "rgba(232,237,246,.8)";
-    ctx.lineWidth = zoom >= 16.5 ? 3 : 2;
     for (const t of tlsStatic) {
-      if (!frame.tls[t.id]) continue;
-      for (const h of t.heads) {
-        if (!h) continue;
-        const p = map.latLngToContainerPoint([h[0], h[1]]);
-        if (p.x < -20 || p.y < -20 || p.x > vw + 20 || p.y > vh + 20) continue;
-        const a = (h[2] || 0) * Math.PI / 180;
-        const len = zoom >= 16.5 ? 9 : 6;   // half-length, perp to approach
+      const st = frame.tls[t.id];
+      if (!st) continue;
+      for (const ap of t.appr || []) {
+        const p = map.latLngToContainerPoint([ap.lat, ap.lon]);
+        if (p.x < -24 || p.y < -24 || p.x > vw + 24 || p.y > vh + 24) continue;
+        const a = (ap.dir || 0) * Math.PI / 180;
+        const px_ = Math.cos(a), py_ = Math.sin(a);      // perp (screen)
+        const tx = Math.sin(a), ty = -Math.cos(a);       // travel (screen)
+        const half = Math.min(14, 5 + ap.idx.length * 2.2);
+        ctx.strokeStyle = "rgba(232,237,246,.8)";
+        ctx.lineWidth = zoom >= 16.5 ? 3 : 2;
         ctx.beginPath();
-        ctx.moveTo(p.x - Math.cos(a) * len, p.y - Math.sin(a) * len);
-        ctx.lineTo(p.x + Math.cos(a) * len, p.y + Math.sin(a) * len);
+        ctx.moveTo(p.x - px_ * half, p.y - py_ * half);
+        ctx.lineTo(p.x + px_ * half, p.y + py_ * half);
         ctx.stroke();
+        const color = apprColor(st.s, ap.idx);
+        const bx = p.x - tx * 13, by = p.y - ty * 13;    // behind the bar
+        ctx.beginPath();
+        ctx.moveTo(p.x - tx * 5, p.y - ty * 5);          // tip toward junction
+        ctx.lineTo(bx - px_ * 4.5, by - py_ * 4.5);
+        ctx.lineTo(bx + px_ * 4.5, by + py_ * 4.5);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.9;
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
     }
   }
@@ -728,20 +755,22 @@ function render(now) {
     }
   }
 
-  // per-approach signal heads: standing 3D lollipops up close, dots further
+  // ONE signal head per approach: standing lollipop placed on the right of
+  // its traffic (like a real signal), dots at mid zoom
   if (zoom >= 13.5) {
     const mini = zoom >= 15.5;
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st) continue;
-      for (let i = 0; i < t.heads.length; i++) {
-        const h = t.heads[i];
-        if (!h) continue;
-        const p = map.latLngToContainerPoint([h[0], h[1]]);
+      for (const ap of t.appr || []) {
+        const p = map.latLngToContainerPoint([ap.lat, ap.lon]);
         if (p.x < -20 || p.y < -20 || p.x > vw + 20 || p.y > vh + 20) continue;
-        const color = SIG[st.s[i]] || "#6b7280";
-        if (mini) drawHeadLollipop(p.x, p.y, color, zoom);
-        else {
+        const color = apprColor(st.s, ap.idx);
+        if (mini) {
+          const a = (ap.dir || 0) * Math.PI / 180;
+          drawHeadLollipop(p.x + Math.cos(a) * 9, p.y + Math.sin(a) * 9,
+                           color, zoom);
+        } else {
           ctx.beginPath();
           ctx.arc(p.x, p.y, 2.6, 0, 7);
           ctx.fillStyle = color;
@@ -751,12 +780,16 @@ function render(now) {
     }
   }
 
-  // 3D signal housings + purposely-enabled labels, scaled with zoom
+  // 3D junction housing: the junction-wide summary at overview zoom; up
+  // close it appears only as the badge for a special mode, so the simple
+  // per-approach picture stays uncluttered
   if (zoom >= 13.5) {
     const hs = Math.min(1.15, Math.max(0.55, (zoom - 12.5) / 3.2));
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st) continue;
+      if (zoom >= 15.5 && st.m === "normal"
+          && !(restoredBadges.get(t.id) > Date.now())) continue;
       const c = map.latLngToContainerPoint([t.lat, t.lon]);
       if (c.x < -30 || c.y < -30 || c.x > vw + 30 || c.y > vh + 30) continue;
       let label = null;
