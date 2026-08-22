@@ -94,7 +94,7 @@
     <h2>Nodal analysis — node by node along the corridor</h2>
     <div id="rows-wrap">
       <table>
-        <thead><tr><th>#</th><th>node</th><th>street</th>
+        <thead><tr><th>#</th><th>junction</th><th>street</th>
           <th class="num">dist</th><th class="num">ETA</th>
           <th>signal</th></tr></thead>
         <tbody id="rows"></tbody>
@@ -150,8 +150,8 @@ function render() {
       ? `<span class="sig ${preempted.has(r.signal) ? "pre" : ""}">●
          ${preempted.has(r.signal) ? "PURPOSELY ENABLED" : "signal"}</span>`
       : `<span class="sig none">—</span>`;
-    return `<tr><td class="num">${i + 1}</td><td>${r.node.length > 16 ? r.node.slice(0, 15) + "…" : r.node}</td>` +
-      `<td>${r.street.length > 26 ? r.street.slice(0, 25) + "…" : r.street}</td>` +
+    return `<tr><td class="num">${i + 1}</td><td>${r.junction || "<span style='color:#445069'>—</span>"}</td>` +
+      `<td>${r.street}</td>` +
       `<td class="num">${r.dist_m} m</td><td class="num">${r.eta_s} s</td>` +
       `<td>${sig}</td></tr>`;
   }).join("");

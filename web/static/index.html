@@ -262,6 +262,10 @@ new ResizeObserver(fitCanvas).observe(map.getContainer());
 
 // ------------------------------------------------------------ network layer
 let tlsStatic = [];
+const tlsName = new Map();   // tls id -> "J-014 · Street × Street"
+const jname = id => tlsName.get(id) || "junction";
+const govOf = name => { const m = name.match(/\(([^)]+)\)\s*$/); return m ? m[1] : "Other"; };
+const plain = name => name.replace(/\s*\([^)]*\)\s*$/, "");
 fetch("/api/network").then(r => r.json()).then(net => {
   if (net.error) return;
   const major = [], minor = [];
@@ -270,35 +274,48 @@ fetch("/api/network").then(r => r.json()).then(net => {
   L.polyline(minor, { color: "#273246", weight: 1.5, opacity: .8, interactive: false }).addTo(map);
   L.polyline(major, { color: "#33415c", weight: 3, opacity: .9, interactive: false }).addTo(map);
   tlsStatic = net.tls;
+  for (const t of tlsStatic) tlsName.set(t.id, `${t.code} · ${t.name}`);
   const sel = $("origin");
   const auto = document.createElement("option");
   auto.value = "auto";
   auto.textContent = "Auto — nearest hospital to the scene";
   sel.appendChild(auto);
+  const hgroups = new Map();
   for (const h of net.hospitals) {
     L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "",
       html: '<div style="font-size:20px;filter:drop-shadow(0 0 3px #000)">🏥</div>',
       iconSize: [20, 20], iconAnchor: [10, 10] }) })
       .addTo(map).bindTooltip(h.name)
       .on("click", e => map.fire("click", { latlng: e.latlng }));
+    const g = govOf(h.name);
+    if (!hgroups.has(g)) {
+      const og = document.createElement("optgroup");
+      og.label = g; hgroups.set(g, og); sel.appendChild(og);
+    }
     const o = document.createElement("option");
-    o.value = "H:" + h.name; o.textContent = h.name;
-    sel.appendChild(o);
+    o.value = "H:" + h.name; o.textContent = plain(h.name);
+    hgroups.get(g).appendChild(o);
   }
   const ssel = $("scene");
   const pick = document.createElement("option");
   pick.value = "pick";
   pick.textContent = "Pick on map (click)";
   ssel.appendChild(pick);
+  const agroups = new Map();
   for (const a of net.areas || []) {
     L.marker([a.lat, a.lon], { icon: L.divIcon({ className: "",
       html: '<div style="width:8px;height:8px;border-radius:50%;background:#22d3ee;box-shadow:0 0 6px #22d3ee"></div>',
       iconSize: [8, 8], iconAnchor: [4, 4] }) })
-      .addTo(map).bindTooltip(a.name)
+      .addTo(map).bindTooltip(plain(a.name))
       .on("click", e => map.fire("click", { latlng: e.latlng }));
+    const g = govOf(a.name);
+    if (!agroups.has(g)) {
+      const og = document.createElement("optgroup");
+      og.label = g + " Governorate"; agroups.set(g, og); ssel.appendChild(og);
+    }
     const o = document.createElement("option");
-    o.value = "A:" + a.name; o.textContent = a.name;
-    ssel.appendChild(o);
+    o.value = "A:" + a.name; o.textContent = plain(a.name);
+    agroups.get(g).appendChild(o);
   }
   if (net.start_hour !== undefined) {
     $("hour").value = net.start_hour;
@@ -331,8 +348,8 @@ fetch("/api/network").then(r => r.json()).then(net => {
 let frame = null;
 const carPos = new Map();
 const ambPos = new Map();
+window.__dbg = { get amb() { return ambPos; }, get cars() { return carPos; } };  // test hook
 const restoredBadges = new Map();   // tls id -> hide-at wall time
-let lastFollowPan = 0;
 
 let ws = null;
 function connect() {
@@ -354,25 +371,36 @@ function onFrame(ev) {
   if (f.error) { $("status").classList.remove("on"); $("status-text").textContent = f.error; }
   if (!f.cars) return;              // heartbeat frame
   frame = f;
+  const tNow = performance.now();
   const seen = new Set();
   for (const [id, lon, lat, ang] of f.cars) {
     seen.add(id);
     const p = carPos.get(id);
-    if (p) {
-      p.tLon = lon; p.tLat = lat;
-      if (ang !== undefined) p.tAng = ang;
-    } else {
+    if (!p) {
       let h = 0;
       for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-      carPos.set(id, { lon, lat, tLon: lon, tLat: lat,
-                       ang: ang || 0, tAng: ang || 0,
-                       col: CAR_COLORS[Math.abs(h) % CAR_COLORS.length] });
+      carPos.set(id, {
+        A: { lon, lat, ang: ang || 0, t: tNow - 500 },
+        B: { lon, lat, ang: ang || 0, t: tNow }, dt: 500,
+        col: CAR_COLORS[Math.abs(h) % CAR_COLORS.length] });
+      continue;
     }
+    let a2 = ang === undefined ? p.B.ang : ang;
+    let d = a2 - p.B.ang;                        // shortest-arc unwrap
+    while (d > 180) { a2 -= 360; d = a2 - p.B.ang; }
+    while (d < -180) { a2 += 360; d = a2 - p.B.ang; }
+    const step = tNow - p.B.t;
+    if (Math.hypot(lon - p.B.lon, lat - p.B.lat) > 0.002 || step > 3000) {
+      p.A = { lon, lat, ang: a2, t: tNow - p.dt };   // teleport: snap
+    } else {
+      p.A = p.B;
+      p.dt = p.dt * 0.7 + Math.min(1500, step) * 0.3;
+    }
+    p.B = { lon, lat, ang: a2, t: tNow };
   }
   for (const id of carPos.keys()) if (!seen.has(id)) carPos.delete(id);
   // ambulances: buffer the last two snapshots for constant-velocity
   // interpolation (smooth at any frame rate; the sim only ticks ~2 Hz at 1x)
-  const tNow = performance.now();
   const seenA = new Set();
   for (const a of f.ambs) {
     seenA.add(a.id);
@@ -402,11 +430,6 @@ function onFrame(ev) {
 
   updatePanel(f);
   updateDecisions(f);
-  if ($("follow").checked && f.ambs.length && Date.now() - lastFollowPan > 900) {
-    lastFollowPan = Date.now();
-    const a = f.ambs[0];
-    map.panTo([a.lat, a.lon], { animate: true, duration: .8 });
-  }
 }
 
 function updatePanel(f) {
@@ -476,7 +499,7 @@ function updateDecisions(f) {
       `<button data-tls="${p.tls}" data-amb="${c.amb}">Grant ${c.amb} (${c.dist} m)</button>`
     ).join("");
     return `<div class="decision-card"><h3>⚠ PRIORITY CONFLICT — ${p.case}</h3>` +
-      `<p>Two corridors need junction <b>${p.tls}</b> at the same time. ` +
+      `<p>Two corridors need <b>${jname(p.tls)}</b> at the same time. ` +
       `Junction is held on its normal programme until decided.</p>` +
       `<div class="row">${btns}</div>` +
       `<div class="count">Supervisor decision window: ${left} s — then policy grants the nearest.</div></div>`;
@@ -757,11 +780,11 @@ function render(now) {
   // cars: dots far out, 3D bodies up close
   const carMode = zoom >= 15.5 ? 2 : zoom >= 14 ? 1 : 0;
   for (const p of carPos.values()) {
-    p.lon += (p.tLon - p.lon) * k;
-    p.lat += (p.tLat - p.lat) * k;
-    const dAng = (((p.tAng || 0) - (p.ang || 0) + 540) % 360) - 180;
-    p.ang = (p.ang || 0) + dAng * k;
-    const c = map.latLngToContainerPoint([p.lat, p.lon]);
+    const u = Math.max(0, Math.min((now - p.B.t) / Math.max(p.dt, 16), 1.15));
+    const lon = p.A.lon + (p.B.lon - p.A.lon) * u;
+    const lat = p.A.lat + (p.B.lat - p.A.lat) * u;
+    const ang = p.A.ang + (p.B.ang - p.A.ang) * u;
+    const c = map.latLngToContainerPoint([lat, lon]);
     if (c.x < -14 || c.y < -14 || c.x > vw + 14 || c.y > vh + 14) continue;
     if (carMode === 0) {
       ctx.beginPath();
@@ -769,7 +792,7 @@ function render(now) {
       ctx.fillStyle = p.col;
       ctx.fill();
     } else {
-      drawMiniCar(c.x, c.y, p.ang, p.col, carMode, zoom);
+      drawMiniCar(c.x, c.y, ang, p.col, carMode, zoom);
     }
   }
 
@@ -805,18 +828,35 @@ function render(now) {
       if (c.x < -30 || c.y < -30 || c.x > vw + 30 || c.y > vh + 30) continue;
       let label = null;
       if (zoom >= 14.5) {
+        const who = `${t.code} ${t.name}`;
         if (st.m === "preempted" || st.m === "clearing")
-          label = { text: `PURPOSELY ENABLED · ${st.case} · ${st.amb}`, color: "#22c55e" };
+          label = { text: `PURPOSELY ENABLED · ${who} · ${st.amb}`, color: "#22c55e" };
         else if (st.m === "transition")
-          label = { text: `ENABLING · ${st.case}`, color: "#f0b429" };
+          label = { text: `ENABLING · ${who}`, color: "#f0b429" };
         else if (st.m === "restoring")
-          label = { text: `RESTORING · ${st.case}`, color: "#f0b429" };
+          label = { text: `RESTORING · ${who}`, color: "#f0b429" };
         else if (st.m === "demand")
-          label = { text: "EARLY GREEN · lone traffic", color: "#22d3ee" };
+          label = { text: `EARLY GREEN · ${who}`, color: "#22d3ee" };
         else if (restoredBadges.get(t.id) > Date.now())
-          label = { text: "BACK TO NORMAL ✓", color: "#8be9b6" };
+          label = { text: `BACK TO NORMAL ✓ · ${who}`, color: "#8be9b6" };
       }
       drawSignalHousing(c.x, c.y, st.m, st.s, label, now, hs);
+    }
+  }
+
+  // junction name tags: code + real streets, so the map reads like a city
+  if (zoom >= 16.5) {
+    ctx.font = "600 10.5px -apple-system, sans-serif";
+    for (const t of tlsStatic) {
+      const st = frame.tls[t.id];
+      if (!st || st.m !== "normal") continue;
+      const c = map.latLngToContainerPoint([t.lat, t.lon]);
+      if (c.x < -40 || c.y < -40 || c.x > vw + 40 || c.y > vh + 40) continue;
+      const txt = `${t.code} · ${t.name}`;
+      ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.lineWidth = 3;
+      ctx.fillStyle = "#aab7cc";
+      ctx.strokeText(txt, c.x + 12, c.y + 22);
+      ctx.fillText(txt, c.x + 12, c.y + 22);
     }
   }
 
@@ -824,6 +864,7 @@ function render(now) {
 
   // ambulances: constant-velocity interpolation between snapshots
   const blue = Math.floor(now / 260) % 2 === 0;
+  let followed = false;
   for (const [id, p] of ambPos) {
     const u = Math.max(0, Math.min((now - p.B.t) / Math.max(p.dt, 16), 1.15));
     const iLon = p.A.lon + (p.B.lon - p.A.lon) * u;
@@ -844,6 +885,14 @@ function render(now) {
       if (!p.lights) label += " · lights OFF";
     }
     drawAmbulance(c.x, c.y, iAng || 0, blue, p.lights, label);
+    // continuous follow: the camera glides with the interpolated pose every
+    // frame (no animated pans, no 1-second lurches)
+    if (!followed && $("follow").checked && !picking) {
+      followed = true;
+      const ctr = map.getCenter();
+      if (Math.abs(ctr.lat - iLat) > 1e-6 || Math.abs(ctr.lng - iLon) > 1e-6)
+        map.panTo([iLat, iLon], { animate: false, noMoveStart: true });
+    }
   }
 }
 requestAnimationFrame(render);

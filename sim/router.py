@@ -27,6 +27,7 @@ class Router:
         self.tls_map = {}
         # optional TrafficMarkov instance for anticipatory weights
         self.predictor = None
+        self.places = None   # real-name registry (set by the runner)
         self._lengths = {e.getID(): e.getLength() for e in net.getEdges()
                          if e.allows(vclass)}
         # edge id -> list of (successor edge id, successor static cost)
@@ -117,10 +118,15 @@ class Router:
             cum_d += edge.getLength()
             cum_t += self._weight(eid, live, horizon=cum_t)
             lon, lat = self.net.convertXY2LonLat(*node.getCoord())
+            sig = self.tls_map.get(node.getID(), node.getID())
             rows.append({
                 "node": node.getID(),
+                "junction": (self.places.jn(sig) if self.places
+                             and node.getType().startswith("traffic_light")
+                             else ""),
                 "lat": round(lat, 6), "lon": round(lon, 6),
-                "street": edge.getName() or eid,
+                "street": (self.places.road(eid) if self.places
+                           else (edge.getName() or eid)),
                 "dist_m": round(cum_d, 0),
                 "eta_s": round(cum_t, 0),
                 "signal": self.tls_map.get(node.getID(), node.getID())

@@ -68,7 +68,8 @@ class Index:
         want = {
             "ambs": set(re.findall(r"AMB[_ ]?(\d+)", q, re.I)),
             "cases": set(re.findall(r"\b([PAD])-?(\d{1,3})\b", q)),
-            "tls": set(re.findall(r"(?:GS_)?cluster_[\w#]+|\b\d{6,}\b", q)),
+            "tls": set(re.findall(r"\bJ-\d{3}\b|(?:GS_)?cluster_[\w#]+|\b\d{6,}\b",
+                                  q, flags=re.I)),
             "kinds": set(),
         }
         want["ambs"] = {f"AMB_{n}" for n in want["ambs"]}
@@ -102,7 +103,8 @@ class Index:
                 continue
             if want["cases"] and not want["cases"] & set(meta["cases"]):
                 continue
-            if want["tls"] and not want["tls"] & set(meta["tls"]):
+            if want["tls"] and not ({t.upper() for t in want["tls"]}
+                                    & {t.upper() for t in meta["tls"]}):
                 continue
             score = self._bm25(q_tokens, i)
             # soft boost when the doc carries a hinted event kind

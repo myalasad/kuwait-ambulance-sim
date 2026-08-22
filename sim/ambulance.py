@@ -21,12 +21,23 @@ class Dispatcher:
         self.ops = ops
         self.router = router
         self.count = 0
-        self.hospitals = cfg.hospitals_d()
-        self.areas = cfg.areas_d()
         self.info = {}  # amb_id -> lifecycle + navigation record
         self._edges = [e for e in net.getEdges()
                        if e.allows("passenger") and e.getLength() > 30]
         self._rng = random.Random(1)
+        # offer only places that actually snap to the modelled network, so
+        # the UI never lists a scene or hospital that cannot be reached
+        self.hospitals = {n: ll for n, ll in cfg.hospitals_d().items()
+                          if self.nearest_edges(ll[0], ll[1], k=1)}
+        self.areas = {n: ll for n, ll in cfg.areas_d().items()
+                      if self.nearest_edges(ll[0], ll[1], k=1)}
+        dropped = [n for n in cfg.areas_d() if n not in self.areas]
+        if dropped:
+            ops.emit(0.0, "system",
+                     f"{len(dropped)} named area(s) lie off the modelled "
+                     f"network in this scenario and are not offered: "
+                     f"{', '.join(dropped[:8])}"
+                     f"{'…' if len(dropped) > 8 else ''}", "info")
 
     # ------------------------------------------------------------- geocoding
 
@@ -196,7 +207,9 @@ class Dispatcher:
             red = max(0.0, cycle - green)
             e_wait = red * red / (2 * cycle)
             total += e_wait
-            per.append({"tls": r["signal"], "cycle": round(cycle),
+            per.append({"tls": r["signal"],
+                        "name": self.ops.jn(r["signal"]),
+                        "cycle": round(cycle),
                         "red": round(red), "exp_wait_s": round(e_wait, 1)})
         return round(total, 1), per
 

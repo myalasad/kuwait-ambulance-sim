@@ -17,6 +17,7 @@ from .operations import OperationsLog
 from .router import Router
 from .traffic_profile import hourly_profile
 from .markov import TrafficMarkov
+from .places import Places
 
 VEH_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED]
 
@@ -64,7 +65,10 @@ class Simulation:
         cmd += self.extra_args
         traci.start(cmd)
         self.ops = OperationsLog(self.root)
+        self.places = Places(self.net, self.cfg, self.root)
+        self.ops.places = self.places
         self.router = Router(self.net)
+        self.router.places = self.places
         self.controller = GreenWaveController(
             self.cfg, self.ops, enabled=self._preemption_wanted)
         self.actuation = DemandResponsiveController(
@@ -87,12 +91,23 @@ class Simulation:
             traci.trafficlight.subscribe(tls_id, [tc.TL_RED_YELLOW_GREEN_STATE])
         self._tls_static = self._locate_tls()
         # node id -> tls id (joined signals have prefixed ids like GS_<node>)
+        tls_links, tls_pos = {}, {}
+        for t in self._tls_static:
+            tls_pos[t["id"]] = (t["lat"], t["lon"])
         for tls_id in traci.trafficlight.getIDList():
+            ins = []
             for group in traci.trafficlight.getControlledLinks(tls_id):
-                for _in, _out, via in group:
+                for in_lane, _out, via in group:
+                    ins.append(in_lane.rsplit("_", 1)[0])
                     if via.startswith(":"):
                         node = via[1:].rsplit("_", 2)[0]
                         self.router.tls_map[node] = tls_id
+            tls_links[tls_id] = sorted(set(ins))
+        self.places.attach_tls(tls_links, tls_pos)
+        for t in self._tls_static:
+            d = self.places.describe(t["id"])
+            t["code"], t["name"] = d["code"], d["name"]
+            t["category"], t["area"] = d["category"], d["area"]
         self.ops.emit(0.0, "system",
                       f"Simulation started: downtown Kuwait City, "
                       f"{len(self._tls_static)} signalized junctions, "
@@ -274,9 +289,9 @@ class Simulation:
             "tls": self._tls_static,
             "hospitals": [{"name": name, "lat": lat, "lon": lon}
                           for name, (lat, lon) in
-                          self.cfg.hospitals_d().items()],
+                          self.dispatcher.hospitals.items()],
             "areas": [{"name": name, "lat": lat, "lon": lon}
-                      for name, (lat, lon) in self.cfg.areas_d().items()],
+                      for name, (lat, lon) in self.dispatcher.areas.items()],
             "start_hour": self.cfg.start_hour,
             "scenario": self.cfg.scenario,
             "scenarios": {k: v["label"] for k, v in SCENARIOS.items()},

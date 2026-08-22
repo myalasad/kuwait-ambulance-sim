@@ -60,8 +60,8 @@ class Hub:
             print(self.error, file=sys.stderr)
         step_len = self.sim.cfg.step_length if self.sim else 0.5
         heartbeat = 0.0
+        next_tick = time.perf_counter()
         while True:
-            t0 = time.perf_counter()
             await self._drain_commands()
             if self.error or self.paused or self.sim is None:
                 # keep clients informed: heartbeat the last frame (or the
@@ -86,8 +86,13 @@ class Hub:
             snap["error"] = None
             self.last_snap = snap
             await self._broadcast(snap)
-            elapsed = time.perf_counter() - t0
-            await asyncio.sleep(max(0.005, step_len / self.speed - elapsed))
+            # steady cadence: schedule against an absolute clock so frame
+            # delivery has no cumulative drift or sleep jitter
+            next_tick += step_len / self.speed
+            nowp = time.perf_counter()
+            if next_tick < nowp - 1.0:
+                next_tick = nowp          # fell far behind: resync
+            await asyncio.sleep(max(0.002, next_tick - nowp))
 
     async def _drain_commands(self):
         while not self.commands.empty():
@@ -209,8 +214,12 @@ async def api_operations(since: int = 0):
         return JSONResponse({"events": [], "seq": 0})
     events = hub.sim.ops.since(since)
     seq = hub.sim.ops.seq
+    pending = []
+    for pd in hub.sim.controller.pending_decisions():
+        pd = dict(pd); pd["tls_name"] = hub.sim.places.jn(pd["tls"])
+        pending.append(pd)
     return JSONResponse({"events": events, "seq": seq,
-                         "pending": hub.sim.controller.pending_decisions(),
+                         "pending": pending,
                          "clock": hub.sim.clock()})
 
 
@@ -218,7 +227,17 @@ async def api_operations(since: int = 0):
 async def api_cases():
     if hub.sim is None or hub.sim.ops is None:
         return JSONResponse({"cases": []})
-    return JSONResponse({"cases": hub.sim.ops.case_list()})
+    cases = []
+    for c in hub.sim.ops.case_list():
+        c = dict(c)
+        if c["kind"] == "P":
+            c["subject_name"] = hub.sim.places.jn(c["subject"])
+        elif c["kind"] == "D":
+            c["subject_name"] = hub.sim.places.jn(c["subject"])
+        else:
+            c["subject_name"] = c["subject"]
+        cases.append(c)
+    return JSONResponse({"cases": cases})
 
 
 @app.get("/api/navigation")

@@ -383,7 +383,7 @@ async function pollAnalysis() {
 function renderPending(pending) {
   $("pending-card").style.display = pending.length ? "" : "none";
   $("pending").innerHTML = pending.map(p =>
-    `<div class="pendcard"><h3>${p.case} — junction ${p.tls}</h3>` +
+    `<div class="pendcard"><h3>${p.case} — ${p.tls_name || p.tls}</h3>` +
     `<p>Controller unable to decide between converging corridors; junction ` +
     `held on its normal programme.</p>` +
     p.candidates.map(c =>
@@ -407,7 +407,7 @@ async function pollCases() {
       const pill = c.status === "open" ? "p-open"
                  : c.status === "error" ? "p-error" : "p-closed";
       return `<tr><td class="kind-${c.kind}"><b>${c.id}</b></td>` +
-        `<td>${c.subject.length > 22 ? c.subject.slice(0, 21) + "…" : c.subject}</td>` +
+        `<td>${(c.subject_name || c.subject)}</td>` +
         `<td><span class="pill ${pill}">${c.status}</span></td>` +
         `<td class="num">${dur}</td>` +
         `<td>${c.outcome || c.summary || ""}</td></tr>`;

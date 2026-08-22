@@ -27,7 +27,7 @@ def _entities(text):
         "ambs": sorted(set(re.findall(r"AMB_\d+", text))),
         "cases": sorted(set(re.findall(r"\b[PAD]-\d{3}\b", text))),
         "tls": sorted(set(re.findall(
-            r"(?:GS_|joinedS_)?cluster_[\w#]+|\b\d{6,}\b", text)))[:40],
+            r"\bJ-\d{3}\b|(?:GS_|joinedS_)?cluster_[\w#]+|\b\d{6,}\b", text)))[:40],
     }
 
 

@@ -149,8 +149,8 @@ class DemandResponsiveController:
             self.pending.pop(tls_id, None)
             self.granted_total += 1
             self.ops.emit(now, "actuation",
-                          f"Junction {tls_id}: green EXTENDED for the only "
-                          f"occupied approach ({edge}) — all other "
+                          f"Junction {self.ops.jn(tls_id)}: green EXTENDED for the only "
+                          f"occupied approach ({self.ops.rd(edge)}) — all other "
                           f"approaches empty", "info")
             return
         self._grant(tls_id, info, edge, serve_idx, cur, now)
@@ -178,8 +178,8 @@ class DemandResponsiveController:
         self.pending.pop(tls_id, None)
         self.granted_total += 1
         self.ops.emit(now, "actuation",
-                      f"Junction {tls_id}: EARLY GREEN granted to the only "
-                      f"occupied approach ({edge}) — every other approach "
+                      f"Junction {self.ops.jn(tls_id)}: EARLY GREEN granted to the only "
+                      f"occupied approach ({self.ops.rd(edge)}) — every other approach "
                       f"empty for {self.cfg.lone_confirm_s:.0f} s; no reason "
                       f"to hold traffic on a timer", "info")
 
@@ -207,7 +207,7 @@ class DemandResponsiveController:
                           else f"max early-green hold "
                                f"({self.cfg.lone_max_hold_s:.0f} s) reached")
                 self.ops.emit(now, "actuation",
-                              f"Junction {tls_id}: early green ended — "
+                              f"Junction {self.ops.jn(tls_id)}: early green ended — "
                               f"{reason}", "info")
                 self.cooldown[tls_id] = now + self.cfg.actuation_cooldown_s
                 self.claims.pop(tls_id, None)

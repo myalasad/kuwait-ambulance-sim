@@ -32,6 +32,15 @@ class OperationsLog:
         self._fh = open(self.path, "a", encoding="utf-8")
         self.cases = {}
         self._case_counters = {"P": 0, "A": 0, "D": 0}
+        self.places = None   # real-name registry, attached by the runner
+
+    def jn(self, tls_id):
+        """Human junction label (code + real streets)."""
+        return self.places.jn(tls_id) if self.places else f"junction {tls_id}"
+
+    def rd(self, edge_id):
+        """Human road label."""
+        return self.places.road(edge_id) if self.places else edge_id
 
     # ---------------------------------------------------------------- events
 

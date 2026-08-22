@@ -119,7 +119,7 @@ class GreenWaveController:
             return False
         pend["choice"] = amb_id
         self.ops.emit(self._now, "decision_made",
-                      f"Junction {tls_id}: {who} granted priority to {amb_id}",
+                      f"Junction {self.ops.jn(tls_id)}: {who} granted priority to {amb_id}",
                       "decision", actor=who, case=pend["case"])
         self.ops.close_case(pend["case"], self._now,
                             f"{who} granted {amb_id}")
@@ -233,14 +233,14 @@ class GreenWaveController:
                     self._set_state(tls_id, st, "r" * n)
                     st.until = now + cfg.allred_time_s
                     self.ops.emit(now, "preempt_phase",
-                                  f"Junction {tls_id}: all-red clearance "
+                                  f"Junction {self.ops.jn(tls_id)}: all-red clearance "
                                   f"({cfg.allred_time_s:.0f} s)", "info",
                                   case=st.case)
                 else:
                     self._set_state(tls_id, st, st.target)
                     st.mode = PREEMPTED
                     self.ops.emit(now, "preempt_phase",
-                                  f"Junction {tls_id}: corridor green ACTIVE "
+                                  f"Junction {self.ops.jn(tls_id)}: corridor green ACTIVE "
                                   f"for {st.amb}", "info", case=st.case)
             if st.mode == TO_NORMAL:
                 if now >= st.until:
@@ -252,7 +252,7 @@ class GreenWaveController:
                         and wanted[tls_id][1] > cfg.camera_range_m):
                     self.cooldown[tls_id] = now + cfg.preempt_cooldown_s
                     self.ops.emit(now, "hold_limit",
-                                  f"Junction {tls_id} held {cfg.max_hold_s:.0f} s"
+                                  f"Junction {self.ops.jn(tls_id)} held {cfg.max_hold_s:.0f} s"
                                   f" — cycling cross traffic before re-arming",
                                   "warn", case=st.case)
                     self._begin_restore(tls_id, st, now)
@@ -282,7 +282,7 @@ class GreenWaveController:
                 pend = self.pending.pop(tls_id)
                 if pend["choice"] is None:
                     self.ops.emit(now, "decision_moot",
-                                  f"Junction {tls_id}: conflict dissolved "
+                                  f"Junction {self.ops.jn(tls_id)}: conflict dissolved "
                                   f"(a corridor passed or diverged)", "info",
                                   case=pend["case"])
                     self.ops.close_case(pend["case"], now,
@@ -312,7 +312,7 @@ class GreenWaveController:
                     wanted[tls_id] = [idxs, dist, pend["choice"]]
                 elif pend["choice"] is None and now >= pend["deadline"]:
                     self.ops.emit(now, "decision_made",
-                                  f"Junction {tls_id}: no operator decision in "
+                                  f"Junction {self.ops.jn(tls_id)}: no operator decision in "
                                   f"{cfg.operator_timeout_s:.0f} s — default "
                                   f"policy applied, {amb1} granted (nearest)",
                                   "decision", actor="policy",
@@ -328,7 +328,7 @@ class GreenWaveController:
             if abs(d2 - d1) <= cfg.arbitration_tie_m:
                 case = self.ops.open_case(
                     "D", tls_id, now,
-                    f"Priority conflict at {tls_id}: "
+                    f"Priority conflict at {self.ops.jn(tls_id)}: "
                     + " vs ".join(a for a, _ in ranked))
                 self.pending[tls_id] = {
                     "case": case, "choice": None,
@@ -336,7 +336,7 @@ class GreenWaveController:
                     "candidates": [(a, r[1]) for a, r in ranked],
                 }
                 self.ops.emit(now, "decision_referred",
-                              f"Junction {tls_id}: UNABLE TO DECIDE — "
+                              f"Junction {self.ops.jn(tls_id)}: UNABLE TO DECIDE — "
                               f"{amb1} at {d1:.0f} m and {amb2} at {d2:.0f} m "
                               f"(margin under {cfg.arbitration_tie_m:.0f} m). "
                               f"Referred to operator; junction held on normal "
@@ -349,7 +349,7 @@ class GreenWaveController:
             if self._arb_logged.get(tls_id) != contenders:
                 self._arb_logged[tls_id] = contenders
                 self.ops.emit(now, "arbitration",
-                              f"Junction {tls_id}: {len(by_amb)} corridors "
+                              f"Junction {self.ops.jn(tls_id)}: {len(by_amb)} corridors "
                               f"requested — {amb1} granted (nearest: "
                               f"{d1:.0f} m vs {d2:.0f} m); "
                               f"{amb2} queued behind it", "warn", actor=amb1)
@@ -368,7 +368,7 @@ class GreenWaveController:
         """On any signal-command error: revert the junction to its normal
         programme immediately and report the case as errored."""
         self.ops.emit(now, "error",
-                      f"Junction {tls_id}: signal command FAILED ({reason}) — "
+                      f"Junction {self.ops.jn(tls_id)}: signal command FAILED ({reason}) — "
                       f"fail-safe: reverting to normal programme", "error",
                       case=st.case)
         try:
@@ -406,7 +406,7 @@ class GreenWaveController:
             return
         self.camera_logged.add((tls_id, amb_id))
         self.ops.emit(self._now, "camera",
-                      f"Camera at junction {tls_id} detected {amb_id} "
+                      f"Camera at {self.ops.jn(tls_id)} detected {amb_id} "
                       f"with lights on, {dist:.0f} m out", "info",
                       actor=amb_id)
         # The same camera is an enforcement camera: over the limit with
@@ -418,7 +418,7 @@ class GreenWaveController:
             return
         if speed > limit + 0.5:
             self.ops.emit(self._now, "enforcement",
-                          f"Enforcement camera at {tls_id}: {amb_id} at "
+                          f"Enforcement camera at {self.ops.jn(tls_id)}: {amb_id} at "
                           f"{speed * 3.6:.0f} km/h in a {limit * 3.6:.0f} "
                           f"km/h zone — emergency lights active, exemption "
                           f"applies, NO CITATION issued", "info",
@@ -537,9 +537,9 @@ class GreenWaveController:
         st.target = target
         st.amb = amb
         st.case = self.ops.open_case("P", tls_id, now,
-                                     f"Junction {tls_id} corridor for {amb}")
+                                     f"Junction {self.ops.jn(tls_id)} corridor for {amb}")
         self.ops.emit(now, "preempt_start",
-                      f"Junction {tls_id} PURPOSELY ENABLED for {amb}: "
+                      f"Junction {self.ops.jn(tls_id)} PURPOSELY ENABLED for {amb}: "
                       f"approach green, conflicts to red", "warn",
                       actor=amb, case=st.case)
         if yellow != current:
@@ -547,14 +547,14 @@ class GreenWaveController:
             st.mode = TO_PREEMPT
             st.until = now + self.cfg.yellow_time_s
             self.ops.emit(now, "preempt_phase",
-                          f"Junction {tls_id}: amber to conflicting traffic "
+                          f"Junction {self.ops.jn(tls_id)}: amber to conflicting traffic "
                           f"({self.cfg.yellow_time_s:.0f} s)", "info",
                           case=st.case)
         else:
             self._set_state(tls_id, st, target)
             st.mode = PREEMPTED
             self.ops.emit(now, "preempt_phase",
-                          f"Junction {tls_id}: corridor green ACTIVE for "
+                          f"Junction {self.ops.jn(tls_id)}: corridor green ACTIVE for "
                           f"{amb}", "info", case=st.case)
         return st
 
@@ -580,7 +580,7 @@ class GreenWaveController:
             pass
         held = now - st.started_at
         self.ops.emit(now, "restore",
-                      f"Junction {tls_id} BACK TO NORMAL programme — "
+                      f"Junction {self.ops.jn(tls_id)} BACK TO NORMAL programme — "
                       f"purposely-enabled period over (held {held:.0f} s "
                       f"for {st.amb})", "info", case=st.case)
         if st.case:

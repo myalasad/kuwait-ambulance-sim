@@ -184,6 +184,7 @@ class TrafficMarkov:
     def __init__(self, net, cfg, root, ops=None):
         self.cfg = cfg
         self.ops = ops
+        self.places = getattr(ops, "places", None)
         self.path = os.path.join(
             root, "data", f"markov_{cfg.scenario}.json")
         self.period = cfg.markov_sample_s
@@ -297,6 +298,7 @@ class TrafficMarkov:
             congested_share = pi[2] + pi[3]
             rows.append({
                 "edge": eid,
+                "road": (self.places.road(eid) if self.places else eid),
                 "observations": chain.n,
                 "state_now": STATE_NAMES[self.state_now.get(eid, 0)],
                 "stationary": {STATE_NAMES[s]: round(pi[s], 3)
