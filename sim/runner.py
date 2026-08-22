@@ -163,8 +163,10 @@ class Simulation:
                               f"occupied junctions have several approaches "
                               f"occupied — early green cannot apply there, fair "
                               f"timers by design ({pct}%); {fm['lone']} junctions "
-                              f"have a lone approach; {fm['early']} early greens "
-                              f"granted so far", "info")
+                              f"have a lone approach; {fm['audit']['grants']} early "
+                              f"greens granted so far, {fm['audit']['ended_for_other_traffic']} "
+                              f"ended the moment other traffic arrived, fairness "
+                              f"violations {fm['audit']['violations']}", "info")
         for veh_id in traci.simulation.getDepartedIDList():
             traci.vehicle.subscribe(veh_id, VEH_VARS)
             self.dispatcher.on_depart(veh_id, self.time)
@@ -283,6 +285,7 @@ class Simulation:
         kpi["fair_timer_junctions"] = fm["fair"]
         kpi["lone_junctions"] = fm["lone"]
         kpi["occupied_junctions"] = fm["occupied"]
+        kpi["early_audit"] = fm["audit"]
         kpi["traffic"] = {"day": self.cfg.day_type,
                           "level": self.cfg.traffic_level,
                           **describe(self.cfg.day_type, self.cfg.traffic_level,

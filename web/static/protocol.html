@@ -435,7 +435,7 @@
     <div class="sc"><h3><span class="id">I1</span>Provenance</h3>
       <dl class="f">
         <dt>Real</dt><dd>Road networks, one-way system, turn restrictions, signal locations and street names (OpenStreetMap); hospital locations.</dd>
-        <dt>Calibrated</dt><dd>Background demand follows the published shape of Kuwaiti weekday traffic — Kuwait exposes no public live feed. Real hourly counts (e.g. the licensed <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data" style="color:#4ade80">xMap Kuwait catalog</a>) drop into <code>data/real_counts.csv</code> as <code>hour,multiplier</code> and override the profile.</dd>
+        <dt>Calibrated</dt><dd>Background demand follows the published shape of Kuwaiti weekly traffic, with the volume anchored to Kuwait's ~2.4 million registered vehicles (PACI) and an operator estimate for the downtown core (a weekend evening at Extreme ≈ 3,000+ vehicles on the core network at once). Kuwait exposes no public live feed and Google Maps publishes travel times, not vehicle counts. Real hourly counts (e.g. the licensed <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data" style="color:#4ade80">xMap Kuwait catalog</a>) drop into <code>data/real_counts.csv</code> as <code>hour,multiplier</code> and override the profile.</dd>
         <dt>Synthetic</dt><dd>Individual signal timing plans (static 72–90 s cycles per junction); replaceable with real MOI plans in the network file.</dd>
         <dt>Learned</dt><dd>Markov chains learn from simulated traffic here; the identical estimator ingests real detector data unchanged.</dd>
       </dl></div>

@@ -42,13 +42,22 @@ class DemandResponsiveController:
         self.granted_total = 0
         self._modes = {"fair": 0, "lone": 0, "occupied": 0}
         self._last_seen = {}    # tls -> {edge: last sim time it had traffic}
+        # permanent self-audit: a held early green that persists while
+        # another approach has traffic (beyond the minimum green) is a
+        # FAIRNESS VIOLATION; the count is shown on the dashboard
+        self.audit = {"grants": 0, "extensions": 0, "violations": 0,
+                      "ended_for_other_traffic": 0}
+        self.skipped_nonconflict = 0
         self._build()
 
     def mode_counts(self):
         """How many junctions currently have several approaches occupied
         (fair timers by design), a single occupied approach (early-green
-        candidates), and any traffic at all."""
-        return {**self._modes, "early": self.granted_total}
+        candidates), and any traffic at all — plus the self-audit."""
+        return {**self._modes, "early": self.granted_total,
+                "audit": dict(self.audit),
+                "arbitrated_junctions": len(self.tls_info),
+                "nonconflict_excluded": self.skipped_nonconflict}
 
     # ------------------------------------------------------------- topology
 
@@ -85,6 +94,13 @@ class DemandResponsiveController:
                         best, score = i, s
                 if best is not None:
                     serve[edge] = best
+            # a signal whose approaches are all served by ONE phase (mid-block
+            # pedestrian crossings, paired one-way carriageways) has no
+            # conflicting movements to arbitrate — early green there would be
+            # a meaningless "decision", so it is excluded from this module
+            if len(set(serve.values())) < 2:
+                self.skipped_nonconflict += 1
+                continue
             for lanes in approach.values():
                 for lane in lanes:
                     traci.lane.subscribe(lane, [tc.LAST_STEP_VEHICLE_NUMBER])
@@ -172,6 +188,7 @@ class DemandResponsiveController:
                                    "since": now}
             self.pending.pop(tls_id, None)
             self.granted_total += 1
+            self.audit["extensions"] += 1
             self.ops.emit(now, "actuation",
                           f"Junction {self.ops.jn(tls_id)}: green EXTENDED for the only "
                           f"occupied approach ({self.ops.rd(edge)}) — all other "
@@ -201,6 +218,7 @@ class DemandResponsiveController:
         self.claims[tls_id] = claim
         self.pending.pop(tls_id, None)
         self.granted_total += 1
+        self.audit["grants"] += 1
         self.ops.emit(now, "actuation",
                       f"Junction {self.ops.jn(tls_id)}: EARLY GREEN granted to the only "
                       f"occupied approach ({self.ops.rd(edge)}) — every other approach "
@@ -221,6 +239,19 @@ class DemandResponsiveController:
             served_min = now - claim["since"] >= self.cfg.lone_min_green_s
             lane_empty = occ.get(claim["edge"], 0) == 0
             timeout = now - claim["since"] >= self.cfg.lone_max_hold_s
+            # self-audit: a hold that CONTINUES after other traffic has been
+            # waiting longer than the minimum green plus one second of grace
+            # is a fairness violation (releases on this step are not)
+            if others:
+                claim.setdefault("others_since", now)
+                waited = now - claim["others_since"]
+                if (waited > 1.0 and now - claim["since"]
+                        > self.cfg.lone_min_green_s + 1.0):
+                    self.audit["violations"] += 1
+            else:
+                claim.pop("others_since", None)
+            if others and served_min:
+                self.audit["ended_for_other_traffic"] += 1
             if (others and served_min) or (lane_empty and served_min) or timeout:
                 # end the green promptly; the programme then continues its
                 # normal cycle from here — fair timers for everyone

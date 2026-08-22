@@ -22,7 +22,7 @@ SCENARIOS = {
         "routes": "background_base.rou.xml",
         "sumocfg": "scenario.sumocfg",
         "query": "overpass_query.txt",
-        "peak_period_s": 0.8,     # ~4,500 veh/h in the core at peak (medium)
+        "peak_period_s": 0.3,     # ~12,000 veh/h in the core at peak (medium); extreme x1.8
         "lateral_resolution": 0.8,
         "snap_radius_m": 400.0,
         "hospitals": {

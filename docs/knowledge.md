@@ -225,8 +225,14 @@ chosen hour):
   applies and junctions run their fair fixed timers — by design (Protocol
   D4). The Live Map shows the live share of busy junctions on fair timers,
   and a traffic check is logged every five minutes.
-Verified: 14 vehicles on the downtown grid at a weekday 03:00 versus 202 at
-07:00 (medium level).
+The demand volume is anchored to Kuwait's ~2.4 million registered vehicles
+(PACI) and an operator estimate for the downtown core (a weekend evening at
+Extreme ≈ 3,000+ vehicles on the core network at once); Google Maps publishes
+travel times, not counts, so no count data comes from it. Early green carries
+a permanent self-audit shown on the Live Map: grants, holds ended because
+other traffic arrived, and fairness violations (a hold continuing after other
+traffic has waited beyond the minimum green) — measured 0 violations at
+2,659 vehicles with 70% of in-use junctions on fair timers.
 
 ## Network models and places
 Two models: Downtown Kuwait City (detailed; every street; sublane model and

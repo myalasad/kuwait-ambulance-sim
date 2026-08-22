@@ -215,7 +215,9 @@
       <div class="kpi"><div class="v" id="k-amb">0</div><div class="l">ambulances</div></div>
       <div class="kpi"><div class="v" id="k-pre">0</div><div class="l">purposely enabled</div></div>
       <div class="kpi" style="grid-column:1 / -1"><div class="v" id="k-fair" style="font-size:15px">—</div>
-        <div class="l">junctions on fair timers (several approaches occupied) · lone-approach · early greens</div></div>
+        <div class="l">in-use junctions on fair timers · lone-approach</div></div>
+      <div class="kpi" style="grid-column:1 / -1"><div class="v" id="k-audit" style="font-size:15px">—</div>
+        <div class="l">early green self-audit: grants · ended for other traffic · <b>fairness violations</b></div></div>
     </div>
     <table id="runs"><thead><tr><th>run</th><th>time</th><th>km</th><th>km/h</th></tr></thead>
       <tbody></tbody></table>
@@ -466,8 +468,13 @@ function updatePanel(f) {
   $("k-pre").textContent = f.kpi.preempted_tls;
   if (f.kpi.occupied_junctions !== undefined)
     $("k-fair").textContent =
-      `${f.kpi.fair_timer_junctions} of ${f.kpi.occupied_junctions} · ` +
-      `${f.kpi.lone_junctions} · ${f.kpi.early_greens}`;
+      `${f.kpi.fair_timer_junctions} of ${f.kpi.occupied_junctions} · ${f.kpi.lone_junctions}`;
+  if (f.kpi.early_audit) {
+    const a = f.kpi.early_audit;
+    $("k-audit").innerHTML =
+      `${a.grants} · ${a.ended_for_other_traffic} · ` +
+      `<span style="color:${a.violations ? "#ff6b6b" : "#4ade80"}">${a.violations}</span>`;
+  }
   if (f.kpi.traffic) {
     const t = f.kpi.traffic;
     $("trafficchip").textContent =
