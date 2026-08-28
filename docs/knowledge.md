@@ -88,8 +88,15 @@ pages; it opens in VS Code with ready-made launch configurations.
   Markov traffic analytics table.
 
 ## Dispatch and missions
-Ambulances always originate at a hospital. Origin "Auto" picks the hospital
-with the shortest Dijkstra travel time to the scene. The incident scene is a
+Ambulances always originate at a hospital. Origin "Auto" dispatches the
+nearest AVAILABLE unit: one backward Dijkstra from the scene ranks every
+hospital's current travel time in a single pass, and a hospital whose
+response time is within the rotation tolerance (dispatch_rotation_tolerance,
+25%) of the fastest may be chosen instead when the fastest already has units
+out on mission — real EMS coverage, so consecutive runs do not all launch
+from one hospital. When the dispatch is rotated, the ruling is written in
+full on the dispatch event ("X is nearest but already has N units on
+mission — Y responds in T s, within the tolerance"). The incident scene is a
 map click or a named area. A mission has three phases: to scene; loading the
 patient at the scene (40 s stop, during which the corridor is paused so cross
 streets are not held for a stationary vehicle); and hot return, when the
@@ -106,8 +113,22 @@ planned route. Signals along the route are switched when the ambulance's
 ETA drops below 25 s (greenwave_lead_s), never later than 160 m out
 (greenwave_min_m) and never earlier than 800 m out (greenwave_distance_m).
 Switching means: 3 s of amber to conflicting traffic (yellow_time_s), a 2 s
-all-red clearance (allred_time_s), then the junction's own programme phase
-that serves the ambulance's approach is held. Signals are never switched
+all-red clearance (allred_time_s), then the ambulance's approach is held on
+protected green while every cross approach shows a FLASHING AMBER yield
+state (flash_amber) — "signal overridden, cross carefully when clear" — so
+vehicles caught inside the box can drain out instead of being sealed in by a
+hard red. The flash hardens to solid red when the ambulance is close in
+TIME (flash_harden_eta_s, 12 s) — clearance ahead of an ambulance is a time
+quantity: at speed it hardens ~180 m out, in crawling traffic the flash
+persists until the unit is genuinely near — and always within
+flash_harden_min_m (60 m) whatever the speed. The transition is logged with
+the live distance and time-to-junction (e.g. "AMB_8 140 m / 9 s out — cross
+flash hardened to RED"); a hysteresis band keeps the junction from
+flickering between the two if arbitration hands the junction to a farther
+unit. On the map the cross
+approaches' fixtures and chevrons blink amber at ~1 Hz — the blink is the
+real SUMO signal state ('o'), not a cosmetic effect: background drivers
+genuinely yield on it. Signals are never switched
 dark. After the ambulance passes (plus 2 s clearance, and only once it is
 physically out of the junction box) the junction returns to its normal
 programme through amber. A single hold is capped at 90 s (max_hold_s); after
@@ -302,7 +323,13 @@ same route, with vs without preemption); +9.1% mean network speed and −42.5%
 halted vehicles from early green at identical peak demand; Dijkstra ETAs
 within about 3–4% of actual travel times; motion rendering verified uniform
 (zero stalls) at display frame rate; 20 ms per simulation step on the
-six-governorate network.
+six-governorate network. Dispatch latency: a random dispatch used to block
+the server for 2.2–4.4 s (the CTMC forecast was recomputed for every edge
+relaxation of every Dijkstra — thousands of matrix exponentials per
+dispatch); with the per-tick forecast cache (results are exact within one
+30 s sample tick) and the one-pass hospital ranking, the same dispatch
+completes in well under half a second and the map never freezes on the
+button.
 
 ## The copilot itself
 The copilot is a retrieval-augmented assistant. Its corpus is built from the

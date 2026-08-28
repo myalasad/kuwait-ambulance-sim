@@ -25,6 +25,7 @@ class Dispatcher:
         self._edges = [e for e in net.getEdges()
                        if e.allows("passenger") and e.getLength() > 30]
         self._rng = random.Random(1)
+        self._logics = {}  # tls id -> cached signal programme phases
         # offer only places that actually snap to the modelled network, so
         # the UI never lists a scene or hospital that cannot be reached
         self.hospitals = {n: ll for n, ll in cfg.hospitals_d().items()
@@ -74,34 +75,77 @@ class Dispatcher:
             to_edges, to_desc = self._resolve(destination, "destination")
 
         route, algorithm, from_desc = None, None, None
+        rotation_note = ""
+        origin_hospital = None
         live = self.cfg.route_live_weights
         if origin in (None, "auto"):
-            best = None
+            # ONE backward Dijkstra from the scene ranks every hospital's
+            # current travel time in a single pass (instead of a full
+            # search per hospital); the winning unit's actual route is then
+            # computed forward with the full predictive weights.
+            cand_of = {}   # candidate edge id -> hospital name
             for name, (lat, lon) in self.hospitals.items():
                 for cand in self.nearest_edges(lat, lon, k=3):
-                    r = None
-                    for to_edge in to_edges:
-                        if to_edge.getID() == cand.getID():
-                            continue
-                        r = self.router.route(cand.getID(), to_edge.getID(),
-                                              live=live)
-                        if r:
-                            eta = self.router.nodal_analysis(
-                                r, live=live)[-1]["eta_s"]
-                            if best is None or eta < best[2]:
-                                best = (name, r, eta)
-                            break
-                    if r:
-                        break
-            if best is None:
+                    cand_of.setdefault(cand.getID(), name)
+            ranked, to_id = [], None
+            for te in to_edges:
+                costs = self.router.cost_from_many(
+                    [c for c in cand_of if c != te.getID()],
+                    te.getID(), live=live)
+                if costs:
+                    to_id = te.getID()
+                    per_h = {}
+                    for cid, cost in costs.items():
+                        h = cand_of[cid]
+                        if h not in per_h or cost < per_h[h][0]:
+                            per_h[h] = (cost, cid)
+                    ranked = sorted((cost, h, cid)
+                                    for h, (cost, cid) in per_h.items())
+                    break
+            if not ranked:
                 raise ValueError(f"No hospital can reach {to_desc}")
-            from_desc = f"{best[0]} (nearest hospital to the scene)"
-            route = best[1]
+            # Nearest AVAILABLE unit: among hospitals within the rotation
+            # tolerance of the fastest response, prefer the one with the
+            # fewest units already on mission — real EMS coverage, and it
+            # keeps consecutive runs from all launching at one hospital.
+            load = self._hospital_load()
+            tol = 1.0 + self.cfg.dispatch_rotation_tolerance
+            cut = ranked[0][0] * tol
+            pool = [r for r in ranked if r[0] <= cut]
+            pool.sort(key=lambda r: (load.get(r[1], 0), r[0]))
+            chosen = None
+            for eta_est, name, cid in pool + [r for r in ranked
+                                              if r[0] > cut]:
+                r = self.router.route(cid, to_id, live=live)
+                if r:
+                    route = r
+                    chosen = (name, eta_est)
+                    break
+            if route is None:
+                raise ValueError(f"No hospital can reach {to_desc}")
+            origin_hospital, eta_est = chosen
+            nearest_eta, nearest_name = ranked[0][0], ranked[0][1]
+            if origin_hospital == nearest_name:
+                from_desc = (f"{origin_hospital} "
+                             f"(nearest available hospital to the scene)")
+            else:
+                from_desc = f"{origin_hospital} (nearest AVAILABLE unit)"
+                rotation_note = (
+                    f"; dispatch rotated for coverage: {nearest_name} is "
+                    f"nearest ({nearest_eta:.0f} s) but already has "
+                    f"{load.get(nearest_name, 0)} unit(s) on mission — "
+                    f"{origin_hospital} responds in {eta_est:.0f} s, within "
+                    f"the {self.cfg.dispatch_rotation_tolerance:.0%} "
+                    f"rotation tolerance")
             algorithm = ("Dijkstra (live + Markov-predicted travel times)"
                              if self.router.predictor is not None
                              else "Dijkstra (live edge travel times)")
         else:
             from_edges, from_desc = self._resolve(origin, "origin")
+            if isinstance(origin, str) and origin in self.hospitals:
+                # manual hospital dispatch counts toward that hospital's
+                # load, or the availability rotation would treat it as idle
+                origin_hospital = origin
             for from_edge in from_edges:
                 for to_edge in to_edges:
                     if to_edge.getID() == from_edge.getID():
@@ -188,6 +232,7 @@ class Dispatcher:
             "traffic_wait_s": 0.0,    # measured: stopped/crawling in traffic
             "mission": "to_scene",    # to_scene -> loading -> to_hospital
             "hospital": None,
+            "origin_hospital": origin_hospital,
             "loading_started": False,
             "created": now,
             "insert_retries": 0,
@@ -200,9 +245,20 @@ class Dispatcher:
                       f"exemption active (up to "
                       f"{self.cfg.speed_exemption_factor:.0%} of posted "
                       f"limit, max {self.cfg.ambulance_max_kmh:.0f} km/h)"
-                      f"{routing_note}",
+                      f"{routing_note}{rotation_note}",
                       "info", actor=amb_id, case=case)
         return amb_id
+
+    def _hospital_load(self):
+        """Units currently on a mission, per origin hospital — the
+        availability signal behind nearest-AVAILABLE-unit dispatch."""
+        load = {}
+        for rec in self.info.values():
+            if rec["arrived"] is None:
+                h = rec.get("origin_hospital")
+                if h:
+                    load[h] = load.get(h, 0) + 1
+        return load
 
     # ------------------------------------------------- arrival-time analysis
 
@@ -218,13 +274,19 @@ class Dispatcher:
         for r in rows:
             if not r["signal"]:
                 continue
-            try:
-                logics = traci.trafficlight.getAllProgramLogics(r["signal"])
-            except traci.TraCIException:
+            # programme definitions are static — fetch each signal's once
+            if r["signal"] in self._logics:
+                phases = self._logics[r["signal"]]
+            else:
+                try:
+                    logics = traci.trafficlight.getAllProgramLogics(
+                        r["signal"])
+                except traci.TraCIException:
+                    logics = None
+                phases = logics[0].phases if logics else None
+                self._logics[r["signal"]] = phases
+            if phases is None:
                 continue
-            if not logics:
-                continue
-            phases = logics[0].phases
             cycle = sum(p.duration for p in phases)
             if cycle <= 0:
                 continue
@@ -311,20 +373,24 @@ class Dispatcher:
 
     def _begin_return_leg(self, amb_id, rec, idx, now):
         scene_edge = rec["route_edges"][-1]
-        # nearest hospital by actual routed travel time (one-ways respected)
-        best = None
+        # nearest hospital by actual routed travel time (one-ways
+        # respected): ONE forward Dijkstra from the scene reaches every
+        # hospital's candidate edges in a single pass
+        cand_of = {}
         for name, (lat, lon) in self.hospitals.items():
             for cand in self.nearest_edges(lat, lon, k=3):
-                if cand.getID() == scene_edge:
-                    break                      # scene is at this hospital
-                leg = self.router.route(scene_edge, cand.getID(),
-                                        live=self.cfg.route_live_weights)
-                if leg and len(leg) >= 2:
-                    rows = self.router.nodal_analysis(
-                        leg, live=self.cfg.route_live_weights)
-                    if best is None or rows[-1]["eta_s"] < best[3]:
-                        best = (name, leg, rows, rows[-1]["eta_s"])
-                    break
+                if cand.getID() != scene_edge:
+                    cand_of.setdefault(cand.getID(), name)
+        found = self.router.route_to_many(scene_edge, list(cand_of),
+                                          live=self.cfg.route_live_weights)
+        best = None
+        for cid, (leg, t) in found.items():
+            if len(leg) >= 2 and (best is None or t < best[3]):
+                best = (cand_of[cid], leg, None, t)
+        if best is not None:
+            rows = self.router.nodal_analysis(
+                best[1], live=self.cfg.route_live_weights)
+            best = (best[0], best[1], rows, rows[-1]["eta_s"])
         if best is None:
             rec["mission"] = "to_hospital"
             self.ops.emit(now, "error",
@@ -434,9 +500,18 @@ class Dispatcher:
                                   f"blocked for {waiting:.0f} s)", "warn",
                                   actor=amb_id, case=rec["case"])
                 except traci.TraCIException as exc:
+                    # the vehicle was removed and could not be re-added:
+                    # close the mission so the unit is not counted as
+                    # on-the-road (or as hospital load) forever
+                    rec["arrived"] = now
                     self.ops.emit(now, "error",
-                                  f"{amb_id} re-placement failed ({exc})",
-                                  "error", actor=amb_id, case=rec["case"])
+                                  f"{amb_id} re-placement failed ({exc}) — "
+                                  f"unit lost at the departure gate, "
+                                  f"mission closed", "error",
+                                  actor=amb_id, case=rec["case"])
+                    self.ops.close_case(rec["case"], now,
+                                        "re-placement failed after a "
+                                        "blocked departure gate", "error")
 
     def check_stuck(self, now):
         """An ambulance crawling in a jam re-plans around the blockage: if a

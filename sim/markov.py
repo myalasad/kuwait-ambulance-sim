@@ -206,6 +206,15 @@ class TrafficMarkov:
         self.recent = []             # last scored forecasts for display
         self.routing_evidence = {"compared": 0, "differed": 0,
                                  "predicted_saving_s": 0.0}
+        # Forecast cache.  Chains and current states only change on the
+        # sample tick, so within a tick expm(Q, t) is a pure function of
+        # (chain, state, horizon).  The router calls forecast() once per
+        # edge relaxation — thousands of times per Dijkstra — and without
+        # this cache each call recomputes a matrix exponential (measured:
+        # 2.2-4.4 s per dispatch, 97% of it here).  Horizons are quantised
+        # to 15 s buckets; both caches are cleared every sample tick.
+        self._fc_cache = {}       # (chain id, state, bucket) -> row
+        self._q_cache = {}        # chain id -> generator matrix
 
         # Monitor where traffic actually CHANGES state: the approaches to
         # signalized junctions (queues form and clear there) first, then the
@@ -272,6 +281,8 @@ class TrafficMarkov:
         if now < self._next_sample:
             return
         self._next_sample = now + self.period
+        self._fc_cache.clear()
+        self._q_cache.clear()
         for eid in self.monitored:
             try:
                 speed = traci.edge.getLastStepMeanSpeed(eid)
@@ -405,12 +416,22 @@ class TrafficMarkov:
 
     def forecast(self, eid, horizon_s):
         """State distribution of the edge `horizon_s` seconds from now
-        (CTMC transient), or None without enough history."""
+        (CTMC transient), or None without enough history.  Cached per
+        (chain, state, 15 s horizon bucket) until the next sample tick."""
         chain = self._chain_for(eid)
         if chain is None or chain.n < self.cfg.markov_min_obs:
             return None
         state = self.state_now.get(eid, 0)
-        row = expm(chain.Q(), max(0.0, horizon_s))[state]
+        bucket = int(max(0.0, horizon_s) // 15.0)
+        key = (id(chain), state, bucket)
+        row = self._fc_cache.get(key)
+        if row is None:
+            q = self._q_cache.get(id(chain))
+            if q is None:
+                q = chain.Q()
+                self._q_cache[id(chain)] = q
+            row = expm(q, bucket * 15.0)[state]
+            self._fc_cache[key] = row
         return row
 
     def predicted_speed(self, eid, horizon_s):

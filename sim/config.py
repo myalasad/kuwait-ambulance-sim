@@ -194,6 +194,17 @@ class SimConfig:
     max_hold_s: float = 90.0             # cap on a single continuous hold
     preempt_cooldown_s: float = 20.0     # cross traffic gets at least this
     #                                      much normal cycling after a long hold
+    flash_amber: bool = True             # while a corridor is held, cross
+    #                                      approaches FLASH AMBER (yield) so
+    #                                      trapped vehicles can clear the box
+    flash_harden_eta_s: float = 12.0     # the flash hardens to solid red
+    #                                      when the unit is this close in
+    #                                      TIME — clearance ahead of an
+    #                                      ambulance is a time quantity: at
+    #                                      speed this hardens ~180 m out,
+    #                                      in a crawl the flash persists
+    flash_harden_min_m: float = 60.0     # ...and always within this range,
+    #                                      whatever the speed
 
     # --- arbitration & operator referral ---
     arbitration_tie_m: float = 20.0      # two fresh requests closer than this
@@ -222,6 +233,13 @@ class SimConfig:
     reroute_to_hospital: bool = True     # on reaching the incident scene the
     #                                      ambulance auto-reroutes to the
     #                                      nearest hospital by travel time
+    dispatch_rotation_tolerance: float = 0.25
+    #                                      nearest-AVAILABLE-unit dispatch:
+    #                                      a hospital whose response time is
+    #                                      within this fraction of the
+    #                                      fastest may be chosen instead
+    #                                      when the fastest already has
+    #                                      units out on mission
     patient_load_s: float = 40.0         # loading stop at the scene; the
     #                                      corridor is paused while loading
     adaptive_reroute: bool = True        # a stuck ambulance re-plans around

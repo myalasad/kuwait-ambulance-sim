@@ -53,7 +53,7 @@ TO_NORMAL = "restoring"      # amber before normal programme resumes
 class _TlsState:
     __slots__ = ("mode", "orig_program", "orig_phase", "target",
                  "link_indices", "until", "started_at", "did_allred",
-                 "amb", "case")
+                 "amb", "case", "hardened")
 
     def __init__(self, orig_program, orig_phase, now):
         self.mode = NORMAL
@@ -66,6 +66,7 @@ class _TlsState:
         self.did_allred = False
         self.amb = None
         self.case = None
+        self.hardened = False   # cross flash escalated to solid red
 
 
 class GreenWaveController:
@@ -133,6 +134,7 @@ class GreenWaveController:
         self._now = now
         # tls_id -> {amb_id: [set of link indices, min dist]}
         requests = {}
+        amb_speed = {}
         if self.enabled:
             for amb_id in ambulance_ids:
                 try:
@@ -140,6 +142,7 @@ class GreenWaveController:
                     speed = traci.vehicle.getSpeed(amb_id)
                 except traci.TraCIException:
                     continue
+                amb_speed[amb_id] = speed
                 if amb_id in self.confirmed:
                     reach = min(cfg.greenwave_distance_m,
                                 max(cfg.greenwave_min_m,
@@ -171,9 +174,23 @@ class GreenWaveController:
             in_cooldown = (self.cooldown.get(tls_id, 0.0) > now
                            and dist > cfg.camera_range_m)
             st = self.active.get(tls_id)
+            # Flashing amber for cross traffic hardens to solid red once
+            # the unit is close in TIME (clearance ahead of an ambulance is
+            # a time quantity: at speed this fires ~180 m out, in a crawl
+            # the flash persists), with an absolute distance floor and a
+            # hysteresis band so an arbitration change cannot flicker the
+            # junction between the two states.
+            eta = dist / max(amb_speed.get(amb, 0.0), 0.5)
+            harden = (cfg.flash_amber
+                      and (dist <= cfg.flash_harden_min_m
+                           or eta <= cfg.flash_harden_eta_s
+                           or (st is not None and st.hardened
+                               and (dist <= cfg.flash_harden_min_m * 1.3
+                                    or eta <= cfg.flash_harden_eta_s * 1.3))))
             if st is None:
                 if not in_cooldown:
-                    st = self._begin(tls_id, frozenset(idxs), now, amb)
+                    st = self._begin(tls_id, frozenset(idxs), now, amb,
+                                     harden)
                     if st is not None:
                         self.active[tls_id] = st
             else:
@@ -190,18 +207,53 @@ class GreenWaveController:
                 elif st.mode == TO_NORMAL and not in_cooldown:
                     # Re-armed while ambering down: conflicts are already amber
                     # or red, so the corridor green can be applied directly.
-                    _yellow, target = self._build_states(tls_id, idxs)
+                    _yellow, target = self._build_states(tls_id, idxs, harden)
                     if target:
                         st.link_indices = frozenset(idxs)
                         st.target = target
+                        st.hardened = harden
                         self._set_state(tls_id, st, target)
                         st.mode = PREEMPTED
                         st.started_at = now
-                if st.mode == PREEMPTED and frozenset(idxs) != st.link_indices:
-                    yellow, target = self._build_states(tls_id, idxs)
-                    if target and target != st.target:
+                elif st.mode == TO_PREEMPT and (
+                        frozenset(idxs) != st.link_indices
+                        or harden != st.hardened):
+                    # The unit crossed the hardening boundary (or changed
+                    # lanes) DURING the amber/all-red transition: refresh
+                    # the pending target so the state applied at expiry is
+                    # not stale.  The amber display is identical either way
+                    # ('o' and 'r' both satisfy the transition condition),
+                    # so the timer and the display are left untouched.
+                    _yellow, target = self._build_states(tls_id, idxs,
+                                                         harden)
+                    if target:
                         st.link_indices = frozenset(idxs)
                         st.target = target
+                        st.hardened = harden
+                if st.mode == PREEMPTED and (frozenset(idxs) != st.link_indices
+                                             or harden != st.hardened):
+                    yellow, target = self._build_states(tls_id, idxs, harden)
+                    if target and target != st.target:
+                        if harden != st.hardened and cfg.flash_amber:
+                            jn = self.ops.jn(tls_id)
+                            if harden:
+                                self.ops.emit(now, "preempt_phase",
+                                              f"Junction {jn}: {amb} "
+                                              f"{dist:.0f} m / "
+                                              f"{min(eta, 999):.0f} s out — "
+                                              f"cross flash hardened to RED "
+                                              f"for final clearance", "info",
+                                              actor=amb, case=st.case)
+                            else:
+                                self.ops.emit(now, "preempt_phase",
+                                              f"Junction {jn}: unit moved "
+                                              f"away — cross approaches "
+                                              f"back to FLASHING AMBER "
+                                              f"(yield)", "info",
+                                              actor=amb, case=st.case)
+                        st.link_indices = frozenset(idxs)
+                        st.target = target
+                        st.hardened = harden
                         try:
                             current = traci.trafficlight.getRedYellowGreenState(tls_id)
                         except traci.TraCIException:
@@ -217,6 +269,7 @@ class GreenWaveController:
                             self._set_state(tls_id, st, target)
                     elif target:
                         st.link_indices = frozenset(idxs)
+                        st.hardened = harden
 
         # Advance state machines; release passed or over-held junctions.
         for tls_id, st in list(self.active.items()):
@@ -430,16 +483,21 @@ class GreenWaveController:
                           f"corridor activated along its planned route",
                           "info", actor=amb_id)
 
-    def _build_states(self, tls_id, link_indices):
+    def _build_states(self, tls_id, link_indices, harden=False):
         """Return (amber_transition_state, preempt_target_state).
 
-        The target is a *real phase* of the junction's own signal programme
-        that serves every ambulance link green — what real preemption
-        controllers do (jump to and hold a phase).  Real phases are
-        internally consistent: compatible cross flows and drain paths keep
-        moving, which matters enormously at multi-node junctions where a
-        hand-crafted "corridor green, everything else red" state can seal
-        vehicles inside the box and deadlock the corridor itself.
+        With ``flash_amber`` on (the default), the held state is: corridor
+        approach protected green, every cross approach FLASHING AMBER
+        ('o' — drivers yield, and vehicles caught in the box can clear it)
+        until the ambulance is within ``flash_harden_dist_m``, when the
+        flash hardens to solid red for final clearance.  With it off, the
+        target is a *real phase* of the junction's own signal programme
+        that serves every ambulance link green — what classic preemption
+        controllers do (jump to and hold a phase); real phases are
+        internally consistent, which matters at multi-node junctions where
+        a hand-crafted "corridor green, everything else red" state can
+        seal vehicles inside the box and deadlock the corridor itself —
+        the flashing-amber yield state avoids that trap by construction.
         """
         try:
             current = traci.trafficlight.getRedYellowGreenState(tls_id)
@@ -449,14 +507,19 @@ class GreenWaveController:
         if n == 0:
             return "", ""
 
-        target = self._phase_target(tls_id, link_indices, n)
-        if target is None:
-            target = self._custom_target(tls_id, link_indices, n)
+        if self.cfg.flash_amber:
+            target = self._custom_target(tls_id, link_indices, n,
+                                         flash=not harden)
+        else:
+            target = self._phase_target(tls_id, link_indices, n)
+            if target is None:
+                target = self._custom_target(tls_id, link_indices, n)
         if not target:
             return "", ""
 
         yellow = "".join(
-            "y" if (current[i] in "Gg" and target[i] == "r") else current[i]
+            "y" if (current[i] in "Gg" and target[i] in "ro")
+            else current[i]
             for i in range(n)
         )
         return yellow, target
@@ -497,9 +560,9 @@ class GreenWaveController:
                 best, best_score = state, score
         return best
 
-    def _custom_target(self, tls_id, link_indices, n):
-        """Fallback when no programme phase serves the ambulance: corridor
-        approach protected green, everything else red."""
+    def _custom_target(self, tls_id, link_indices, n, flash=False):
+        """Corridor approach protected green; everything else flashing
+        amber ('o', yield — flash=True) or solid red (flash=False)."""
         try:
             links = traci.trafficlight.getControlledLinks(tls_id)
         except traci.TraCIException:
@@ -519,14 +582,15 @@ class GreenWaveController:
                 # ambulance's own priority stream behind it and deadlock
                 target.append("G")
             else:
-                target.append("r")
+                target.append("o" if flash else "r")
         return "".join(target)
 
-    def _begin(self, tls_id, link_indices, now, amb):
+    def _begin(self, tls_id, link_indices, now, amb, harden=False):
         try:
             orig_program = traci.trafficlight.getProgram(tls_id)
             orig_phase = traci.trafficlight.getPhase(tls_id)
-            yellow, target = self._build_states(tls_id, link_indices)
+            yellow, target = self._build_states(tls_id, link_indices,
+                                                harden)
             current = traci.trafficlight.getRedYellowGreenState(tls_id)
         except traci.TraCIException:
             return None
@@ -536,11 +600,15 @@ class GreenWaveController:
         st.link_indices = link_indices
         st.target = target
         st.amb = amb
+        st.hardened = harden
+        cross_txt = ("cross approaches to FLASHING AMBER (yield) until the "
+                     "unit closes in" if self.cfg.flash_amber and not harden
+                     else "conflicts to red")
         st.case = self.ops.open_case("P", tls_id, now,
                                      f"Junction {self.ops.jn(tls_id)} corridor for {amb}")
         self.ops.emit(now, "preempt_start",
                       f"Junction {self.ops.jn(tls_id)} PURPOSELY ENABLED for {amb}: "
-                      f"approach green, conflicts to red", "warn",
+                      f"approach green, {cross_txt}", "warn",
                       actor=amb, case=st.case)
         if yellow != current:
             self._set_state(tls_id, st, yellow)

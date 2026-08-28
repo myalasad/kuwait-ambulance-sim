@@ -93,6 +93,7 @@
             grid-template-columns: 1fr 1fr; gap: 4px 10px; }
   .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
               margin-right: 5px; vertical-align: -1px; }
+  @keyframes legendflash { 50% { background: #3a2f10; } }
 
   #map { flex: 1; height: 100vh; background: #0b0e14; }
   #overlay { position: absolute; inset: 0; pointer-events: none; z-index: 500; }
@@ -241,6 +242,7 @@
       <span><i style="background:#22c55e"></i>approach green</span>
       <span><i style="background:#ef4444"></i>approach red</span>
       <span><i style="background:#f0b429"></i>amber transition</span>
+      <span><i style="background:#f0b429;animation:legendflash 1s steps(2) infinite"></i>flashing amber (hold — cross street yields)</span>
       <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>purposely enabled</span>
       <span><i style="background:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>early green (lone traffic)</span>
       <span><i style="background:#9aa7bb"></i>car (3D up close)</span>
@@ -599,20 +601,23 @@ function drawMiniCar(x, y, angDeg, color, mode, zoom) {
 }
 
 // aggregate colour for one approach: green if any lane may go, amber if
-// any lane is ambering, else red
+// any lane is ambering, "flash" if the cross-street flasher is on
+// (preemption holds the corridor; cross approaches blink amber = yield),
+// else red
 function apprColor(state, idx) {
-  let amber = false;
+  let amber = false, flash = false;
   for (const i of idx) {
     const ch = state[i];
     if (ch === "G" || ch === "g") return "#22c55e";
     if (ch === "y" || ch === "Y") amber = true;
+    if (ch === "o" || ch === "O") flash = true;
   }
-  return amber ? "#f0b429" : "#ef4444";
+  return amber ? "#f0b429" : flash ? "flash" : "#ef4444";
 }
 
 // per-approach signal: the SAME 3-lamp fixture as the junction housing,
 // scaled down — casing, three lamps, the approach's lamp lit and glowing
-function drawApproachSignal(x, y, color, zoom) {
+function drawApproachSignal(x, y, color, zoom, blinkOn) {
   const s = zoom >= 17 ? 0.85 : zoom >= 16 ? 0.68 : zoom >= 15.5 ? 0.58
           : zoom >= 14.5 ? 0.48 : 0.4;
   const w = 13, h = 30;
@@ -631,7 +636,10 @@ function drawApproachSignal(x, y, color, zoom) {
   ctx.strokeStyle = "#4a586d"; ctx.lineWidth = 1.2; ctx.stroke();
   const lamps = [["#ef4444", "#3a1414"], ["#f0b429", "#3a2f10"],
                  ["#22c55e", "#123a20"]];
-  const lit = color === "#22c55e" ? 2 : color === "#f0b429" ? 1 : 0;
+  // "flash": cross-street flasher during a corridor hold — the amber lamp
+  // blinks (~1 Hz) and no other lamp is lit
+  const lit = color === "flash" ? (blinkOn ? 1 : -1)
+            : color === "#22c55e" ? 2 : color === "#f0b429" ? 1 : 0;
   for (let i = 0; i < 3; i++) {
     ctx.beginPath();
     ctx.arc(0, -h / 2 + 6.5 + i * 8.5, 3.4, 0, 7);
@@ -815,7 +823,9 @@ function render(now) {
         ctx.moveTo(p.x - px_ * half, p.y - py_ * half);
         ctx.lineTo(p.x + px_ * half, p.y + py_ * half);
         ctx.stroke();
-        const color = apprColor(st.s, ap.idx);
+        const ck = apprColor(st.s, ap.idx);
+        const blinkOn = Math.floor(now / 500) % 2 === 0;
+        const color = ck === "flash" ? (blinkOn ? "#f0b429" : "#3a2f10") : ck;
         const bx = p.x - tx * 13, by = p.y - ty * 13;    // behind the bar
         ctx.beginPath();
         ctx.moveTo(p.x - tx * 5, p.y - ty * 5);          // tip toward junction
@@ -862,7 +872,7 @@ function render(now) {
         const a = (ap.dir || 0) * Math.PI / 180;
         const off = zoom >= 15.5 ? 11 : 7;
         drawApproachSignal(p.x + Math.cos(a) * off, p.y + Math.sin(a) * off,
-                           color, zoom);
+                           color, zoom, Math.floor(now / 500) % 2 === 0);
       }
     }
   }

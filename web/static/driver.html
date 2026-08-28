@@ -367,7 +367,11 @@ function tick(now) {
         ctx.strokeStyle = "rgba(34,197,94,.85)"; ctx.lineWidth = 3; ctx.stroke();
       }
       ctx.beginPath(); ctx.arc(sx, sy, 7, 0, 7);
+      // a junction whose cross streets carry the preemption flasher ('o')
+      // blinks amber for everyone except the corridor it serves
+      const flashing = /o/i.test(st.s) && !preempted;
       ctx.fillStyle = preempted ? "#22c55e"
+        : flashing ? (Math.floor(now / 500) % 2 === 0 ? "#f0b429" : "#3a2f10")
         : st.m !== "normal" ? "#f0b429"
         : /[Gg]/.test(st.s) ? "#15803d" : "#7f1d1d";
       ctx.fill();

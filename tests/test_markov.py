@@ -3,9 +3,11 @@ Run: .venv/bin/python tests/test_markov.py"""
 import math
 import os
 import sys
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from sim.markov import _Chain, expm, stationary, classify, N_STATES  # noqa
+from sim.markov import (_Chain, TrafficMarkov, expm, stationary,  # noqa
+                        classify, N_STATES)
 
 
 def main():
@@ -42,6 +44,33 @@ def main():
 
     c3 = _Chain.from_json(c.to_json())
     assert c3.C == c.C and c3.T == c.T and c3.n == c.n
+
+    # ---- forecast cache: exact within a tick, invalidated on the tick ----
+    m = TrafficMarkov.__new__(TrafficMarkov)
+    m.cfg = types.SimpleNamespace(markov_min_obs=1)
+    c2.n = 10                       # enough history for _chain_for
+    m.chains = {"e1": c2}
+    m._edge_class = {}
+    m.state_now = {"e1": 0}
+    m._fc_cache = {}
+    m._q_cache = {}
+    m.monitored = []
+    m._next_sample = 0.0
+    m.period = 30.0
+    m._pending = []
+    # cached forecast equals the uncached expm at the bucket-aligned horizon
+    row = m.forecast("e1", 73.0)
+    want = expm(c2.Q(), 60.0)[0]                 # 73 s -> 60 s bucket
+    assert all(abs(row[j] - want[j]) < 1e-12 for j in range(N_STATES))
+    # two horizons in one 15 s bucket return the identical cached row
+    assert m.forecast("e1", 61.0) is row
+    # the sample tick clears the cache, so a mutated chain is re-read
+    c2.J[0][1] *= 3.0
+    m.update(1.0)                                # past the gate; no traci
+    row2 = m.forecast("e1", 73.0)
+    want2 = expm(c2.Q(), 60.0)[0]
+    assert row2 is not row
+    assert all(abs(row2[j] - want2[j]) < 1e-12 for j in range(N_STATES))
     print("ALL MARKOV MATH TESTS PASSED")
 
 

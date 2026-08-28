@@ -44,6 +44,12 @@ class Router:
                 if nxt.allows(vclass):
                     outs.append(nxt.getID())
             self.succ[eid] = outs
+        # reversed adjacency: lets one backward Dijkstra from a scene rank
+        # every hospital's travel time in a single pass
+        self.pred = {eid: [] for eid in self.succ}
+        for eid, outs in self.succ.items():
+            for nxt in outs:
+                self.pred[nxt].append(eid)
 
     # ------------------------------------------------------------- weights
 
@@ -106,6 +112,86 @@ class Router:
                     prev[nxt] = eid
                     heapq.heappush(heap, (nd, nxt))
         return None
+
+    def route_to_many(self, from_edge, to_edges, live=True, predictive=True):
+        """Shortest-time routes from one edge to EVERY reachable edge in
+        `to_edges`, in one Dijkstra — the cost of a single route() call
+        instead of one search per destination.  Returns
+        {to_edge: (edge_list, weighted_time)}."""
+        remaining = {t for t in to_edges if t in self.succ}
+        found = {}
+        if from_edge in remaining:
+            found[from_edge] = ([from_edge], 0.0)
+            remaining.discard(from_edge)
+        if from_edge not in self.succ or not remaining:
+            return found
+        dist = {from_edge: 0.0}
+        prev = {}
+        heap = [(0.0, from_edge)]
+        visited = set()
+        while heap and remaining:
+            d, eid = heapq.heappop(heap)
+            if eid in visited:
+                continue
+            visited.add(eid)
+            if eid in remaining:
+                path = [eid]
+                while path[-1] != from_edge:
+                    path.append(prev[path[-1]])
+                found[eid] = (list(reversed(path)), d)
+                remaining.discard(eid)
+                if not remaining:
+                    break
+            for nxt in self.succ.get(eid, ()):
+                if nxt in visited:
+                    continue
+                nd = d + self._weight(nxt, live, horizon=d,
+                                      predictive=predictive)
+                if nd < dist.get(nxt, float("inf")):
+                    dist[nxt] = nd
+                    prev[nxt] = eid
+                    heapq.heappush(heap, (nd, nxt))
+        return found
+
+    def cost_from_many(self, from_edges, to_edge, live=True):
+        """Travel-time estimate from EACH edge in `from_edges` to
+        `to_edge`, in one backward Dijkstra over the reversed graph.
+        Time-dependent prediction is undefined expanding backwards (the
+        arrival time at each edge is unknown until the search completes),
+        so weights are live/static — a RANKING estimate; compute the final
+        route forward with full predictive weights.  Returns
+        {from_edge: cost}; unreachable sources are absent."""
+        remaining = {s for s in from_edges if s in self.succ}
+        found = {}
+        if to_edge in remaining:
+            found[to_edge] = 0.0
+            remaining.discard(to_edge)
+        if to_edge not in self.succ or not remaining:
+            return found
+        dist = {to_edge: 0.0}
+        heap = [(0.0, to_edge)]
+        visited = set()
+        while heap and remaining:
+            d, eid = heapq.heappop(heap)
+            if eid in visited:
+                continue
+            visited.add(eid)
+            if eid in remaining:
+                found[eid] = d
+                remaining.discard(eid)
+                if not remaining:
+                    break
+            # stepping back to a predecessor p costs the weight of ENTERING
+            # this edge (route costs count every edge after the origin)
+            step = self._weight(eid, live, horizon=0.0, predictive=False)
+            for p in self.pred.get(eid, ()):
+                if p in visited:
+                    continue
+                nd = d + step
+                if nd < dist.get(p, float("inf")):
+                    dist[p] = nd
+                    heapq.heappush(heap, (nd, p))
+        return found
 
     # ------------------------------------------------------ nodal analysis
 
