@@ -1,6 +1,6 @@
 # Session handoff — Kuwait Ambulance Green-Wave Simulation
 
-*Written 2026-08-28, updated at v3.6. This file lets a fresh Claude Code
+*Written 2026-08-28, updated at v3.7. This file lets a fresh Claude Code
 session (or a colleague) pick up the project without the original
 conversation. Update it whenever a session ends with open items.*
 
@@ -42,7 +42,20 @@ governorates, honest measured claims.
 | `web/static/` | Leaflet + canvas: A/B snapshot interpolation, 3-lamp fixtures, 3D cars |
 | `scripts/build_network.py` | netconvert + randomTrips + vtypes/sumocfg generation (per scenario) |
 
-## Current state (v3.6, all committed and released)
+## Current state (v3.7, all committed and released)
+
+v3.7 — smooth at 5,000+ vehicles: SUMO step/snapshot/serialise run in a
+worker thread (event loop never blocks; mode switches show progress, worst
+frame gap 447 ms through a full rebuild); teleporting vehicles no longer
+poison JSON frames with infinite coordinates (the hidden freeze cause);
+Markov sampling staggered (no 370 ms tick spike); snapshot 55->9 ms
+(batched projection, lean subscriptions); client renders cars from baked
+sprites with world-coordinate interpolation (sub-pixel verified); hospital
+READY-FLEET model (2 units/hospital, 180 s turnaround, live badges) ends
+same-gate convoys. Live proof at Extreme: frames p50 500/p95 551/max 817 ms
+across 3 dispatches.
+
+## Previous state (v3.6)
 
 v3.6 (2026-08-28) — the no-freeze + realism release:
 
