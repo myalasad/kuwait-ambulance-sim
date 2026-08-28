@@ -1,8 +1,8 @@
 # Session handoff — Kuwait Ambulance Green-Wave Simulation
 
-*Written 2026-08-28 at v3.5. This file lets a fresh Claude Code session (or a
-colleague) pick up the project without the original conversation. Update it
-whenever a session ends with open items.*
+*Written 2026-08-28, updated at v3.6. This file lets a fresh Claude Code
+session (or a colleague) pick up the project without the original
+conversation. Update it whenever a session ends with open items.*
 
 ## What this project is
 
@@ -42,37 +42,38 @@ governorates, honest measured claims.
 | `web/static/` | Leaflet + canvas: A/B snapshot interpolation, 3-lamp fixtures, 3D cars |
 | `scripts/build_network.py` | netconvert + randomTrips + vtypes/sumocfg generation (per scenario) |
 
-## Current state (v3.5, all committed and released)
+## Current state (v3.6, all committed and released)
 
-Anti-freeze stack, verified end-to-end under weekend Extreme (3 missions, all
-completed with full ops trail):
+v3.6 (2026-08-28) — the no-freeze + realism release:
 
-1. **Warm-up fast-forward** — `warmup_s=420` runs at max speed on start/reset
-   with a progress indicator (~29 s wall to a populated 07:07 network).
-2. **Assertive ambulance vType** — impatience 1.0, jmTimegapMinor 1.5,
-   lcPushy 0.8 (in `data/vtypes.add.xml` and the `build_network.py` template)
-   so ambulances force merges instead of waiting forever.
-3. **Insertion watchdog** — a dispatched ambulance that can't enter a jammed
-   hospital gate edge is reported at 20 s and re-placed one block along its
-   route at 60 s (≤2 retries). Never a silently missing vehicle.
-4. **Progress-based stuck detection** (v3.4) — odometer <40 m in 25 s triggers
-   a reroute check; if no faster corridor exists it logs "checked for a faster
-   corridor: none exists; holding course" instead of staying silent.
+1. **Dispatch freeze fixed at the root** — the CTMC forecast was recomputed
+   for every Dijkstra edge relaxation (2.2–4.4 s blocking the frame loop);
+   now cached per 30 s sample tick (unit-tested), hospital ranking is ONE
+   backward Dijkstra (`Router.cost_from_many`), the return leg is one
+   forward multi-target Dijkstra (`route_to_many`), signal programmes are
+   cached. Measured: ~220 ms per dispatch, worst live ws frame gap 736 ms.
+2. **Nearest-AVAILABLE-unit rotation** — hospitals ranked in one pass;
+   within `dispatch_rotation_tolerance` (25%) the least-loaded hospital
+   wins; the ruling is logged on the dispatch event.
+3. **Flashing-amber preemption** — cross approaches carry SUMO's real 'o'
+   yield state during a hold, hardening to red at `flash_harden_eta_s`
+   (12 s) / `flash_harden_min_m` (60 m) with hysteresis. A/B (2 samples ×
+   4 identical seeded missions): corridor parity with hard red, flash
+   visible ~60% of hold time. Protocol rule A6; all viewers blink it.
+
+v3.4/v3.5 anti-freeze stack underneath: warm-up fast-forward (~29 s wall),
+assertive ambulance vType, insertion watchdog (re-place at 60 s; a failed
+re-place now closes the case), progress-based stuck detection with honest
+"no faster corridor exists" events.
 
 ## Open items
 
-1. **"Ambulances still freezing" report (2026-08-28)** — diagnosed as a
-   **stale server**: the owner's 8642 process started 09:42, v3.5 was
-   committed 10:23. A dashboard reset relaunches the SUMO child but never
-   reloads Python. Fix: fully restart `run_live.py`. If freezing persists
-   after a true restart, pull `/api/operations` for the frozen unit's trail
-   (insertion watchdog / stuck events tell you which stage failed).
-2. **Extreme-gridlock physics limit** — at weekend Extreme one mission took
+1. **Extreme-gridlock physics limit** — at weekend Extreme one mission took
    1992 s for 6.6 km with repeated legitimate "no faster corridor exists"
    verdicts. Offered but not yet requested: **peak-hour ambulance staging**
    (pre-positioned units inside congested districts, nearest-staged-unit
    dispatch, before/after measurement). Build it only when the owner says go.
-3. The copilot needs `ANTHROPIC_API_KEY` in the server's environment for
+2. The copilot needs `ANTHROPIC_API_KEY` in the server's environment for
    generative answers (extractive fallback works without it).
 
 ## Working rules for assistant sessions
