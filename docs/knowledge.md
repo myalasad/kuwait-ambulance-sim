@@ -99,11 +99,22 @@ candidates, and among those within the rotation tolerance
 (dispatch_rotation_tolerance, 25%) of the fastest, the one with the fewest
 crews already out responds — real EMS coverage, and never a convoy of
 consecutive units from a single gate. If every fleet is committed or in
-turnaround, the nearest hospital dispatches its reserve crew and the event
-says so. Whenever the responding hospital is not the nearest one, the full
+turnaround, the call QUEUES — real EMS never conjures a convoy out of one
+gate — and the next crew to finish turnaround responds automatically
+(logged: "CALL QUEUED (position N)" then "QUEUED CALL now served after
+T s"). A gate-headway rule (gate_headway_s, 8 s) makes a hospital that
+just launched a unit yield to an equally-close peer, so departures never
+stack at one gate. Whenever the responding hospital is not the nearest one, the full
 ruling is written on the dispatch event ("X is nearest but has no ready
 units (0/2 — crews on mission or in turnaround); Y responds in T s with 1/2
-ready"). Live ready counts appear under every hospital marker on the map.
+ready"). Live ready counts appear under every hospital marker on the map; a
+CALLS-WAITING chip appears in the side panel whenever the queue is
+non-empty, with the oldest call's wait. Response-time accounting starts
+the clock at the CALL (a queued call's wait counts): call-to-scene p50 and
+p90 — overall and per governorate — plus the worst queue wait appear on
+the live map panel and in a table on the Operations page. These are the
+numbers an EMS board asks for first, and the queue mechanism is measured
+by them, not just narrated.
 The incident scene is a map click or a named area. A mission has three phases: to scene; loading the
 patient at the scene (40 s stop, during which the corridor is paused so cross
 streets are not held for a stationary vehicle); and hot return, when the
@@ -128,11 +139,18 @@ hard red. The flash hardens to solid red when the ambulance is close in
 TIME (flash_harden_eta_s, 12 s) — clearance ahead of an ambulance is a time
 quantity: at speed it hardens ~180 m out, in crawling traffic the flash
 persists until the unit is genuinely near — and always within
-flash_harden_min_m (60 m) whatever the speed. The transition is logged with
-the live distance and time-to-junction (e.g. "AMB_8 140 m / 9 s out — cross
-flash hardened to RED"); a hysteresis band keeps the junction from
-flickering between the two if arbitration hands the junction to a farther
-unit. On the map the cross
+flash_harden_min_m (60 m) whatever the speed. When hardened, the cross fixtures blink RED (the physical signal state
+is red — flashing red means absolute stop), so a junction under emergency
+control BLINKS for its entire hold and every driver can see it is an
+emergency. The transition is logged with the live distance and
+time-to-junction (e.g. "AMB_8 140 m / 9 s out — cross flash hardened to
+RED"); a hysteresis band keeps the junction from flickering between the
+two if arbitration hands the junction to a farther unit. Queue-flush
+lookahead: a CONGESTED approach ahead on the route (live Markov state) is
+enabled with flush_lead_factor (2x) extra activation lead so its standing
+queue drains before the unit arrives — the corridor looks after signals
+ahead, not just the next one, and each early enable is justified in the
+log ("enabled EARLY (queue flush): this approach is congested..."). On the map the cross
 approaches' fixtures and chevrons blink amber at ~1 Hz — the blink is the
 real SUMO signal state ('o'), not a cosmetic effect: background drivers
 genuinely yield on it. Signals are never switched
@@ -348,7 +366,10 @@ one call, and the map renders cars from pre-baked sprites with one
 multiply-add per axis per car instead of per-car projection — smooth at
 5,000 cars. Scenario/mode switches rebuild SUMO off the event loop with a
 progress indicator instead of freezing the screen (measured: worst frame
-gap 447 ms through a full teardown, relaunch and Extreme warm-up). A
+gap 447 ms through a full teardown, relaunch and Extreme warm-up). The
+post-warm-up city state is CACHED per scenario/day/level/hour
+(data/warmstate_*.xml.gz): the next start or mode switch at the same
+setting loads it in seconds — cars appear immediately, no warm-up bar. A
 vehicle mid-teleport reports no valid position and is excluded from the
 frame — one infinite coordinate used to make the entire frame unparseable
 in the browser, the hidden cause of multi-second freeze bursts during

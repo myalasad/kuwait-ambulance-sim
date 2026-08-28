@@ -7,14 +7,22 @@
       "request": "launch",
       "program": "${workspaceFolder}/run_live.py",
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "args": [
+        "--port",
+        "8643"
+      ]
     },
     {
       "name": "Headless: compare preemption on/off",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/run_headless.py",
-      "args": ["--compare", "--minutes", "10"],
+      "args": [
+        "--compare",
+        "--minutes",
+        "10"
+      ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },
@@ -23,7 +31,12 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/run_headless.py",
-      "args": ["--minutes", "10", "--replay", "replay.html"],
+      "args": [
+        "--minutes",
+        "10",
+        "--replay",
+        "replay.html"
+      ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },

@@ -82,6 +82,10 @@ class GreenWaveController:
         self._arb_logged = {}     # tls_id -> contender set already logged
         self._node2tls = None     # junction node id -> tls id (built lazily)
         self._now = 0.0
+        self.markov = None        # congestion states for queue-flush lead
+        self._links_cache = {}    # tls_id -> controlled links (static)
+        self._flush_sticky = set()  # (amb, tls) flush requests held until
+        #                             passed — no flap if the state flickers
 
     # ------------------------------------------------------------------ API
 
@@ -138,6 +142,8 @@ class GreenWaveController:
         # tls_id -> {amb_id: [set of link indices, min dist]}
         requests = {}
         amb_speed = {}
+        flush_tls = set()
+        seen_pairs = set()
         if self.enabled:
             for amb_id in ambulance_ids:
                 try:
@@ -152,10 +158,29 @@ class GreenWaveController:
                                     speed * cfg.greenwave_lead_s))
                 else:
                     reach = cfg.camera_range_m
+                flush_reach = min(cfg.greenwave_distance_m,
+                                  reach * cfg.flush_lead_factor)
                 for tls_id, link_index, dist, _state in upcoming:
                     if dist <= cfg.camera_range_m:
                         self._camera_report(tls_id, amb_id, dist)
-                    if dist <= reach:
+                    within = dist <= reach
+                    # Queue flush: a congested approach ahead on the route
+                    # is enabled with EXTRA lead so its standing queue
+                    # drains before the ambulance arrives — the corridor
+                    # looks after signals ahead, not just the next one.
+                    # Once flush-enabled, the request is STICKY for this
+                    # unit until it passes: a flickering congestion state
+                    # must not flap the junction.
+                    if (not within and amb_id in self.confirmed
+                            and dist <= flush_reach
+                            and ((amb_id, tls_id) in self._flush_sticky
+                                 or self._approach_congested(tls_id,
+                                                             link_index))):
+                        within = True
+                        flush_tls.add(tls_id)
+                        self._flush_sticky.add((amb_id, tls_id))
+                    if within:
+                        seen_pairs.add((amb_id, tls_id))
                         rec = requests.setdefault(tls_id, {}).setdefault(
                             amb_id, [set(), dist])
                         rec[0].add(link_index)
@@ -170,6 +195,7 @@ class GreenWaveController:
                         requests.setdefault(tls_inside, {}).setdefault(
                             amb_id, [set(st.link_indices), 0.0])
 
+        self._flush_sticky &= seen_pairs   # passed / diverged: released
         wanted = self._arbitrate(requests, now)
 
         # Start or refresh preemption on wanted junctions.
@@ -193,7 +219,7 @@ class GreenWaveController:
             if st is None:
                 if not in_cooldown:
                     st = self._begin(tls_id, frozenset(idxs), now, amb,
-                                     harden)
+                                     harden, flush=tls_id in flush_tls)
                     if st is not None:
                         self.active[tls_id] = st
             else:
@@ -588,7 +614,26 @@ class GreenWaveController:
                 target.append("o" if flash else "r")
         return "".join(target)
 
-    def _begin(self, tls_id, link_indices, now, amb, harden=False):
+    def _approach_congested(self, tls_id, link_index):
+        """Is the ambulance's approach into this junction CONGESTED or
+        JAMMED per the live Markov state?  Drives the queue-flush lead."""
+        mk = self.markov
+        if mk is None:
+            return False
+        links = self._links_cache.get(tls_id)
+        if links is None:
+            try:
+                links = traci.trafficlight.getControlledLinks(tls_id)
+            except traci.TraCIException:
+                links = []
+            self._links_cache[tls_id] = links
+        if link_index >= len(links) or not links[link_index]:
+            return False
+        edge = links[link_index][0][0].rsplit("_", 1)[0]
+        return mk.state_now.get(edge, 0) >= 2
+
+    def _begin(self, tls_id, link_indices, now, amb, harden=False,
+               flush=False):
         try:
             orig_program = traci.trafficlight.getProgram(tls_id)
             orig_phase = traci.trafficlight.getPhase(tls_id)
@@ -607,11 +652,15 @@ class GreenWaveController:
         cross_txt = ("cross approaches to FLASHING AMBER (yield) until the "
                      "unit closes in" if self.cfg.flash_amber and not harden
                      else "conflicts to red")
+        flush_txt = ("" if not flush else
+                     " — enabled EARLY (queue flush): this approach is "
+                     "congested, so the extra lead drains the standing "
+                     "queue before the unit arrives")
         st.case = self.ops.open_case("P", tls_id, now,
                                      f"Junction {self.ops.jn(tls_id)} corridor for {amb}")
         self.ops.emit(now, "preempt_start",
                       f"Junction {self.ops.jn(tls_id)} PURPOSELY ENABLED for {amb}: "
-                      f"approach green, {cross_txt}", "warn",
+                      f"approach green, {cross_txt}{flush_txt}", "warn",
                       actor=amb, case=st.case)
         if yellow != current:
             self._set_state(tls_id, st, yellow)

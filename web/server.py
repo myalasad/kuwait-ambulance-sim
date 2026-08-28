@@ -116,9 +116,20 @@ class Hub:
 
     async def _warmup(self):
         """Fast-forward the first minutes of city time at full speed so the
-        network is already flowing when the first frame is served."""
+        network is already flowing when the first frame is served.  A
+        cached warm state for this scenario/day/level/hour skips the whole
+        thing — the city appears in seconds."""
         sim = self.sim
+        loop = asyncio.get_event_loop()
         target = float(getattr(sim.cfg, "warmup_s", 0) or 0)
+        try:
+            if target > 0 and await loop.run_in_executor(
+                    None, sim.try_load_warm_state):
+                sim._warmed = True
+                return
+        except Exception as exc:
+            print(f"warm-state load failed (warming up instead): {exc}",
+                  file=sys.stderr)
 
         def burst():
             # time-boxed, not step-counted: late in a heavy warmup a single
@@ -129,12 +140,14 @@ class Hub:
                 sim.step()
         try:
             while sim.time < target:
-                await asyncio.get_event_loop().run_in_executor(None, burst)
+                await loop.run_in_executor(None, burst)
                 frame = {"t": sim.time, "paused": False, "speed": self.speed,
                          "error": None,
                          "warmup": {"done": round(sim.time),
                                     "total": round(target)}}
                 await self._broadcast(frame)
+            if target > 0:
+                await loop.run_in_executor(None, sim.save_warm_state)
         except Exception as exc:
             self.error = f"Warm-up failed: {exc} — use Reset"
             print(self.error, file=sys.stderr)
@@ -335,6 +348,8 @@ async def api_analysis():
     if hub.sim is None or hub.sim.metrics is None:
         return JSONResponse({"runs": []})
     runs = hub.sim.metrics.analysis[-30:]
+    response = hub.sim.dispatcher.response_summary()
+    queued = len(hub.sim.dispatcher.call_queue)
     agg = None
     if runs:
         saved = [r["est_without_s"] - r["actual_s"] for r in runs]
@@ -346,7 +361,8 @@ async def api_analysis():
             "mean_saved_pct": round(100 * sum(saved) /
                                     max(1, sum(r["est_without_s"] for r in runs)), 1),
         }
-    return JSONResponse({"runs": runs, "aggregate": agg})
+    return JSONResponse({"runs": runs, "aggregate": agg,
+                         "response": response, "queued_calls": queued})
 
 
 _rag = {"index": None, "size": 0}

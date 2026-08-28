@@ -114,7 +114,7 @@
   </div>
 
   <div id="toc">
-    <a href="#A"><b>A</b><span>Green corridor for ambulances</span><small>5 rules</small></a>
+    <a href="#A"><b>A</b><span>Green corridor for ambulances</span><small>7 rules</small></a>
     <a href="#B"><b>B</b><span>Priority conflicts</span><small>4 rules</small></a>
     <a href="#C"><b>C</b><span>Ambulance mission lifecycle</span><small>8 rules</small></a>
     <a href="#D"><b>D</b><span>Ordinary traffic — early green</span><small>4 rules</small></a>
@@ -141,7 +141,7 @@
 
     <div class="sc"><h3><span class="id">A2</span>Enabling a junction (purposely enabled)</h3>
       <dl class="f">
-        <dt>Trigger</dt><dd>A confirmed ambulance's ETA to a signal on its route drops below the lead time — never later than the minimum distance, never earlier than the maximum.</dd>
+        <dt>Trigger</dt><dd>A confirmed ambulance's ETA to a signal on its route drops below the lead time — never later than the minimum distance, and never earlier than the maximum <b>except under rule A7</b> (queue flush), which may double the lead when the approach ahead is congested.</dd>
         <dt>Action</dt><dd>Amber to conflicting traffic → all-red clearance → the ambulance's approach is held on <b>protected green</b> while every cross approach shows the <b>flashing-amber</b> yield state of rule A6. Cars in front of the ambulance discharge through the green. Signals are never switched dark.</dd>
         <dt>Ends when</dt><dd>Rule A3 (pass) or A4 (hold limit).</dd>
         <dt>Logged as</dt><dd>P-case opens: <span class="tag">preempt_start</span><span class="tag">preempt_phase</span> (amber, all-red, corridor active). Map label <b>PURPOSELY ENABLED</b>.</dd>
@@ -178,10 +178,19 @@
     <div class="sc"><h3><span class="id">A6</span>Flashing amber for cross traffic, hardening to red</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>A junction is enabled for an ambulance (A2) and the unit is still on its way in.</dd>
-        <dt>Action</dt><dd>Cross approaches show a <b>flashing amber</b> ("signal overridden — yield"): drivers may cross carefully when clear, and vehicles caught inside the box can drain out instead of being sealed in by a hard red. The flash <b>hardens to solid red</b> when the unit is close in <b>time</b> — clearance ahead of an ambulance is a time quantity: at speed it hardens ~180 m out, in crawling traffic the flash persists until the unit is genuinely near — and always within the absolute minimum distance. If the unit falls back (e.g. re-arbitration), the flash resumes with hysteresis so the junction never flickers between the two.</dd>
+        <dt>Action</dt><dd>A junction under emergency control <b>blinks for the whole hold</b> — unmistakable to every driver. Far out, cross approaches show a <b>flashing amber</b> ("signal overridden — yield"): drivers may cross carefully when clear, and vehicles caught inside the box can drain out instead of being sealed in by a hard red. The flash hardens to <b>flashing red</b> (absolute stop — the physical signal state is red) when the unit is close in <b>time</b> — clearance ahead of an ambulance is a time quantity: at speed it hardens ~180 m out, in crawling traffic the amber flash persists until the unit is genuinely near — and always within the absolute minimum distance. If the unit falls back (e.g. re-arbitration), the amber flash resumes with hysteresis so the junction never flickers between the two.</dd>
         <dt>Ends when</dt><dd>The corridor is released (A3/A4) and the normal programme resumes.</dd>
         <dt>Logged as</dt><dd><span class="tag">preempt_phase</span> on the P-case: "cross approaches to FLASHING AMBER (yield)" then "cross flash hardened to RED for final clearance" with the live distance and time-to-junction.</dd>
         <dt>Parameters</dt><dd><code>flash_amber = true</code> <code>flash_harden_eta_s = 12</code> <code>flash_harden_min_m = 60</code></dd>
+      </dl></div>
+
+    <div class="sc"><h3><span class="id">A7</span>Queue flush — the corridor looks after signals ahead</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>A signal ahead on the confirmed route whose approach is <b>CONGESTED or JAMMED</b> (live Markov state) comes within twice the normal activation lead.</dd>
+        <dt>Action</dt><dd>The junction is enabled <b>early</b> so the standing queue drains through the green before the ambulance arrives — an ambulance with a predetermined route clears numerous signals ahead, not just the next one. Once flush-enabled the request is held for that unit (no flapping if the congestion state flickers). All A4/A6 protections still apply: the hold cap, cooldown, and the flashing-amber/red sequence.</dd>
+        <dt>Ends when</dt><dd>The unit passes (A3), or the hold cap releases the junction (A4).</dd>
+        <dt>Logged as</dt><dd>The P-case's <span class="tag">preempt_start</span> carries the justification: "enabled EARLY (queue flush): this approach is congested, so the extra lead drains the standing queue before the unit arrives".</dd>
+        <dt>Parameters</dt><dd><code>flush_lead_factor = 2</code> <code>greenwave_distance_m = 800</code> (absolute cap)</dd>
       </dl></div>
   </section>
 
@@ -235,7 +244,7 @@
     <div class="sc"><h3><span class="id">C1</span>Dispatch — nearest AVAILABLE unit, always from a hospital</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>An operator dispatches to an incident scene (map click or named area).</dd>
-        <dt>Action</dt><dd>Origin is a hospital under the <b>ready-fleet model</b>: each hospital stations a limited number of ready units; a dispatch commits one, and a crew that delivers a patient rejoins the <b>receiving</b> hospital's pool only after turnaround. "Auto" ranks every hospital by Dijkstra travel time to the scene in a single pass, keeps only hospitals with a ready unit, and among those within the rotation tolerance of the fastest picks the one with the fewest crews already out — real EMS coverage, and never a convoy from a single gate. If every fleet is committed, the nearest hospital dispatches its reserve crew (logged). Route computed (E1), speed exemption armed (F1), lights on.</dd>
+        <dt>Action</dt><dd>Origin is a hospital under the <b>ready-fleet model</b>: each hospital stations a limited number of ready units; a dispatch commits one, and a crew that delivers a patient rejoins the <b>receiving</b> hospital's pool only after turnaround. "Auto" ranks every hospital by Dijkstra travel time to the scene in a single pass, keeps only hospitals with a ready unit, and among those within the rotation tolerance of the fastest picks the one with the fewest crews already out — real EMS coverage, and never a convoy from a single gate. If every crew is committed, the call <b>queues</b> and the next crew to finish turnaround responds automatically (logged with queue position and wait); a gate-headway rule keeps two departures from stacking at one gate. Route computed (E1), speed exemption armed (F1), lights on.</dd>
         <dt>Ends when</dt><dd>The unit's crew completes turnaround and returns to a ready pool (logged: "unit READY again at X (n/2)").</dd>
         <dt>Logged as</dt><dd>A-case opens: <span class="tag">dispatch</span> with route length, signals on route, ETA, routing basis — and, when not the nearest gate, the full ruling ("X is nearest but has no ready units (0/2 — crews on mission or in turnaround); Y responds in T s with 1/2 ready"). Live ready counts are shown at every hospital marker on the map.</dd>
         <dt>Parameters</dt><dd><code>snap_radius_m</code> per scenario <code>hospital_ready_units = 2</code> <code>unit_turnaround_s = 180</code> <code>dispatch_rotation_tolerance = 0.25</code></dd>
@@ -487,7 +496,8 @@
         <tr><td>max_hold_s / preempt_cooldown_s</td><td class="v">90 s / 20 s</td><td>Hold cap; guaranteed cross-traffic cycling</td><td>A4</td></tr>
         <tr><td>flash_amber / flash_harden_eta_s / flash_harden_min_m</td><td class="v">on / 12 s / 60 m</td><td>Cross approaches flash amber (yield) during a hold; solid red when the unit is this close in time, and always within the minimum distance</td><td>A6</td></tr>
         <tr><td>dispatch_rotation_tolerance</td><td class="v">25%</td><td>Nearest-available-unit rotation window over the fastest response</td><td>C1</td></tr>
-        <tr><td>hospital_ready_units / unit_turnaround_s</td><td class="v">2 / 180 s</td><td>Ready ambulances stationed per hospital; crew restock time before rejoining the pool</td><td>C1</td></tr>
+        <tr><td>hospital_ready_units / unit_turnaround_s / gate_headway_s</td><td class="v">2 / 180 s / 8 s</td><td>Ready ambulances per hospital; crew restock time; minimum spacing between departures from one gate</td><td>C1</td></tr>
+        <tr><td>flush_lead_factor</td><td class="v">2&times;</td><td>Extra activation lead for a congested approach ahead on the route (queue flush)</td><td>A6</td></tr>
         <tr><td>arbitration_tie_m</td><td class="v">20 m</td><td>Tie margin for operator referral</td><td>B2 B3</td></tr>
         <tr><td>operator_timeout_s</td><td class="v">8 s</td><td>Default policy applies after this</td><td>B3</td></tr>
         <tr><td>patient_load_s</td><td class="v">40 s</td><td>Loading stop at the scene</td><td>C2</td></tr>

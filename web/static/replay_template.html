@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kuwait Green Wave</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+  /* Control-room instrument: deliberately single-theme dark.  Every surface
+     and color is painted explicitly so the page holds on any host ground. */
+  :root {
+    --bg: #0c1118; --panel: rgba(18, 25, 36, .92); --line: #24334a;
+    --text: #e7edf6; --muted: #8494ab; --accent: #00a651;
+    --sig-g: #2fd36b; --sig-y: #f0b429; --sig-r: #f04444;
+    --amb-r: #ff3b30; --amb-b: #3b82f6;
+    --road: #2a3850; --road-major: #3a4d6e;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--text); overflow: hidden;
+         font: 14px/1.45 "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif; }
+  canvas { position: absolute; inset: 0; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+          font-variant-numeric: tabular-nums; }
+
+  #topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+    background: linear-gradient(rgba(12,17,24,.92), rgba(12,17,24,0));
+    pointer-events: none; }
+  #topbar > * { pointer-events: auto; }
+  #title { display: flex; align-items: center; gap: 10px; }
+  #title .flag { display: inline-block; width: 22px; height: 11px;
+    border-radius: 2.5px; margin-right: 8px; vertical-align: -1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.22), 0 1px 3px rgba(0,0,0,.45);
+    background: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 12%22><rect width=%2224%22 height=%224%22 fill=%22%23007A3D%22/><rect y=%224%22 width=%2224%22 height=%224%22 fill=%22%23ffffff%22/><rect y=%228%22 width=%2224%22 height=%224%22 fill=%22%23CE1126%22/><path d=%22M0 0 L6 4 L6 8 L0 12 Z%22/></svg>') center/cover no-repeat; }
+  #title h1 { font-size: 15px; font-weight: 700; letter-spacing: .01em; }
+  #title .sub { font-size: 11px; color: var(--muted); }
+  .chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  .chip { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 5px 11px; font-size: 12px; color: var(--muted); }
+  .chip b { color: var(--text); font-size: 14px; margin-right: 4px; }
+  .chip.alert b { color: var(--sig-g); }
+
+  #dock { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+    z-index: 10; width: min(680px, calc(100% - 32px));
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 14px; backdrop-filter: blur(6px);
+    display: flex; flex-direction: column; gap: 6px; }
+  #transport { display: flex; align-items: center; gap: 10px; }
+  #play { width: 38px; height: 38px; border-radius: 50%; border: 0;
+    background: var(--accent); color: #fff; font-size: 15px; cursor: pointer;
+    flex: none; display: grid; place-items: center; }
+  #play:hover { filter: brightness(1.12); }
+  #play:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+  #clock { font-size: 15px; font-weight: 600; min-width: 62px; }
+  #scrub { flex: 1; accent-color: var(--accent); height: 22px; }
+  .speeds { display: flex; gap: 4px; }
+  .speeds button { background: none; border: 1px solid var(--line);
+    color: var(--muted); border-radius: 6px; padding: 3px 8px; font-size: 12px;
+    cursor: pointer; font-family: inherit; }
+  .speeds button.on { background: var(--accent); border-color: var(--accent);
+    color: #fff; font-weight: 600; }
+  #dock .hint { font-size: 10.5px; color: var(--muted); text-align: center; }
+
+  #ticker { position: absolute; right: 16px; top: 64px; z-index: 10;
+    width: 315px; max-height: min(46vh, 420px); display: flex;
+    flex-direction: column; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    backdrop-filter: blur(6px); }
+  #ticker header { padding: 8px 12px; font-size: 11px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--line); display: flex;
+    justify-content: space-between; align-items: center; }
+  #ticker header button { background: none; border: 0; color: var(--muted);
+    cursor: pointer; font-size: 14px; }
+  #events { overflow-y: auto; padding: 8px 12px; font-size: 11.5px;
+    line-height: 1.55; }
+  #events .t { color: var(--muted); margin-right: 6px; }
+  #events .cam { color: var(--sig-y); }
+  #events .amb { color: #ff8a80; }
+  #events .tls { color: #5eead4; }
+  #runsbox { border-top: 1px solid var(--line); padding: 8px 12px; }
+  #runsbox table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  #runsbox td, #runsbox th { padding: 2px 4px; text-align: right; }
+  #runsbox th { color: var(--muted); font-weight: 500; }
+  #runsbox td:first-child, #runsbox th:first-child { text-align: left; }
+
+  #legend { position: absolute; left: 16px; bottom: 16px; z-index: 9;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 12px; font-size: 11px; color: var(--muted);
+    display: grid; gap: 4px; }
+  #legend i { display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  @media (max-width: 900px) { #ticker, #legend { display: none; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="topbar">
+  <div id="title">
+    <div class="flag"></div>
+    <div>
+      <h1>Kuwait Green Wave</h1>
+      <div class="sub">Ambulance signal preemption · downtown Kuwait City · SUMO replay</div>
+    </div>
+  </div>
+  <div class="chips mono">
+    <div class="chip"><b id="c-veh">0</b>vehicles</div>
+    <div class="chip"><b id="c-amb">0</b>ambulances</div>
+    <div class="chip alert"><b id="c-pre">0</b>preempted signals</div>
+  </div>
+</div>
+
+<div id="ticker">
+  <header>Control-centre log
+    <button id="ticker-toggle" aria-label="collapse">–</button></header>
+  <div id="events" class="mono"></div>
+  <div id="runsbox">
+    <table class="mono"><thead>
+      <tr><th>run</th><th>time</th><th>km</th><th>km/h</th></tr></thead>
+      <tbody id="runs"></tbody></table>
+  </div>
+</div>
+
+<div id="dock">
+  <div id="transport">
+    <button id="play" aria-label="play or pause">▶</button>
+    <span id="clock" class="mono">0:00</span>
+    <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="timeline">
+    <div class="speeds" id="speeds"></div>
+  </div>
+  <div class="hint">drag to pan · scroll to zoom · space plays · ←/→ seek 10 s</div>
+</div>
+
+<div id="legend">
+  <span><i style="background:var(--sig-g)"></i>approach green</span>
+  <span><i style="background:var(--sig-r)"></i>approach red</span>
+  <span><i style="background:var(--sig-y)"></i>amber transition</span>
+  <span><i style="background:var(--sig-g);box-shadow:0 0 6px var(--sig-g)"></i>preempted junction</span>
+  <span><i style="background:#93a3bb"></i>car</span>
+  <span><i style="background:var(--amb-r);box-shadow:0 0 6px var(--amb-b)"></i>ambulance</span>
+</div>
+
+<script>
+"use strict";
+const DATA = /*__REPLAY_DATA__*/null;
+if (!DATA || !DATA.frames || !DATA.frames.length) {
+  document.body.innerHTML =
+    "<p style='padding:40px;font-family:sans-serif;color:#e7edf6'>No replay " +
+    "data embedded — generate this page with run_headless.py --replay out.html</p>";
+  throw new Error("no replay data");
+}
+
+const NET = DATA.network, FRAMES = DATA.frames;
+const T0 = FRAMES[0].t, T1 = FRAMES[FRAMES.length - 1].t;
+const DT = FRAMES.length > 1 ? (T1 - T0) / (FRAMES.length - 1) : 1;
+
+// ---------------------------------------------------------------- projection
+const [[latA, lonA], [latB, lonB]] = NET.bounds;
+const minLat = Math.min(latA, latB), maxLat = Math.max(latA, latB);
+const minLon = Math.min(lonA, lonB), maxLon = Math.max(lonA, lonB);
+const KX = Math.cos((minLat + maxLat) / 2 * Math.PI / 180) * 111320;
+const KY = 110540;
+const W = (maxLon - minLon) * KX, H = (maxLat - minLat) * KY;   // metres
+const wx = (lon) => (lon - minLon) * KX;
+const wy = (lat) => (maxLat - lat) * KY;
+
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let scale = 1, ox = 0, oy = 0;      // px per metre, world offset of viewport
+function fit() {
+  cv.width = innerWidth * devicePixelRatio;
+  cv.height = innerHeight * devicePixelRatio;
+  cv.style.width = innerWidth + "px";
+  cv.style.height = innerHeight + "px";
+}
+function fitView() {
+  scale = Math.min(innerWidth / W, innerHeight / H) * 0.94;
+  ox = (W - innerWidth / scale) / 2;
+  oy = (H - innerHeight / scale) / 2;
+}
+fit(); fitView();
+addEventListener("resize", () => { fit(); });
+const px = (x) => (x - ox) * scale, py = (y) => (y - oy) * scale;
+
+// pan / zoom
+let drag = null;
+cv.addEventListener("pointerdown", e => {
+  drag = { x: e.clientX, y: e.clientY }; cv.classList.add("dragging");
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener("pointermove", e => {
+  if (!drag) return;
+  ox -= (e.clientX - drag.x) / scale; oy -= (e.clientY - drag.y) / scale;
+  drag = { x: e.clientX, y: e.clientY };
+});
+cv.addEventListener("pointerup", () => { drag = null; cv.classList.remove("dragging"); });
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const f = Math.exp(-e.deltaY * 0.0016);
+  const mx = ox + e.clientX / scale, my = oy + e.clientY / scale;
+  scale = Math.min(24, Math.max(0.02, scale * f));
+  ox = mx - e.clientX / scale; oy = my - e.clientY / scale;
+}, { passive: false });
+
+// ------------------------------------------------------------- static layers
+const edgesMinor = [], edgesMajor = [];
+for (const e of NET.edges) {
+  const pts = e.pts.map(([lat, lon]) => [wx(lon), wy(lat)]);
+  (e.prio >= 9 || e.lanes >= 3 ? edgesMajor : edgesMinor).push(pts);
+}
+const tlsHeads = NET.tls.map(t => ({
+  id: t.id, x: wx(t.lon), y: wy(t.lat),
+  heads: t.heads.map(h => h ? [wx(h[1]), wy(h[0])] : null),
+}));
+
+// all events flattened once, sorted by time
+const ALL_EVENTS = [];
+for (const f of FRAMES) for (const [t, msg] of f.e) ALL_EVENTS.push([t, msg]);
+ALL_EVENTS.sort((a, b) => a[0] - b[0]);
+
+// per-frame car index maps, built lazily for interpolation
+const carMaps = new Array(FRAMES.length);
+function carMap(i) {
+  if (!carMaps[i]) {
+    const m = new Map();
+    for (const [id, lon, lat] of FRAMES[i].c) m.set(id, [wx(lon), wy(lat)]);
+    carMaps[i] = m;
+  }
+  return carMaps[i];
+}
+
+// ------------------------------------------------------------------ playback
+let playT = T0, playing = false, speed = 2, lastTick = 0;
+const SPEEDS = [1, 2, 4, 8];
+const speedsEl = document.getElementById("speeds");
+for (const s of SPEEDS) {
+  const b = document.createElement("button");
+  b.textContent = s + "×"; b.className = s === speed ? "on" : "";
+  b.onclick = () => { speed = s;
+    [...speedsEl.children].forEach(c => c.className = c === b ? "on" : ""); };
+  speedsEl.appendChild(b);
+}
+const playBtn = document.getElementById("play");
+const scrubEl = document.getElementById("scrub");
+function setPlaying(on) { playing = on; playBtn.textContent = on ? "❚❚" : "▶"; }
+playBtn.onclick = () => setPlaying(!playing);
+scrubEl.oninput = () => { playT = T0 + (T1 - T0) * scrubEl.value / 1000; };
+addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.target !== scrubEl) return;
+  if (e.code === "Space") { e.preventDefault(); setPlaying(!playing); }
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    e.preventDefault();     // keep the focused range input from re-stepping
+    playT = e.key === "ArrowRight" ? Math.min(T1, playT + 10)
+                                   : Math.max(T0, playT - 10);
+    scrubEl.value = Math.round((playT - T0) / (T1 - T0 || 1) * 1000);
+  }
+});
+
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+document.getElementById("ticker-toggle").onclick = function () {
+  const ev = document.getElementById("events"), rb = document.getElementById("runsbox");
+  const hide = ev.style.display !== "none";
+  ev.style.display = rb.style.display = hide ? "none" : "";
+  this.textContent = hide ? "+" : "–";
+};
+
+// --------------------------------------------------------------------- render
+const SIG = { G: "#2fd36b", g: "#2fd36b", y: "#f0b429", Y: "#f0b429",
+              r: "#f04444", R: "#f04444", u: "#f04444" };
+let evShown = 0;
+const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  // self-heal: pages opened in a hidden/background tab load with a 0-size
+  // viewport, which makes the initial fit degenerate — refit once real
+  if (!isFinite(scale) || scale <= 0 || !isFinite(ox) || !isFinite(oy)) {
+    if (innerWidth > 0 && innerHeight > 0) { fit(); fitView(); }
+    return;
+  }
+  // clamp: rAF suspends in hidden tabs — an unclamped delta would leap the
+  // playhead forward by the whole hidden duration on return
+  const dtw = lastTick ? Math.min((now - lastTick) / 1000, 0.1) : 0;
+  lastTick = now;
+  if (playing) {
+    playT += dtw * speed;
+    if (playT >= T1) { playT = T1; setPlaying(false); }
+    scrubEl.value = Math.round((playT - T0) / (T1 - T0) * 1000);
+  }
+  const fi = Math.min(FRAMES.length - 1, Math.max(0, Math.floor((playT - T0) / DT)));
+  const fj = Math.min(FRAMES.length - 1, fi + 1);
+  const alpha = Math.min(1, Math.max(0, (playT - FRAMES[fi].t) / DT || 0));
+  const F = FRAMES[fi];
+
+  // HUD
+  document.getElementById("clock").textContent = fmt(playT);
+  document.getElementById("c-veh").textContent = F.k[0];
+  document.getElementById("c-amb").textContent = F.k[1];
+  document.getElementById("c-pre").textContent = F.k[2];
+  updateEvents();
+  updateRuns(F.r);
+
+  // scene
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.fillStyle = "#0c1118";
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.strokeStyle = "#2a3850";
+  ctx.lineWidth = Math.max(0.7, 6 * scale);
+  drawEdges(edgesMinor);
+  ctx.strokeStyle = "#3a4d6e";
+  ctx.lineWidth = Math.max(1, 11 * scale);
+  drawEdges(edgesMajor);
+
+  // hospitals
+  ctx.font = `${Math.max(10, 12)}px "IBM Plex Sans", sans-serif`;
+  for (const h of NET.hospitals) {
+    const x = px(wx(h.lon)), y = py(wy(h.lat));
+    ctx.fillStyle = "#ce3b4a";
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(x - 3.2, y - 1.1, 6.4, 2.2);
+    ctx.fillRect(x - 1.1, y - 3.2, 2.2, 6.4);
+    if (scale > 0.15) {
+      ctx.fillStyle = "#9fb0c8";
+      ctx.fillText(h.name, x + 11, y + 4);
+    }
+  }
+
+  // signal heads
+  const rHead = Math.min(4.5, Math.max(1.8, 2.4 * scale + 1));
+  for (const t of tlsHeads) {
+    const st = F.l[t.id];
+    if (!st) continue;
+    const [stateStr, mode] = st;
+    if (mode !== "normal") {
+      const cx = px(t.x), cy = py(t.y);
+      const pulse = reduceMotion ? 13 : 11 + 4 * Math.sin(now / 170);
+      ctx.beginPath(); ctx.arc(cx, cy, pulse, 0, 7);
+      ctx.strokeStyle = (mode === "preempted" || mode === "clearing")
+        ? "rgba(47,211,107,.9)" : "rgba(240,180,41,.9)";
+      ctx.lineWidth = 2.5; ctx.stroke();
+    }
+    for (let i = 0; i < t.heads.length; i++) {
+      const h = t.heads[i];
+      if (!h) continue;
+      ctx.beginPath(); ctx.arc(px(h[0]), py(h[1]), rHead, 0, 7);
+      // 'o' = preemption cross-street flasher: blink amber like the live map
+      ctx.fillStyle = (stateStr[i] === "o" || stateStr[i] === "O")
+        ? (Math.floor(now / 500) % 2 === 0 ? "#f0b429" : "#5a4a10")
+        : (SIG[stateStr[i]] || "#6b7280");
+      ctx.fill();
+    }
+  }
+
+  // cars, interpolated between frames fi and fj
+  const rCar = Math.min(4, Math.max(1.6, 2.2 * scale));
+  const mNext = carMap(fj);
+  ctx.fillStyle = "#93a3bb";
+  for (const [id, lon, lat] of F.c) {
+    let x = wx(lon), y = wy(lat);
+    const nxt = mNext.get(id);
+    if (nxt) { x += (nxt[0] - x) * alpha; y += (nxt[1] - y) * alpha; }
+    const sx = px(x), sy = py(y);
+    if (sx < -8 || sy < -8 || sx > innerWidth + 8 || sy > innerHeight + 8) continue;
+    ctx.beginPath(); ctx.arc(sx, sy, rCar, 0, 7); ctx.fill();
+  }
+
+  // ambulances
+  const blue = reduceMotion ? false : Math.floor(now / 260) % 2 === 0;
+  const nextA = new Map(FRAMES[fj].a.map(a => [a[0], a]));
+  for (const [id, lon, lat, kmh] of F.a) {
+    let x = wx(lon), y = wy(lat);
+    const nxt = nextA.get(id);
+    if (nxt) { x += (wx(nxt[1]) - x) * alpha; y += (wy(nxt[2]) - y) * alpha; }
+    const sx = px(x), sy = py(y);
+    const grad = ctx.createRadialGradient(sx, sy, 2, sx, sy, 17);
+    grad.addColorStop(0, blue ? "rgba(59,130,246,.95)" : "rgba(255,59,48,.95)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.beginPath(); ctx.arc(sx, sy, 17, 0, 7); ctx.fillStyle = grad; ctx.fill();
+    ctx.beginPath(); ctx.arc(sx, sy, 5.5, 0, 7); ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 7);
+    ctx.fillStyle = blue ? "#3b82f6" : "#ff3b30"; ctx.fill();
+    ctx.font = `600 11px "IBM Plex Mono", monospace`;
+    ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.lineWidth = 3;
+    ctx.fillStyle = "#fff";
+    const label = `${id} · ${kmh} km/h`;
+    ctx.strokeText(label, sx + 11, sy - 9);
+    ctx.fillText(label, sx + 11, sy - 9);
+  }
+}
+
+function drawEdges(list) {
+  ctx.beginPath();
+  for (const pts of list) {
+    ctx.moveTo(px(pts[0][0]), py(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i][0]), py(pts[i][1]));
+  }
+  ctx.stroke();
+}
+
+function updateEvents() {
+  const box = document.getElementById("events");
+  let n = 0;
+  while (n < ALL_EVENTS.length && ALL_EVENTS[n][0] <= playT) n++;
+  if (n === evShown) return;
+  evShown = n;
+  const shown = ALL_EVENTS.slice(Math.max(0, n - 40), n);
+  box.innerHTML = shown.map(([t, msg]) => {
+    let cls = "";
+    if (msg.startsWith("Camera") || msg.startsWith("Control")) cls = "cam";
+    else if (msg.includes("AMB")) cls = "amb";
+    else if (msg.startsWith("Junction")) cls = "tls";
+    const safe = msg.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    return `<div><span class="t">${fmt(t)}</span><span class="${cls}">${safe}</span></div>`;
+  }).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+let runsShown = "";
+function updateRuns(runs) {
+  const key = runs.map(r => r.id).join();
+  if (key === runsShown) return;
+  runsShown = key;
+  document.getElementById("runs").innerHTML = runs.map(r =>
+    `<tr><td>${r.id}</td><td>${r.duration_s.toFixed(0)} s</td>` +
+    `<td>${(r.length_m / 1000).toFixed(1)}</td><td>${r.kmh.toFixed(0)}</td></tr>`
+  ).join("") || `<tr><td colspan="4" style="color:#8494ab">none yet</td></tr>`;
+}
+
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 """Core simulation wrapper: owns the TraCI connection, the preemption
 controller, the dispatcher, the operations log and per-step snapshots."""
+import json
 import math
 import os
 
@@ -83,6 +84,7 @@ class Simulation:
         self._fair_next_report = 300.0
         if self.cfg.markov_routing:
             self.router.predictor = self.markov
+        self.controller.markov = self.markov   # queue-flush congestion feed
         if self.markov._loaded_obs:
             self.ops.emit(0.0, "system",
                           f"Markov traffic predictor loaded "
@@ -125,6 +127,113 @@ class Simulation:
                       f"peak), preemption "
                       f"{'ARMED' if self._preemption_wanted else 'DISARMED'}",
                       "info")
+
+    # ------------------------------------------------- warm-state caching
+
+    WARM_STATE_VERSION = 1
+
+    def _warm_state_path(self):
+        key = (f"{self.cfg.scenario}_{self.cfg.day_type}_"
+               f"{self.cfg.traffic_level}_{self.cfg.start_hour:02d}")
+        return os.path.join(self.root, "data", f"warmstate_{key}.xml.gz")
+
+    def _warm_state_stamp(self):
+        mtimes = {}
+        sc = SCENARIOS.get(self.cfg.scenario, {})
+        for label, rel in (("routes", os.path.join("data",
+                                                   sc.get("routes", ""))),
+                           ("net", self.cfg.net_file),
+                           ("vtypes", os.path.join("data",
+                                                   "vtypes.add.xml"))):
+            try:
+                mtimes[label] = round(os.path.getmtime(
+                    os.path.join(self.root, rel)))
+            except OSError:
+                mtimes[label] = 0
+        return {"v": self.WARM_STATE_VERSION, "mtimes": mtimes,
+                "warmup_s": self.cfg.warmup_s, "seed": self.seed,
+                "step": self.cfg.step_length,
+                "latres": self.cfg.lateral_resolution}
+
+    def _drop_warm_state(self):
+        for p in (self._warm_state_path(), self._warm_state_path() + ".json"):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+    def try_load_warm_state(self):
+        """Load a cached post-warm-up SUMO state, if a valid one exists:
+        the city is instantly flowing instead of fast-forwarding minutes
+        of traffic build-up on every start and mode switch.  A failed
+        load leaves SUMO in an undefined state, so the cache is dropped
+        and the whole simulation is relaunched cleanly."""
+        path = self._warm_state_path()
+        meta_path = path + ".json"
+        try:
+            with open(meta_path) as f:
+                if json.load(f) != self._warm_state_stamp():
+                    return False
+        except (OSError, ValueError):
+            return False
+        try:
+            traci.simulation.loadState(path)
+        except Exception as exc:      # incl. FatalTraCIError
+            self._drop_warm_state()
+            try:
+                self.close()
+            except Exception:
+                pass
+            self.start()              # clean relaunch; cold warm-up follows
+            self.ops.emit(0.0, "system",
+                          f"cached city state could not be loaded ({exc}) "
+                          f"— cache dropped, warming up cold", "warn")
+            return False
+        # the loaded state wipes ALL subscriptions: vehicles AND signals
+        for veh_id in traci.vehicle.getIDList():
+            traci.vehicle.subscribe(
+                veh_id,
+                VEH_VARS if veh_id.startswith("AMB_") else CAR_VARS)
+        for tls_id in traci.trafficlight.getIDList():
+            traci.trafficlight.subscribe(tls_id,
+                                         [tc.TL_RED_YELLOW_GREEN_STATE])
+        self.time = traci.simulation.getTime()
+        if self.markov is not None:
+            # restart the sampling grid at the loaded clock — otherwise
+            # the catch-up loop fires every slice in one frame
+            self.markov._next_sample = self.time
+        self.ops.emit(self.time, "system",
+                      f"WARM START: cached city state loaded "
+                      f"(t={self.time:.0f} s, "
+                      f"{len(traci.vehicle.getIDList())} vehicles already "
+                      f"flowing) — no warm-up needed", "info")
+        return True
+
+    def save_warm_state(self):
+        """Persist the post-warm-up SUMO state so the next start or mode
+        switch at this scenario/day/level/hour begins instantly."""
+        # SUMO 1.27 cannot serialise scale-clone vehicles (ids with '.'):
+        # a state saved with them fails to load.  Demand scales above 1.0
+        # produce clones, so those combinations stay on the cold warm-up.
+        try:
+            if any("." in v for v in traci.vehicle.getIDList()):
+                self.ops.emit(self.time, "system",
+                              "city state not cached at this demand level "
+                              "(SUMO cannot serialise scale-cloned "
+                              "vehicles) — cold warm-up remains", "info")
+                return
+        except traci.TraCIException:
+            return
+        path = self._warm_state_path()
+        try:
+            traci.simulation.saveState(path)
+            with open(path + ".json", "w") as f:
+                json.dump(self._warm_state_stamp(), f)
+            self.ops.emit(self.time, "system",
+                          f"City state cached — future starts at this "
+                          f"scenario/hour skip the warm-up", "info")
+        except (traci.TraCIException, OSError):
+            pass
 
     def close(self):
         try:
@@ -325,6 +434,11 @@ class Simulation:
         kpi["clock"] = self.clock()
         kpi["open_cases"] = len(self.ops.open_cases())
         kpi["early_greens"] = self.actuation.granted_total
+        kpi["queued_calls"] = len(self.dispatcher.call_queue)
+        kpi["queue_oldest_s"] = (round(self.time
+                                       - self.dispatcher.call_queue[0]["t"])
+                                 if self.dispatcher.call_queue else 0)
+        kpi["response"] = self.dispatcher.response_summary()
         kpi["demand_serving"] = self.actuation.active_count()
         fm = self.actuation.mode_counts()
         kpi["fair_timer_junctions"] = fm["fair"]

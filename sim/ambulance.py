@@ -33,6 +33,9 @@ class Dispatcher:
         # consecutive missions do not launch as a convoy from one gate.
         self._fleet = {}       # hospital -> ready units (filled below)
         self._returning = []   # (ready_at, hospital, amb_id, origin_hosp)
+        self.call_queue = []   # calls waiting for a crew (all committed)
+        self._last_gate_t = {}  # hospital -> sim time of last departure
+        self.response_log = []  # call-to-scene times, per governorate
         # offer only places that actually snap to the modelled network, so
         # the UI never lists a scene or hospital that cannot be reached
         self.hospitals = {n: ll for n, ll in cfg.hospitals_d().items()
@@ -67,11 +70,22 @@ class Dispatcher:
 
     # -------------------------------------------------------------- dispatch
 
-    def dispatch(self, origin=None, destination=None, now=0.0):
-        """Insert an ambulance, lights on.  Ambulances always originate at a
-        hospital: origin None/"auto" selects the hospital NEAREST to the
-        incident scene by Dijkstra travel time.  destination None picks a
-        random named incident area.  Returns the new ambulance id."""
+    GOVERNORATES = ("Capital", "Hawalli", "Farwaniya", "Mubarak Al-Kabeer",
+                    "Ahmadi", "Jahra")
+
+    def _governorate_of(self, desc):
+        for g in self.GOVERNORATES:
+            if f"({g})" in desc:
+                return g
+        return "Other"
+
+    def dispatch(self, origin=None, destination=None, now=0.0,
+                 _desc_override=None, _call_t=None):
+        """Insert an ambulance, lights on.  Ambulances always originate at
+        a hospital: origin None/"auto" selects the nearest hospital with a
+        READY crew (the call queues when every crew is committed).
+        destination None picks a random named incident area.  Returns the
+        new ambulance id, or None when the call queued."""
         if destination is None:
             area = self._rng.choice(sorted(self.areas))
             lat, lon = self.areas[area]
@@ -79,8 +93,12 @@ class Dispatcher:
             to_desc = f"{area} (random area)"
             if not to_edges:
                 raise ValueError(f"No road near area {area}")
+            dest_spec = (lat, lon)      # pin the scene if the call queues
         else:
             to_edges, to_desc = self._resolve(destination, "destination")
+            dest_spec = destination
+        if _desc_override:
+            to_desc = _desc_override   # a queued call keeps its area name
 
         route, algorithm, from_desc = None, None, None
         rotation_note = ""
@@ -124,14 +142,31 @@ class Dispatcher:
             candidates = [r for r in ranked if self._fleet.get(r[1], 0) > 0]
             reserve_note = ""
             if not candidates:
-                candidates = ranked
-                reserve_note = ("; ALL hospital fleets committed or in "
-                                "turnaround — the nearest hospital "
-                                "dispatches its reserve crew")
+                # No reachable crew: the call QUEUES — real EMS never
+                # conjures an unlimited convoy out of one gate.  The next
+                # crew to finish turnaround responds automatically.
+                self.call_queue.append({"dest": dest_spec,
+                                        "desc": to_desc, "t": now})
+                if not _desc_override:
+                    # (a re-queued call already has its record — the serve
+                    # loop restores its position and timestamp)
+                    self.ops.emit(now, "dispatch",
+                                  f"CALL QUEUED (position "
+                                  f"{len(self.call_queue)}): {to_desc} — "
+                                  f"no crew can respond right now (on "
+                                  f"mission, in turnaround, or unable to "
+                                  f"reach the scene); the next READY crew "
+                                  f"responds automatically", "warn")
+                return None
             tol = 1.0 + self.cfg.dispatch_rotation_tolerance
             cut = candidates[0][0] * tol
             pool = [r for r in candidates if r[0] <= cut]
-            pool.sort(key=lambda r: (load.get(r[1], 0), r[0]))
+            # gate headway: a hospital that just launched a unit yields to
+            # an equally-close peer, so departures never stack at one gate
+            gh = self.cfg.gate_headway_s
+            pool.sort(key=lambda r: (
+                1 if now - self._last_gate_t.get(r[1], -1e9) < gh else 0,
+                load.get(r[1], 0), r[0]))
             chosen = None
             for eta_est, name, cid in pool + [r for r in candidates
                                               if r[0] > cut]:
@@ -232,18 +267,27 @@ class Dispatcher:
         self.count += 1
         amb_id = f"AMB_{self.count}"
         route_id = f"route_{amb_id}"
+        try:
+            traci.route.add(route_id, route)
+            traci.vehicle.add(amb_id, route_id,
+                              typeID=self.cfg.ambulance_type,
+                              departLane="best", departSpeed="max")
+            # emergency speed exemption: above the posted limit, capped
+            traci.vehicle.setSpeedFactor(amb_id,
+                                         self.cfg.speed_exemption_factor)
+            traci.vehicle.setMaxSpeed(amb_id,
+                                      self.cfg.ambulance_max_kmh / 3.6)
+        except traci.TraCIException as exc:
+            # the unit was never committed: fail without leaking a crew
+            raise ValueError(f"insertion failed for {amb_id}: {exc}")
         if origin_hospital:
-            # commit a ready unit from the origin hospital's pool.  No
-            # floor: a reserve dispatch leaves a DEBT that the crew's
-            # eventual return pays back — clamping here would mint units.
+            # commit a ready unit from the origin hospital's pool ONLY
+            # after the vehicle physically exists.  No floor: a manual
+            # reserve dispatch leaves a DEBT that the crew's eventual
+            # return pays back — clamping would mint units.
             self._fleet[origin_hospital] = (
                 self._fleet.get(origin_hospital, 0) - 1)
-        traci.route.add(route_id, route)
-        traci.vehicle.add(amb_id, route_id, typeID=self.cfg.ambulance_type,
-                          departLane="best", departSpeed="max")
-        # emergency speed exemption: above the posted limit, capped absolutely
-        traci.vehicle.setSpeedFactor(amb_id, self.cfg.speed_exemption_factor)
-        traci.vehicle.setMaxSpeed(amb_id, self.cfg.ambulance_max_kmh / 3.6)
+            self._last_gate_t[origin_hospital] = now
         case = self.ops.open_case("A", amb_id, now,
                                   f"{amb_id}: {from_desc} -> {to_desc}")
         self.info[amb_id] = {
@@ -268,6 +312,11 @@ class Dispatcher:
             "mission": "to_scene",    # to_scene -> loading -> to_hospital
             "hospital": None,
             "origin_hospital": origin_hospital,
+            # response-time accounting: the clock starts when the CALL was
+            # made (a queued call's wait counts), ends at scene arrival
+            "call_t": _call_t if _call_t is not None else now,
+            "queue_wait_s": round(now - _call_t, 1) if _call_t else 0.0,
+            "gov": self._governorate_of(to_desc),
             "loading_started": False,
             "created": now,
             "insert_retries": 0,
@@ -303,11 +352,9 @@ class Dispatcher:
         origin's (which may be repaying a reserve-dispatch debt); only if
         both are at stationed strength does the crew stand down to
         reserve."""
-        if not self._returning:
+        if not self._returning and not self.call_queue:
             return
         due = [r for r in self._returning if r[0] <= now]
-        if not due:
-            return
         self._returning = [r for r in self._returning if r[0] > now]
         cap = self.cfg.hospital_ready_units
         for _t, hosp, amb_id, origin in due:
@@ -325,6 +372,51 @@ class Dispatcher:
                               f"READY again at {target} "
                               f"({self._fleet[target]}/{cap})",
                               "info", actor=amb_id)
+            else:
+                # nothing leaves circulation silently, not even to reserve
+                self.ops.emit(now, "lifecycle",
+                              f"{amb_id} crew turnaround complete — every "
+                              f"pool at stationed strength; unit stands "
+                              f"down to reserve at {target}", "info",
+                              actor=amb_id)
+        # Freed crews serve waiting calls, oldest first.  Guarded against
+        # re-entry (dispatch calls process_returns), and BOUNDED to one
+        # attempt per queued call per invocation: a call whose reachable
+        # hospitals have no ready crew must wait a step, not livelock the
+        # simulation while a ready crew sits somewhere it cannot help.
+        if getattr(self, "_serving_queue", False):
+            return
+        self._serving_queue = True
+        try:
+            attempts = len(self.call_queue)
+            while (attempts > 0 and self.call_queue
+                   and any(n > 0 for n in self._fleet.values())):
+                attempts -= 1
+                call = self.call_queue.pop(0)
+                try:
+                    amb = self.dispatch(None, call["dest"], now,
+                                        _desc_override=call["desc"],
+                                        _call_t=call["t"])
+                except ValueError as exc:
+                    self.ops.emit(now, "error",
+                                  f"Queued call to {call['desc']} could "
+                                  f"not be served: {exc}", "error")
+                    continue
+                if amb:
+                    self.ops.emit(now, "dispatch",
+                                  f"QUEUED CALL served by {amb} after "
+                                  f"{now - call['t']:.0f} s waiting: "
+                                  f"{call['desc']} — a crew was ready "
+                                  f"again", "info", actor=amb)
+                elif (self.call_queue
+                      and self.call_queue[-1]["dest"] is call["dest"]):
+                    # dispatch re-queued it at the back: restore its
+                    # ORIGINAL place and timestamp — an unservable call
+                    # keeps its position and its true waiting time
+                    self.call_queue.pop()
+                    self.call_queue.insert(0, call)
+        finally:
+            self._serving_queue = False
 
     def _schedule_return(self, rec, amb_id, now):
         """A closed mission's crew restocks, then rejoins a ready pool.
@@ -339,6 +431,32 @@ class Dispatcher:
     def fleet_status(self):
         """hospital -> ready units, for the UI and the ops record."""
         return dict(self._fleet)
+
+    def response_summary(self):
+        """Call-to-scene response times: percentiles overall and per
+        governorate, plus queue-wait statistics — the numbers an EMS
+        board asks for first."""
+        def pct(vals, q):
+            if not vals:
+                return None
+            vals = sorted(vals)
+            return round(vals[min(len(vals) - 1,
+                                  int(q * (len(vals) - 1) + 0.5))], 1)
+        rows = self.response_log
+        out = {"n": len(rows),
+               "p50_s": pct([r["response_s"] for r in rows], 0.5),
+               "p90_s": pct([r["response_s"] for r in rows], 0.9),
+               "queue_wait_p50_s": pct([r["queue_wait_s"] for r in rows
+                                        if r["queue_wait_s"] > 0], 0.5),
+               "queue_wait_max_s": (max((r["queue_wait_s"] for r in rows),
+                                        default=0.0)),
+               "by_gov": {}}
+        for g in sorted({r["gov"] for r in rows}):
+            vals = [r["response_s"] for r in rows if r["gov"] == g]
+            out["by_gov"][g] = {"n": len(vals),
+                                "p50_s": pct(vals, 0.5),
+                                "p90_s": pct(vals, 0.9)}
+        return out
 
     # ------------------------------------------------- arrival-time analysis
 
@@ -428,6 +546,14 @@ class Dispatcher:
                 except traci.TraCIException:
                     continue
                 if 0 <= idx >= len(rec["route_edges"]) - 2:
+                    # board metric: call-to-scene response time, with the
+                    # queue wait included — the clock starts at the CALL
+                    resp = now - rec.get("call_t", now)
+                    rec["response_s"] = round(resp, 1)
+                    self.response_log.append(
+                        {"amb": amb_id, "gov": rec.get("gov", "Other"),
+                         "response_s": round(resp, 1),
+                         "queue_wait_s": rec.get("queue_wait_s", 0.0)})
                     try:
                         self._begin_return_leg(amb_id, rec, idx, now)
                     except traci.TraCIException as exc:

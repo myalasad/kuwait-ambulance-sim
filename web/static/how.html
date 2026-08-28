@@ -259,8 +259,8 @@ const SCENES = {
           "الاتجاه المتقاطع يأخذ الأصفر ثم أحمر شامل — يفرغ التقاطع بأمان"],
       [10, "The ambulance's road turns GREEN — the cars in front clear the way",
            "طريق الإسعاف يتحول إلى الأخضر — السيارات أمامه تفسح المجال"],
-      [11.5, "Cross streets FLASH amber (yield) — hardening to red as the unit closes in",
-             "الاتجاهات المتقاطعة تومض بالأصفر (أفسح الطريق) — وتتحول إلى الأحمر عند اقتراب الإسعاف"],
+      [11.5, "Cross streets FLASH amber (yield), then FLASH red as the unit closes in — an enabled junction blinks the whole time",
+             "الاتجاهات المتقاطعة تومض بالأصفر (أفسح الطريق) ثم تومض بالأحمر عند اقتراب الإسعاف — التقاطع المفعّل يومض طوال الوقت"],
       [13.5, "Over the speed limit with lights on? Exempt — NO fine issued",
              "فوق حد السرعة والأنوار تعمل؟ معفاة — لا مخالفة"],
       [17.5, "It has passed — the light returns to normal for everyone",
@@ -273,6 +273,7 @@ const SCENES = {
       // the unit is far -> hard red as it closes in -> green again
       const crossLit = t < 7 ? 2 : t < 8.5 ? 1 : t < 10 ? 0
                      : t < 14.5 ? (Math.floor(now / 500) % 2 === 0 ? 1 : -1)
+                     : t < 17.5 ? (Math.floor(now / 500) % 2 === 0 ? 0 : -1)
                      : t < 19.5 ? 0 : 2;
       const crossFlow = crossLit === 2;
       for (let i = 0; i < 3; i++) {

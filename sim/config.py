@@ -205,6 +205,12 @@ class SimConfig:
     #                                      in a crawl the flash persists
     flash_harden_min_m: float = 60.0     # ...and always within this range,
     #                                      whatever the speed
+    flush_lead_factor: float = 2.0       # a CONGESTED approach ahead on the
+    #                                      route is enabled with this much
+    #                                      extra activation lead, so its
+    #                                      queue drains before the unit
+    #                                      arrives (still capped by
+    #                                      greenwave_distance_m + max_hold)
 
     # --- arbitration & operator referral ---
     arbitration_tie_m: float = 20.0      # two fresh requests closer than this
@@ -234,7 +240,12 @@ class SimConfig:
     #                                      ambulance auto-reroutes to the
     #                                      nearest hospital by travel time
     hospital_ready_units: int = 2        # ready ambulances stationed per
-    #                                      hospital; a dispatch commits one
+    #                                      hospital; a dispatch commits one;
+    #                                      with every crew committed a call
+    #                                      QUEUES until one returns
+    gate_headway_s: float = 8.0          # a hospital that just launched a
+    #                                      unit yields to an equally-close
+    #                                      peer — departures never stack
     unit_turnaround_s: float = 180.0     # after delivering a patient the
     #                                      crew restocks this long before
     #                                      rejoining the READY pool (at the

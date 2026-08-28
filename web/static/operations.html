@@ -148,6 +148,7 @@
   <section class="card" style="grid-column: 1 / -1">
     <h2>Arrival-time comparison — with vs without signal preemption</h2>
     <div id="agg"></div>
+    <div id="resp" style="margin-bottom:12px"></div>
     <div id="cmp-runs"><p style="color:var(--muted);font-size:12.5px">
       No completed runs yet — dispatch an ambulance and its analysis appears
       here on arrival.</p></div>
@@ -200,7 +201,11 @@
         <tr><td>3</td><td>Lights ON, signal on route, ETA ≤ 25 s
           (never later than 160 m out)</td>
           <td class="crit w-timer">SIGNAL TIMER (avoid r²/2C wait)</td>
-          <td class="act">ENABLE: amber → all-red → corridor on protected green; cross approaches flash amber (yield), hardening to red as the unit closes in</td>
+          <td class="act">ENABLE: amber → all-red → corridor on protected green; cross approaches flash amber (yield), hardening to flashing red as the unit closes in</td>
+          <td>P-case open</td></tr>
+        <tr><td>3b</td><td>Signal ahead on the route, approach CONGESTED/JAMMED (Markov), within 2× the normal lead</td>
+          <td class="crit w-timer">QUEUE AHEAD (drain before arrival)</td>
+          <td class="act">ENABLE EARLY (queue flush) — justification logged on the P-case</td>
           <td>P-case open</td></tr>
         <tr><td>4</td><td>Two fresh corridors, distance margin &gt; 20 m</td>
           <td class="crit w-timer">PROXIMITY</td>
@@ -339,6 +344,26 @@ async function pollAnalysis() {
   try {
     const r = await fetch("/api/analysis");
     const d = await r.json();
+    if (d.response && d.response.n) {
+      const rs = d.response;
+      const gov = Object.entries(rs.by_gov || {}).map(([g, v]) =>
+        `<tr><td>${g}</td><td class="num">${v.n}</td>` +
+        `<td class="num">${v.p50_s} s</td><td class="num">${v.p90_s} s</td></tr>`
+      ).join("");
+      document.getElementById("resp").innerHTML =
+        `<h2 style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;` +
+        `color:var(--muted);margin:6px 0 6px">Call-to-scene response times` +
+        ` (queue wait included)${d.queued_calls ?
+          ` · <span style="color:var(--amber)">${d.queued_calls} call(s) waiting</span>` : ""}</h2>` +
+        `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px">` +
+        `<div class="aggbox"><div class="v">${rs.n}</div><div class="l">responses</div></div>` +
+        `<div class="aggbox"><div class="v">${rs.p50_s} s</div><div class="l">p50 response</div></div>` +
+        `<div class="aggbox"><div class="v">${rs.p90_s} s</div><div class="l">p90 response</div></div>` +
+        `<div class="aggbox"><div class="v">${rs.queue_wait_max_s ?
+           rs.queue_wait_max_s + " s" : "0"}</div><div class="l">worst queue wait</div></div></div>` +
+        (gov ? `<table><thead><tr><th>governorate</th><th>runs</th>` +
+               `<th>p50</th><th>p90</th></tr></thead><tbody>${gov}</tbody></table>` : "");
+    }
     if (d.aggregate) {
       const a = d.aggregate;
       document.getElementById("agg").innerHTML =

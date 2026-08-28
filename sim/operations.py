@@ -25,14 +25,35 @@ SEVERITIES = ("info", "warn", "error", "decision")
 class OperationsLog:
     RING = 3000
 
+    ROTATE_BYTES = 20 * 1024 * 1024   # archive the log past ~20 MB
+
     def __init__(self, root):
         self.seq = 0
         self.ring = deque(maxlen=self.RING)
         self.path = os.path.join(root, "data", "operations.jsonl")
+        self._rotate_if_large()
         self._fh = open(self.path, "a", encoding="utf-8")
         self.cases = {}
         self._case_counters = {"P": 0, "A": 0, "D": 0}
         self.places = None   # real-name registry, attached by the runner
+
+    def _rotate_if_large(self):
+        """Archive an oversized operations log (gzip, timestamped) so the
+        JSONL never grows without bound and the copilot corpus stays fast."""
+        try:
+            if (os.path.exists(self.path)
+                    and os.path.getsize(self.path) > self.ROTATE_BYTES):
+                import gzip
+                import shutil
+                from datetime import date
+                dst = self.path.replace(
+                    ".jsonl", f".{date.today().isoformat()}.jsonl.gz")
+                with open(self.path, "rb") as src, \
+                        gzip.open(dst, "wb") as out:
+                    shutil.copyfileobj(src, out)
+                os.remove(self.path)
+        except OSError:
+            pass
 
     def jn(self, tls_id):
         """Human junction label (code + real streets)."""

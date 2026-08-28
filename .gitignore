@@ -2,10 +2,11 @@
 __pycache__/
 *.pyc
 data/*.osm.xml
-data/background.trips.xml
-replay*.html
+/replay*.html
 .DS_Store
 data/operations.jsonl
 data/server.log
 data/*.trips.xml
 .tools/
+data/warmstate_*
+data/operations.*.jsonl.gz

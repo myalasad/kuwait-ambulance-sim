@@ -94,6 +94,7 @@
   .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
               margin-right: 5px; vertical-align: -1px; }
   @keyframes legendflash { 50% { background: #3a2f10; } }
+  @keyframes legendflashred { 50% { background: #3a1414; } }
 
   #map { flex: 1; height: 100vh; background: #0b0e14; }
   #overlay { position: absolute; inset: 0; pointer-events: none; z-index: 500; }
@@ -221,6 +222,11 @@
         <div class="l">in-use junctions on fair timers · lone-approach</div></div>
       <div class="kpi" style="grid-column:1 / -1"><div class="v" id="k-audit" style="font-size:15px">—</div>
         <div class="l">early green self-audit: grants · ended for other traffic · <b>fairness violations</b></div></div>
+      <div class="kpi" style="grid-column:1 / -1;display:none" id="k-queue-box">
+        <div class="v" id="k-queue" style="font-size:15px;color:#f0b429">—</div>
+        <div class="l">calls WAITING for a crew (served automatically, oldest first)</div></div>
+      <div class="kpi" style="grid-column:1 / -1"><div class="v" id="k-resp" style="font-size:15px">—</div>
+        <div class="l">call-to-scene response p50 · p90 (queue wait included)</div></div>
     </div>
     <table id="runs"><thead><tr><th>run</th><th>time</th><th>km</th><th>km/h</th></tr></thead>
       <tbody></tbody></table>
@@ -243,6 +249,7 @@
       <span><i style="background:#ef4444"></i>approach red</span>
       <span><i style="background:#f0b429"></i>amber transition</span>
       <span><i style="background:#f0b429;animation:legendflash 1s steps(2) infinite"></i>flashing amber (hold — cross street yields)</span>
+      <span><i style="background:#ef4444;animation:legendflashred 1s steps(2) infinite"></i>flashing red (unit close — full stop)</span>
       <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>purposely enabled</span>
       <span><i style="background:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>early green (lone traffic)</span>
       <span><i style="background:#9aa7bb"></i>car (3D up close)</span>
@@ -395,6 +402,8 @@ const ambPos = new Map();
 const hospMarkers = new Map();      // hospital name -> Leaflet marker
 const fleetShown = new Map();       // hospital name -> last badge text
 const routeCache = new Map();       // amb id -> projected route points
+const routesLayer = document.createElement("canvas");  // static routes
+let routesMeta = null;              // offscreen layer validity metadata
 window.__dbg = { get amb() { return ambPos; }, get cars() { return carPos; } };  // test hook
 const restoredBadges = new Map();   // tls id -> hide-at wall time
 
@@ -522,6 +531,15 @@ function updatePanel(f) {
       `${a.grants} · ${a.ended_for_other_traffic} · ` +
       `<span style="color:${a.violations ? "#ff6b6b" : "#4ade80"}">${a.violations}</span>`;
   }
+  const q = f.kpi.queued_calls || 0;
+  $("k-queue-box").style.display = q > 0 ? "" : "none";
+  if (q > 0)
+    $("k-queue").textContent =
+      `${q} · oldest waiting ${f.kpi.queue_oldest_s || 0} s`;
+  const rs = f.kpi.response;
+  $("k-resp").textContent = (rs && rs.n)
+    ? `${rs.p50_s} s · ${rs.p90_s} s (${rs.n} runs)`
+    : "— (no completed responses yet)";
   if (f.kpi.traffic) {
     const t = f.kpi.traffic;
     $("trafficchip").textContent =
@@ -743,8 +761,10 @@ function drawApproachSignal(x, y, color, zoom, blinkOn) {
   const s = zoom >= 17 ? 0.85 : zoom >= 16 ? 0.68 : zoom >= 15.5 ? 0.58
           : zoom >= 14.5 ? 0.48 : 0.4;
   // "flash": cross-street flasher during a corridor hold — the amber lamp
-  // blinks (~1 Hz) and no other lamp is lit
+  // blinks (~1 Hz); "flashred": hardened cross approach, the red lamp
+  // blinks (emergency stop).  No other lamp is lit while blinking.
   const lit = color === "flash" ? (blinkOn ? 1 : -1)
+            : color === "flashred" ? (blinkOn ? 0 : -1)
             : color === "#22c55e" ? 2 : color === "#f0b429" ? 1 : 0;
   const spr = fixtureSprite(lit, s);
   ctx.drawImage(spr.c, x - spr.w / 2, y - spr.h / 2, spr.w, spr.h);
@@ -867,11 +887,13 @@ function render(now) {
   const zoom = map.getZoom();
   updateViewTransform(zoom);
 
-  // planned routes (Dijkstra corridors), marching toward the destination.
-  // Projected once per route change into a typed array, not per frame.
-  let ci = 0;
-  for (const [amb, r] of Object.entries(frame.routes || {})) {
-    const color = ROUTE_COLORS[ci++ % ROUTE_COLORS.length];
+  // planned routes (Dijkstra corridors).  With a dozen units, re-stroking
+  // every long dashed polyline at 60 fps is the main render cost — so all
+  // routes are stroked ONCE into a padded offscreen layer that survives
+  // pans and route-stable frames, and only the FOLLOWED unit's corridor
+  // gets the live marching dash on top.
+  const rentries = Object.entries(frame.routes || {});
+  for (const [amb, r] of rentries) {
     const n = r.pts.length;
     if (!n) continue;
     const sig = n + ":" + r.pts[0] + ":" + r.pts[n >> 1] + ":" + r.pts[n - 1];
@@ -882,29 +904,71 @@ function render(now) {
         arr[i * 2] = lonToW(r.pts[i][1]);
         arr[i * 2 + 1] = latToW(r.pts[i][0]);
       }
-      rc = { sig, arr };
-      routeCache.set(amb, rc);
+      routeCache.set(amb, { sig, arr });
     }
-    const arr = rc.arr;
-    ctx.beginPath();
-    ctx.moveTo(arr[0] * vpScale - vpX, arr[1] * vpScale - vpY);
+  }
+  // stable colour per unit (index-based colours would repaint every route
+  // when an earlier mission completes); the animated corridor belongs to
+  // the unit the camera follows
+  const routeColor = amb => {
+    let h = 0;
+    for (let i = 0; i < amb.length; i++) h = (h * 31 + amb.charCodeAt(i)) | 0;
+    return ROUTE_COLORS[Math.abs(h) % ROUTE_COLORS.length];
+  };
+  const followId = ambPos.size ? ambPos.keys().next().value : null;
+  let hotIdx = rentries.findIndex(([id, r]) => id === followId && r.lights);
+  if (hotIdx < 0) hotIdx = rentries.findIndex(([, r]) => r.lights);
+  const drawRoute = (g, arr, n, ox, oy, color, alpha, animated) => {
+    g.beginPath();
+    g.moveTo(arr[0] * vpScale - ox, arr[1] * vpScale - oy);
     for (let i = 1; i < n; i++)
-      ctx.lineTo(arr[i * 2] * vpScale - vpX, arr[i * 2 + 1] * vpScale - vpY);
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = r.lights ? 0.85 : 0.3;
-    ctx.lineWidth = 3.5;
-    ctx.setLineDash([10, 8]);
-    ctx.lineDashOffset = -(now / 40) % 18;
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-    const lx = arr[(n - 1) * 2] * vpScale - vpX;
-    const ly = arr[(n - 1) * 2 + 1] * vpScale - vpY;
-    ctx.beginPath(); ctx.arc(lx, ly, 6, 0, 7);
-    ctx.fillStyle = color; ctx.fill();
-    ctx.fillStyle = "#0b0e14";
-    ctx.font = "700 8px sans-serif";
-    ctx.fillText("×", lx - 2.5, ly + 3);
+      g.lineTo(arr[i * 2] * vpScale - ox, arr[i * 2 + 1] * vpScale - oy);
+    g.strokeStyle = color;
+    g.globalAlpha = alpha;
+    g.lineWidth = 3.5;
+    g.setLineDash([10, 8]);
+    g.lineDashOffset = animated ? -(now / 40) % 18 : 0;
+    g.stroke();
+    g.setLineDash([]);
+    g.globalAlpha = 1;
+    const lx = arr[(n - 1) * 2] * vpScale - ox;
+    const ly = arr[(n - 1) * 2 + 1] * vpScale - oy;
+    g.beginPath(); g.arc(lx, ly, 6, 0, 7);
+    g.fillStyle = color; g.fill();
+    g.fillStyle = "#0b0e14";
+    g.font = "700 8px sans-serif";
+    g.fillText("×", lx - 2.5, ly + 3);
+  };
+  const routesSig = vpScale + "|" + rentries.map(([amb, r], i) =>
+    amb + (routeCache.get(amb) || {}).sig + (r.lights ? 1 : 0)).join(";")
+    + "|h" + hotIdx;
+  const PAD = 400;
+  if (!routesMeta || routesMeta.sig !== routesSig
+      || vpX < routesMeta.x0 || vpY < routesMeta.y0
+      || vpX + vw > routesMeta.x0 + routesMeta.w
+      || vpY + vh > routesMeta.y0 + routesMeta.h) {
+    const dpr = _DPR();
+    const w = vw + 2 * PAD, h = vh + 2 * PAD;
+    routesLayer.width = Math.ceil(w * dpr);
+    routesLayer.height = Math.ceil(h * dpr);
+    const g = routesLayer.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const x0 = vpX - PAD, y0 = vpY - PAD;
+    rentries.forEach(([amb, r], i) => {
+      if (i === hotIdx) return;      // the hot corridor is drawn live
+      const rc = routeCache.get(amb);
+      if (rc) drawRoute(g, rc.arr, rc.arr.length / 2, x0, y0,
+                        routeColor(amb), r.lights ? 0.85 : 0.3, false);
+    });
+    routesMeta = { sig: routesSig, x0, y0, w, h };
+  }
+  ctx.drawImage(routesLayer, routesMeta.x0 - vpX, routesMeta.y0 - vpY,
+                routesMeta.w, routesMeta.h);
+  if (hotIdx >= 0) {
+    const [amb, r] = rentries[hotIdx];
+    const rc = routeCache.get(amb);
+    if (rc) drawRoute(ctx, rc.arr, rc.arr.length / 2, vpX, vpY,
+                      routeColor(amb), 0.85, true);
   }
 
   // stop bars + direction chevrons, one per APPROACH (under the cars):
@@ -927,9 +991,15 @@ function render(now) {
         ctx.moveTo(px0 - px_ * half, py0 - py_ * half);
         ctx.lineTo(px0 + px_ * half, py0 + py_ * half);
         ctx.stroke();
-        const ck = apprColor(st.s, ap.idx);
+        let ck = apprColor(st.s, ap.idx);
+        // a junction under emergency control BLINKS for the whole hold:
+        // amber (yield) far out, red (stop) once hardened — unmistakable
+        if (ck === "#ef4444" && (st.m === "preempted" || st.m === "clearing"))
+          ck = "flashred";
         const blinkOn = Math.floor(now / 500) % 2 === 0;
-        const color = ck === "flash" ? (blinkOn ? "#f0b429" : "#3a2f10") : ck;
+        const color = ck === "flash" ? (blinkOn ? "#f0b429" : "#3a2f10")
+                    : ck === "flashred" ? (blinkOn ? "#ef4444" : "#3a1414")
+                    : ck;
         const bx = px0 - tx * 13, by = py0 - ty * 13;    // behind the bar
         ctx.beginPath();
         ctx.moveTo(px0 - tx * 5, py0 - ty * 5);          // tip toward junction
@@ -972,7 +1042,10 @@ function render(now) {
       for (const ap of t.appr || []) {
         const px0 = ap.wx * vpScale - vpX, py0 = ap.wy * vpScale - vpY;
         if (px0 < -24 || py0 < -24 || px0 > vw + 24 || py0 > vh + 24) continue;
-        const color = apprColor(st.s, ap.idx);
+        let color = apprColor(st.s, ap.idx);
+        if (color === "#ef4444"
+            && (st.m === "preempted" || st.m === "clearing"))
+          color = "flashred";   // emergency hold: hardened cross blinks red
         const a = (ap.dir || 0) * Math.PI / 180;
         const off = zoom >= 15.5 ? 11 : 7;
         drawApproachSignal(px0 + Math.cos(a) * off, py0 + Math.sin(a) * off,

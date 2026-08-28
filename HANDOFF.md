@@ -13,7 +13,7 @@ Huawei executive board. Everything must be **observable and real — nothing
 governorates, honest measured claims.
 
 - Repo: https://github.com/myalasad/kuwait-ambulance-sim (public; every
-  version tagged and released, v1.0 … v3.5 — release notes carry the measured
+  version tagged and released, v1.0 … v3.8 — release notes carry the measured
   numbers, cite them instead of re-measuring)
 - Run: `.venv/bin/python run_live.py --port 8642` (the owner runs this in
   their own terminal with `ANTHROPIC_API_KEY` exported for the copilot)
@@ -21,7 +21,7 @@ governorates, honest measured claims.
   `/operations` ops log + cases + DMM · `/protocol` rulebook (categories A–I)
   · `/how` 3-scene explainer · `/copilot` RAG Q&A + Markov skill
 - Handbook (RAG corpus + human docs): `docs/knowledge.md`
-- Tests: `python -m pytest tests/` (closed-form DTMC/CTMC validation)
+- Tests: `.venv/bin/python tests/test_markov.py` (closed-form DTMC/CTMC + forecast-cache validation)
 
 ## Architecture map (one line each)
 
@@ -42,7 +42,22 @@ governorates, honest measured claims.
 | `web/static/` | Leaflet + canvas: A/B snapshot interpolation, 3-lamp fixtures, 3D cars |
 | `scripts/build_network.py` | netconvert + randomTrips + vtypes/sumocfg generation (per scenario) |
 
-## Current state (v3.7, all committed and released)
+## Current state (v3.8, all committed and released)
+
+v3.8 — realism + instant starts: call QUEUEING when every crew is committed
+(no phantom reserve convoys; FIFO with preserved wait provenance; livelock-
+proof bounded serve loop), gate headway, queue-flush lookahead (congested
+signals ahead enabled with 2x lead, sticky against state flicker, protocol
+rule A7), flashing-RED hardened cross approaches (junction blinks the whole
+hold), warm-state caching (cached city loads in ~0.4-3.6 s vs 24-90 s cold;
+refused at demand scales >1.0 — SUMO 1.27 cannot serialise scale clones;
+failed loads relaunch cleanly), call-to-scene response percentiles per
+governorate + queued-calls chip, routes drawn via a cached offscreen layer.
+Verified by an 8-check agent fleet (quality/job-function/optimize/
+smooth-transition/first-spawn/car-spawn/improver/infrastructure); 13
+findings fixed pre-ship.
+
+## Previous state (v3.7)
 
 v3.7 — smooth at 5,000+ vehicles: SUMO step/snapshot/serialise run in a
 worker thread (event loop never blocks; mode switches show progress, worst
