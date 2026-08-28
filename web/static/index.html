@@ -401,6 +401,12 @@ function onFrame(ev) {
   const f = JSON.parse(ev.data);
   syncControls(f);
   if (f.error) { $("status").classList.remove("on"); $("status-text").textContent = f.error; }
+  if (f.warmup) {
+    $("status").classList.add("on");
+    $("status-text").textContent =
+      `Warming up Kuwait traffic — ${Math.round(100 * f.warmup.done / Math.max(f.warmup.total, 1))}%`;
+    return;
+  }
   if (!f.cars) return;              // heartbeat frame
   frame = f;
   const tNow = performance.now();

@@ -184,6 +184,8 @@ class Simulation:
                 self.dispatcher.check_scene_reached(self.time)
             if self.cfg.adaptive_reroute:
                 self.dispatcher.check_stuck(self.time)
+        if self.dispatcher.info:
+            self.dispatcher.check_pending_insertions(self.time)
             self._attribute_delay(active)
         self.controller.update(
             self.dispatcher.active_ambulances(lights_only=True), self.time)

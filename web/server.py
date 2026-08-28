@@ -78,6 +78,9 @@ class Hub:
                     await self._broadcast(frame)
                 await asyncio.sleep(0.1)
                 continue
+            if not getattr(self.sim, "_warmed", False):
+                await self._warmup()
+                continue
             try:
                 self.sim.step()
                 snap = self.sim.snapshot()
@@ -97,6 +100,26 @@ class Hub:
             if next_tick < nowp - 1.0:
                 next_tick = nowp          # fell far behind: resync
             await asyncio.sleep(max(0.002, next_tick - nowp))
+
+    async def _warmup(self):
+        """Fast-forward the first minutes of city time at full speed so the
+        network is already flowing when the first frame is served."""
+        sim = self.sim
+        target = float(getattr(sim.cfg, "warmup_s", 0) or 0)
+        try:
+            while sim.time < target:
+                for _ in range(20):
+                    sim.step()
+                frame = {"t": sim.time, "paused": False, "speed": self.speed,
+                         "error": None,
+                         "warmup": {"done": round(sim.time),
+                                    "total": round(target)}}
+                await self._broadcast(frame)
+                await asyncio.sleep(0)          # keep the server responsive
+        except Exception as exc:
+            self.error = f"Warm-up failed: {exc} — use Reset"
+            print(self.error, file=sys.stderr)
+        sim._warmed = True
 
     async def _drain_commands(self):
         while not self.commands.empty():

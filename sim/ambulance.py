@@ -189,6 +189,8 @@ class Dispatcher:
             "mission": "to_scene",    # to_scene -> loading -> to_hospital
             "hospital": None,
             "loading_started": False,
+            "created": now,
+            "insert_retries": 0,
         }
         self.ops.emit(now, "dispatch",
                       f"{amb_id} dispatched ({from_desc} to {to_desc}): "
@@ -385,6 +387,56 @@ class Dispatcher:
                       actor=amb_id, case=rec["case"])
 
     # ------------------------------------------------- adaptive stuck-reroute
+
+    def check_pending_insertions(self, now):
+        """A dispatched ambulance that cannot enter the road (hospital gate
+        jammed) is reported, and after a minute it is re-placed on the next
+        usable edge — never a silently missing vehicle."""
+        for amb_id, rec in self.info.items():
+            if rec["departed"] is not None or rec["arrived"] is not None:
+                continue
+            waiting = now - rec.get("created", now)
+            if waiting > 20 and not rec.get("insert_warned"):
+                rec["insert_warned"] = True
+                self.ops.emit(now, "lifecycle",
+                              f"{amb_id} is waiting for space to enter the "
+                              f"road (the departure edge is congested) — "
+                              f"re-placement in {60 - int(waiting)} s if it "
+                              f"cannot merge", "warn",
+                              actor=amb_id, case=rec["case"])
+            if waiting > 60 and rec.get("insert_retries", 0) < 2:
+                rec["insert_retries"] += 1
+                rec["created"] = now
+                rec["insert_warned"] = False
+                try:
+                    traci.vehicle.remove(amb_id)
+                except traci.TraCIException:
+                    continue
+                route = rec["route_edges"]
+                # re-enter one edge further along the planned route
+                new_route = route[min(rec["insert_retries"],
+                                      len(route) - 2):]
+                rid = f"route_{amb_id}_r{rec['insert_retries']}"
+                try:
+                    traci.route.add(rid, new_route)
+                    traci.vehicle.add(amb_id, rid,
+                                      typeID=self.cfg.ambulance_type,
+                                      departLane="best", departSpeed="max",
+                                      departPos="free")
+                    traci.vehicle.setSpeedFactor(
+                        amb_id, self.cfg.speed_exemption_factor)
+                    traci.vehicle.setMaxSpeed(
+                        amb_id, self.cfg.ambulance_max_kmh / 3.6)
+                    rec["route_edges"] = new_route
+                    self.ops.emit(now, "lifecycle",
+                                  f"{amb_id} re-placed one block further "
+                                  f"along its route (departure gate was "
+                                  f"blocked for {waiting:.0f} s)", "warn",
+                                  actor=amb_id, case=rec["case"])
+                except traci.TraCIException as exc:
+                    self.ops.emit(now, "error",
+                                  f"{amb_id} re-placement failed ({exc})",
+                                  "error", actor=amb_id, case=rec["case"])
 
     def check_stuck(self, now):
         """An ambulance crawling in a jam re-plans around the blockage: if a

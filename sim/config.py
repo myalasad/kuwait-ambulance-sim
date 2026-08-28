@@ -211,6 +211,9 @@ class SimConfig:
     #                                      intensity on top of the hourly
     #                                      shape (x0.45 / x1.0 / x1.8)
     demand_hours: float = 3.0            # hours of base demand to build
+    warmup_s: float = 420.0              # fast-forwarded on start so the
+    #                                      city is already flowing when the
+    #                                      dashboard opens (0 disables)
 
     # --- routing ---
     route_live_weights: bool = True      # Dijkstra uses live travel times;
