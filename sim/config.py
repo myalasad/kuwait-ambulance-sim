@@ -233,6 +233,12 @@ class SimConfig:
     reroute_to_hospital: bool = True     # on reaching the incident scene the
     #                                      ambulance auto-reroutes to the
     #                                      nearest hospital by travel time
+    hospital_ready_units: int = 2        # ready ambulances stationed per
+    #                                      hospital; a dispatch commits one
+    unit_turnaround_s: float = 180.0     # after delivering a patient the
+    #                                      crew restocks this long before
+    #                                      rejoining the READY pool (at the
+    #                                      hospital it delivered to)
     dispatch_rotation_tolerance: float = 0.25
     #                                      nearest-AVAILABLE-unit dispatch:
     #                                      a hospital whose response time is

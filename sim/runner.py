@@ -20,6 +20,8 @@ from .markov import TrafficMarkov
 from .places import Places
 
 VEH_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED]
+# background cars never need speed in the frame — position + heading only
+CAR_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE]
 
 
 class Simulation:
@@ -40,6 +42,7 @@ class Simulation:
         self.markov = None
         self.time = 0.0
         self.teleports = 0
+        self._limit_cache = {}   # amb id -> (lane, posted limit km/h)
         self._last_seq = 0
         self._tls_static = []  # per-junction geometry for the map
 
@@ -169,7 +172,9 @@ class Simulation:
                               f"ended the moment other traffic arrived, fairness "
                               f"violations {fm['audit']['violations']}", "info")
         for veh_id in traci.simulation.getDepartedIDList():
-            traci.vehicle.subscribe(veh_id, VEH_VARS)
+            traci.vehicle.subscribe(
+                veh_id,
+                VEH_VARS if veh_id.startswith("AMB_") else CAR_VARS)
             self.dispatcher.on_depart(veh_id, self.time)
         for veh_id in traci.simulation.getStartingTeleportIDList():
             self.teleports += 1
@@ -184,6 +189,7 @@ class Simulation:
                 self.dispatcher.check_scene_reached(self.time)
             if self.cfg.adaptive_reroute:
                 self.dispatcher.check_stuck(self.time)
+        self.dispatcher.process_returns(self.time)
         if self.dispatcher.info:
             self.dispatcher.check_pending_insertions(self.time)
             self._attribute_delay(active)
@@ -228,20 +234,52 @@ class Simulation:
         return f"{(total // 3600) % 24:02d}:{(total % 3600) // 60:02d}:" \
                f"{total % 60:02d}"
 
+    def _batch_lonlat(self, xys):
+        """One vectorised inverse projection for the whole vehicle list —
+        the per-vehicle convertXY2LonLat loop was the dominant snapshot
+        cost at 5000 vehicles."""
+        proj = getattr(self.net, "_proj", None)
+        if proj is None or not xys:
+            return [self.net.convertXY2LonLat(x, y) for x, y in xys]
+        ox, oy = self.net.getLocationOffset()
+        xs = [x - ox for x, _ in xys]
+        ys = [y - oy for _, y in xys]
+        lons, lats = proj(xs, ys, inverse=True)
+        return list(zip(lons, lats))
+
     def snapshot(self):
         results = traci.vehicle.getAllSubscriptionResults()
+        ids = list(results)
+        lonlats = self._batch_lonlat(
+            [results[v][tc.VAR_POSITION] for v in ids])
         cars, ambs = [], []
-        for veh_id, vals in results.items():
-            x, y = vals[tc.VAR_POSITION]
-            lon, lat = self.net.convertXY2LonLat(x, y)
+        for veh_id, (lon, lat) in zip(ids, lonlats):
+            # a vehicle mid-teleport has no valid position: SUMO reports an
+            # invalid coordinate that projects to inf/nan — ONE such value
+            # makes the whole frame unparseable JSON in the browser (the
+            # hidden cause of multi-second freezes during teleport storms)
+            if not (math.isfinite(lon) and math.isfinite(lat)):
+                continue
+            vals = results[veh_id]
             angle = round(vals.get(tc.VAR_ANGLE, 0.0), 1)
             if veh_id.startswith("AMB_"):
                 rec = self.dispatcher.info.get(veh_id, {})
+                # the posted limit only changes on a lane change — cached
                 try:
-                    limit = round(traci.lane.getMaxSpeed(
-                        traci.vehicle.getLaneID(veh_id)) * 3.6)
+                    lane = traci.vehicle.getLaneID(veh_id)
                 except traci.TraCIException:
-                    limit = None
+                    lane = None
+                cached = self._limit_cache.get(veh_id)
+                if cached is not None and cached[0] == lane:
+                    limit = cached[1]
+                else:
+                    try:
+                        limit = (round(traci.lane.getMaxSpeed(lane) * 3.6)
+                                 if lane and not lane.startswith(":")
+                                 else None)
+                    except traci.TraCIException:
+                        limit = None
+                    self._limit_cache[veh_id] = (lane, limit)
                 ambs.append({
                     "id": veh_id,
                     "lon": round(lon, 6), "lat": round(lat, 6),
@@ -273,11 +311,13 @@ class Simulation:
         if events:
             self._last_seq = self.ops.ring[-1]["seq"]
 
+        # route overlays straight from the mission records — the full
+        # navigation() payload (rows etc.) is only built for /api/navigation
         routes = {}
-        for nav in self.dispatcher.navigation():
-            if nav["active"]:
-                routes[nav["id"]] = {"pts": nav["geometry"][::2],
-                                     "lights": nav["lights"]}
+        for amb_id, rec in self.dispatcher.info.items():
+            if rec["departed"] is not None and rec["arrived"] is None:
+                routes[amb_id] = {"pts": rec["geometry"][::2],
+                                  "lights": rec["lights"]}
 
         kpi = self.metrics.kpi(len(results), len(ambs),
                                self.controller.active_count())
@@ -304,6 +344,7 @@ class Simulation:
             "kpi": kpi,
             "events": events,
             "routes": routes,
+            "fleet": self.dispatcher.fleet_status(),
             "pending": self.controller.pending_decisions(),
             "preemption": self.controller.enabled,
         }

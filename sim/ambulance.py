@@ -26,10 +26,18 @@ class Dispatcher:
                        if e.allows("passenger") and e.getLength() > 30]
         self._rng = random.Random(1)
         self._logics = {}  # tls id -> cached signal programme phases
+        # Ready-fleet model: each hospital stations a limited number of
+        # ready units; a dispatch commits one, and a unit that delivers a
+        # patient rejoins the RECEIVING hospital's pool after crew
+        # turnaround (capped at the stationed strength).  This is why
+        # consecutive missions do not launch as a convoy from one gate.
+        self._fleet = {}       # hospital -> ready units (filled below)
+        self._returning = []   # (ready_at, hospital, amb_id, origin_hosp)
         # offer only places that actually snap to the modelled network, so
         # the UI never lists a scene or hospital that cannot be reached
         self.hospitals = {n: ll for n, ll in cfg.hospitals_d().items()
                           if self.nearest_edges(ll[0], ll[1], k=1)}
+        self._fleet = {n: cfg.hospital_ready_units for n in self.hospitals}
         self.areas = {n: ll for n, ll in cfg.areas_d().items()
                       if self.nearest_edges(ll[0], ll[1], k=1)}
         dropped = [n for n in cfg.areas_d() if n not in self.areas]
@@ -104,17 +112,28 @@ class Dispatcher:
                     break
             if not ranked:
                 raise ValueError(f"No hospital can reach {to_desc}")
-            # Nearest AVAILABLE unit: among hospitals within the rotation
-            # tolerance of the fastest response, prefer the one with the
-            # fewest units already on mission — real EMS coverage, and it
-            # keeps consecutive runs from all launching at one hospital.
+            # Nearest AVAILABLE unit under the ready-fleet model: only
+            # hospitals with a READY unit are candidates (a dispatch
+            # commits one; delivered crews rejoin after turnaround), and
+            # among those within the rotation tolerance of the fastest,
+            # the one with the fewest units already out responds — real
+            # EMS coverage, and never a convoy from a single gate.
+            self.process_returns(now)
             load = self._hospital_load()
+            cap = self.cfg.hospital_ready_units
+            candidates = [r for r in ranked if self._fleet.get(r[1], 0) > 0]
+            reserve_note = ""
+            if not candidates:
+                candidates = ranked
+                reserve_note = ("; ALL hospital fleets committed or in "
+                                "turnaround — the nearest hospital "
+                                "dispatches its reserve crew")
             tol = 1.0 + self.cfg.dispatch_rotation_tolerance
-            cut = ranked[0][0] * tol
-            pool = [r for r in ranked if r[0] <= cut]
+            cut = candidates[0][0] * tol
+            pool = [r for r in candidates if r[0] <= cut]
             pool.sort(key=lambda r: (load.get(r[1], 0), r[0]))
             chosen = None
-            for eta_est, name, cid in pool + [r for r in ranked
+            for eta_est, name, cid in pool + [r for r in candidates
                                               if r[0] > cut]:
                 r = self.router.route(cid, to_id, live=live)
                 if r:
@@ -128,6 +147,16 @@ class Dispatcher:
             if origin_hospital == nearest_name:
                 from_desc = (f"{origin_hospital} "
                              f"(nearest available hospital to the scene)")
+                rotation_note = reserve_note
+            elif self._fleet.get(nearest_name, 0) <= 0:
+                from_desc = f"{origin_hospital} (nearest READY unit)"
+                rotation_note = (
+                    f"; {nearest_name} is nearest ({nearest_eta:.0f} s) but "
+                    f"has no ready units (0/{cap} — crews on mission or in "
+                    f"turnaround); {origin_hospital} responds in "
+                    f"{eta_est:.0f} s with "
+                    f"{self._fleet.get(origin_hospital, 0)}/{cap} ready"
+                    f"{reserve_note}")
             else:
                 from_desc = f"{origin_hospital} (nearest AVAILABLE unit)"
                 rotation_note = (
@@ -136,7 +165,7 @@ class Dispatcher:
                     f"{load.get(nearest_name, 0)} unit(s) on mission — "
                     f"{origin_hospital} responds in {eta_est:.0f} s, within "
                     f"the {self.cfg.dispatch_rotation_tolerance:.0%} "
-                    f"rotation tolerance")
+                    f"rotation tolerance{reserve_note}")
             algorithm = ("Dijkstra (live + Markov-predicted travel times)"
                              if self.router.predictor is not None
                              else "Dijkstra (live edge travel times)")
@@ -203,6 +232,12 @@ class Dispatcher:
         self.count += 1
         amb_id = f"AMB_{self.count}"
         route_id = f"route_{amb_id}"
+        if origin_hospital:
+            # commit a ready unit from the origin hospital's pool.  No
+            # floor: a reserve dispatch leaves a DEBT that the crew's
+            # eventual return pays back — clamping here would mint units.
+            self._fleet[origin_hospital] = (
+                self._fleet.get(origin_hospital, 0) - 1)
         traci.route.add(route_id, route)
         traci.vehicle.add(amb_id, route_id, typeID=self.cfg.ambulance_type,
                           departLane="best", departSpeed="max")
@@ -259,6 +294,51 @@ class Dispatcher:
                 if h:
                     load[h] = load.get(h, 0) + 1
         return load
+
+    # ------------------------------------------------------------ fleet
+
+    def process_returns(self, now):
+        """Crews finishing turnaround rejoin a ready pool.  Units are
+        conserved: preferably the receiving hospital's pool, else the
+        origin's (which may be repaying a reserve-dispatch debt); only if
+        both are at stationed strength does the crew stand down to
+        reserve."""
+        if not self._returning:
+            return
+        due = [r for r in self._returning if r[0] <= now]
+        if not due:
+            return
+        self._returning = [r for r in self._returning if r[0] > now]
+        cap = self.cfg.hospital_ready_units
+        for _t, hosp, amb_id, origin in due:
+            target = hosp if hosp in self._fleet else None
+            if ((target is None or self._fleet.get(target, 0) >= cap)
+                    and origin in self._fleet
+                    and self._fleet.get(origin, cap) < cap):
+                target = origin
+            if target is None:
+                continue
+            if self._fleet[target] < cap:
+                self._fleet[target] += 1
+                self.ops.emit(now, "lifecycle",
+                              f"{amb_id} crew turnaround complete — unit "
+                              f"READY again at {target} "
+                              f"({self._fleet[target]}/{cap})",
+                              "info", actor=amb_id)
+
+    def _schedule_return(self, rec, amb_id, now):
+        """A closed mission's crew restocks, then rejoins a ready pool.
+        Only units a hospital pool actually paid for return to one —
+        origin_hospital is truthy exactly when dispatch committed a unit."""
+        origin = rec.get("origin_hospital")
+        if origin:
+            hosp = rec.get("hospital") or origin
+            self._returning.append(
+                (now + self.cfg.unit_turnaround_s, hosp, amb_id, origin))
+
+    def fleet_status(self):
+        """hospital -> ready units, for the UI and the ops record."""
+        return dict(self._fleet)
 
     # ------------------------------------------------- arrival-time analysis
 
@@ -512,6 +592,7 @@ class Dispatcher:
                     self.ops.close_case(rec["case"], now,
                                         "re-placement failed after a "
                                         "blocked departure gate", "error")
+                    self._schedule_return(rec, amb_id, now)
 
     def check_stuck(self, now):
         """An ambulance crawling in a jam re-plans around the blockage: if a
@@ -681,6 +762,7 @@ class Dispatcher:
                           "info", actor=veh_id, case=rec["case"])
             self.ops.close_case(rec["case"], now,
                                 f"arrived in {duration:.0f} s")
+        self._schedule_return(rec, veh_id, now)
 
     def check_vanished(self, current_ids, now):
         """An active ambulance missing from the vehicle list without an
@@ -697,6 +779,7 @@ class Dispatcher:
                               "error", actor=amb_id, case=rec["case"])
                 self.ops.close_case(rec["case"], now,
                                     "removed unexpectedly", status="error")
+                self._schedule_return(rec, amb_id, now)
 
     # -------------------------------------------------------------- queries
 
@@ -711,7 +794,7 @@ class Dispatcher:
     def navigation(self):
         """Payload for the navigation page and route overlays."""
         out = []
-        for amb_id, rec in self.info.items():
+        for amb_id, rec in list(self.info.items()):
             out.append({
                 "id": amb_id,
                 "desc": rec["desc"],

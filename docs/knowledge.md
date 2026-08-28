@@ -88,16 +88,23 @@ pages; it opens in VS Code with ready-made launch configurations.
   Markov traffic analytics table.
 
 ## Dispatch and missions
-Ambulances always originate at a hospital. Origin "Auto" dispatches the
-nearest AVAILABLE unit: one backward Dijkstra from the scene ranks every
-hospital's current travel time in a single pass, and a hospital whose
-response time is within the rotation tolerance (dispatch_rotation_tolerance,
-25%) of the fastest may be chosen instead when the fastest already has units
-out on mission — real EMS coverage, so consecutive runs do not all launch
-from one hospital. When the dispatch is rotated, the ruling is written in
-full on the dispatch event ("X is nearest but already has N units on
-mission — Y responds in T s, within the tolerance"). The incident scene is a
-map click or a named area. A mission has three phases: to scene; loading the
+Ambulances always originate at a hospital, under a READY-FLEET model: each
+hospital stations hospital_ready_units (2) ready ambulances. A dispatch
+commits one; a crew that delivers a patient rejoins the RECEIVING hospital's
+pool only after unit_turnaround_s (180 s) of restocking, logged as "unit
+READY again at X (n/2)". Origin "Auto" dispatches the nearest AVAILABLE
+unit: one backward Dijkstra from the scene ranks every hospital's current
+travel time in a single pass; only hospitals with a ready unit are
+candidates, and among those within the rotation tolerance
+(dispatch_rotation_tolerance, 25%) of the fastest, the one with the fewest
+crews already out responds — real EMS coverage, and never a convoy of
+consecutive units from a single gate. If every fleet is committed or in
+turnaround, the nearest hospital dispatches its reserve crew and the event
+says so. Whenever the responding hospital is not the nearest one, the full
+ruling is written on the dispatch event ("X is nearest but has no ready
+units (0/2 — crews on mission or in turnaround); Y responds in T s with 1/2
+ready"). Live ready counts appear under every hospital marker on the map.
+The incident scene is a map click or a named area. A mission has three phases: to scene; loading the
 patient at the scene (40 s stop, during which the corridor is paused so cross
 streets are not held for a stationary vehicle); and hot return, when the
 ambulance is automatically rerouted to the nearest hospital by travel time and
@@ -329,7 +336,23 @@ relaxation of every Dijkstra — thousands of matrix exponentials per
 dispatch); with the per-tick forecast cache (results are exact within one
 30 s sample tick) and the one-pass hospital ranking, the same dispatch
 completes in well under half a second and the map never freezes on the
-button.
+button. At the Extreme load (5,000+ vehicles) SUMO's own physics step is
+90% of the frame cost (~330 ms typical); the server therefore runs the
+step, the snapshot and the JSON serialisation in a worker thread so the
+event loop — websockets, every page, the dispatch button — never blocks,
+and the browser bridges a late frame by extrapolating motion. The Markov
+sampling of 160 corridors, which used to land as one ~370 ms spike every
+30 s, is spread across the step grid (each corridor still observed every
+30 s exactly). Snapshot production batch-projects all vehicle positions in
+one call, and the map renders cars from pre-baked sprites with one
+multiply-add per axis per car instead of per-car projection — smooth at
+5,000 cars. Scenario/mode switches rebuild SUMO off the event loop with a
+progress indicator instead of freezing the screen (measured: worst frame
+gap 447 ms through a full teardown, relaunch and Extreme warm-up). A
+vehicle mid-teleport reports no valid position and is excluded from the
+frame — one infinite coordinate used to make the entire frame unparseable
+in the browser, the hidden cause of multi-second freeze bursts during
+teleport storms at Extreme.
 
 ## The copilot itself
 The copilot is a retrieval-augmented assistant. Its corpus is built from the

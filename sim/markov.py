@@ -215,6 +215,7 @@ class TrafficMarkov:
         # to 15 s buckets; both caches are cleared every sample tick.
         self._fc_cache = {}       # (chain id, state, bucket) -> row
         self._q_cache = {}        # chain id -> generator matrix
+        self._slice_i = 0         # rotating sampling slice (see update)
 
         # Monitor where traffic actually CHANGES state: the approaches to
         # signalized junctions (queues form and clear there) first, then the
@@ -276,30 +277,52 @@ class TrafficMarkov:
         except OSError:
             pass
 
+    # sampling is spread over this many slices so no single frame carries
+    # the whole 160-edge sweep (measured: an all-at-once tick added ~370 ms
+    # to one frame in 60 at 5000 vehicles); each edge is still observed
+    # exactly every `period` seconds
+    N_SLICES = 60
+
     def update(self, now):
-        """Call every simulation step; samples every `period` sim-seconds."""
-        if now < self._next_sample:
-            return
-        self._next_sample = now + self.period
-        self._fc_cache.clear()
-        self._q_cache.clear()
-        for eid in self.monitored:
-            try:
-                speed = traci.edge.getLastStepMeanSpeed(eid)
-            except traci.TraCIException:
-                continue
-            state = classify(speed, self._limits.get(eid, 13.9))
-            self.state_now[eid] = state
-            self.chains.setdefault(eid, _Chain()).observe(state, now)
-            self.chains.setdefault(self._edge_class[eid],
-                                   _Chain()).observe(state, now)
-        self._score_due(now)
-        self._file_forecasts(now)
+        """Call every simulation step; each edge is sampled every `period`
+        sim-seconds, staggered across N_SLICES slices of the step grid.
+        The deadline grid catches up if steps are coarser than a slice,
+        so the per-edge cadence stays `period` for any step length."""
+        dt = self.period / self.N_SLICES
+        fired = 0
+        while now >= self._next_sample - 1e-9 and fired < self.N_SLICES:
+            self._next_sample += dt
+            fired += 1
+            i = self._slice_i
+            self._slice_i = (i + 1) % self.N_SLICES
+            batch = self.monitored[i::self.N_SLICES]
+            for eid in batch:
+                try:
+                    speed = traci.edge.getLastStepMeanSpeed(eid)
+                except traci.TraCIException:
+                    continue
+                state = classify(speed, self._limits.get(eid, 13.9))
+                self.state_now[eid] = state
+                self.chains.setdefault(eid, _Chain()).observe(state, now)
+                self.chains.setdefault(self._edge_class[eid],
+                                       _Chain()).observe(state, now)
+            # the ledger files and scores in the same slices as sampling,
+            # so no single frame carries the full 160-corridor sweep
+            self._score_due(now)
+            self._file_forecasts(now, batch)
+            if self._slice_i == 0:
+                # full rotation complete: forecasts may see the fresh
+                # chains (within a rotation they stay cached — the same
+                # <=period staleness the all-at-once tick had)
+                self._fc_cache.clear()
+                self._q_cache.clear()
+        if self._next_sample <= now:
+            self._next_sample = now + dt
 
     # ------------------------------------------- forecast ledger (observable)
 
-    def _file_forecasts(self, now):
-        for eid in self.monitored:
+    def _file_forecasts(self, now, edges=None):
+        for eid in (self.monitored if edges is None else edges):
             chain = self._chain_for(eid)
             if chain is None or chain.n < self.cfg.markov_min_obs:
                 continue

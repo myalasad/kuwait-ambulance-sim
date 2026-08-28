@@ -303,6 +303,13 @@ fetch("/api/network").then(r => r.json()).then(net => {
   L.polyline(minor, { color: "#273246", weight: 1.5, opacity: .8, interactive: false }).addTo(map);
   L.polyline(major, { color: "#33415c", weight: 3, opacity: .9, interactive: false }).addTo(map);
   tlsStatic = net.tls;
+  // pre-project static geometry into world coordinates once
+  for (const t of tlsStatic) {
+    t.wx = lonToW(t.lon); t.wy = latToW(t.lat);
+    for (const ap of t.appr || []) {
+      ap.wx = lonToW(ap.lon); ap.wy = latToW(ap.lat);
+    }
+  }
   for (const t of tlsStatic) tlsName.set(t.id, `${t.code} · ${t.name}`);
   const sel = $("origin");
   const auto = document.createElement("option");
@@ -311,11 +318,14 @@ fetch("/api/network").then(r => r.json()).then(net => {
   sel.appendChild(auto);
   const hgroups = new Map();
   for (const h of net.hospitals) {
-    L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "",
-      html: '<div style="font-size:20px;filter:drop-shadow(0 0 3px #000)">🏥</div>',
-      iconSize: [20, 20], iconAnchor: [10, 10] }) })
+    const mk = L.marker([h.lat, h.lon], { icon: L.divIcon({ className: "",
+      html: '<div style="text-align:center"><div style="font-size:20px;filter:drop-shadow(0 0 3px #000)">🏥</div>' +
+            '<div class="fleetbadge" style="font-size:9px;font-weight:700;background:rgba(8,11,17,.75);' +
+            'border-radius:6px;padding:0 4px;margin-top:-2px;color:#8fa3bd;white-space:nowrap"></div></div>',
+      iconSize: [44, 32], iconAnchor: [22, 12] }) })
       .addTo(map).bindTooltip(h.name)
       .on("click", e => map.fire("click", { latlng: e.latlng }));
+    hospMarkers.set(h.name, mk);
     const g = govOf(h.name);
     if (!hgroups.has(g)) {
       const og = document.createElement("optgroup");
@@ -382,6 +392,9 @@ fetch("/api/network").then(r => r.json()).then(net => {
 let frame = null;
 const carPos = new Map();
 const ambPos = new Map();
+const hospMarkers = new Map();      // hospital name -> Leaflet marker
+const fleetShown = new Map();       // hospital name -> last badge text
+const routeCache = new Map();       // amb id -> projected route points
 window.__dbg = { get amb() { return ambPos; }, get cars() { return carPos; } };  // test hook
 const restoredBadges = new Map();   // tls id -> hide-at wall time
 
@@ -411,17 +424,36 @@ function onFrame(ev) {
   }
   if (!f.cars) return;              // heartbeat frame
   frame = f;
+  if (f.fleet) {
+    for (const [name, n] of Object.entries(f.fleet)) {
+      const txt = `${Math.max(0, n)} ready`;
+      if (fleetShown.get(name) === txt) continue;
+      const mk = hospMarkers.get(name);
+      const el = mk && mk.getElement && mk.getElement();
+      const badge = el && el.querySelector(".fleetbadge");
+      if (badge) {
+        // mark shown only once written, so early frames retry until the
+        // marker DOM exists
+        fleetShown.set(name, txt);
+        badge.textContent = txt;
+        badge.style.color = n > 1 ? "#22c55e" : n === 1 ? "#f0b429" : "#ef4444";
+      }
+    }
+  }
   const tNow = performance.now();
   const seen = new Set();
   for (const [id, lon, lat, ang] of f.cars) {
     seen.add(id);
+    // project ONCE per network frame into mercator world coordinates;
+    // the render loop then never touches Leaflet per car
+    const wx = lonToW(lon), wy = latToW(lat);
     const p = carPos.get(id);
     if (!p) {
       let h = 0;
       for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
       carPos.set(id, {
-        A: { lon, lat, ang: ang || 0, t: tNow - 500 },
-        B: { lon, lat, ang: ang || 0, t: tNow }, dt: 500,
+        A: { wx, wy, ang: ang || 0, t: tNow - 500 },
+        B: { wx, wy, ang: ang || 0, t: tNow }, dt: 500,
         col: CAR_COLORS[Math.abs(h) % CAR_COLORS.length] });
       continue;
     }
@@ -430,13 +462,13 @@ function onFrame(ev) {
     while (d > 180) { a2 -= 360; d = a2 - p.B.ang; }
     while (d < -180) { a2 += 360; d = a2 - p.B.ang; }
     const step = tNow - p.B.t;
-    if (Math.hypot(lon - p.B.lon, lat - p.B.lat) > 0.002 || step > 3000) {
-      p.A = { lon, lat, ang: a2, t: tNow - p.dt };   // teleport: snap
+    if (Math.hypot(wx - p.B.wx, wy - p.B.wy) > 0.0014 || step > 3000) {
+      p.A = { wx, wy, ang: a2, t: tNow - p.dt };     // teleport: snap
     } else {
       p.A = p.B;
       p.dt = p.dt * 0.7 + Math.min(1500, step) * 0.3;
     }
-    p.B = { lon, lat, ang: a2, t: tNow };
+    p.B = { wx, wy, ang: a2, t: tNow };
   }
   for (const id of carPos.keys()) if (!seen.has(id)) carPos.delete(id);
   // ambulances: buffer the last two snapshots for constant-velocity
@@ -444,11 +476,12 @@ function onFrame(ev) {
   const seenA = new Set();
   for (const a of f.ambs) {
     seenA.add(a.id);
+    const wx = lonToW(a.lon), wy = latToW(a.lat);
     const p = ambPos.get(a.id);
     if (!p) {
       ambPos.set(a.id, {
-        A: { lon: a.lon, lat: a.lat, ang: a.angle, t: tNow - 500 },
-        B: { lon: a.lon, lat: a.lat, ang: a.angle, t: tNow },
+        A: { wx, wy, ang: a.angle, t: tNow - 500 },
+        B: { wx, wy, ang: a.angle, t: tNow },
         dt: 500, kmh: a.kmh, lights: a.lights, limit: a.limit });
       continue;
     }
@@ -457,16 +490,18 @@ function onFrame(ev) {
     while (d > 180) { ang -= 360; d = ang - p.B.ang; }
     while (d < -180) { ang += 360; d = ang - p.B.ang; }
     const step = tNow - p.B.t;
-    if (Math.hypot(a.lon - p.B.lon, a.lat - p.B.lat) > 0.002 || step > 3000) {
-      p.A = { lon: a.lon, lat: a.lat, ang, t: tNow - p.dt };  // teleport: snap
+    if (Math.hypot(wx - p.B.wx, wy - p.B.wy) > 0.0014 || step > 3000) {
+      p.A = { wx, wy, ang, t: tNow - p.dt };         // teleport: snap
     } else {
       p.A = p.B;
       p.dt = p.dt * 0.7 + Math.min(1500, step) * 0.3;
     }
-    p.B = { lon: a.lon, lat: a.lat, ang, t: tNow };
+    p.B = { wx, wy, ang, t: tNow };
     p.kmh = a.kmh; p.lights = a.lights; p.limit = a.limit;
   }
   for (const id of ambPos.keys()) if (!seenA.has(id)) ambPos.delete(id);
+  for (const id of routeCache.keys())
+    if (!(f.routes && f.routes[id])) routeCache.delete(id);
 
   updatePanel(f);
   updateDecisions(f);
@@ -571,33 +606,92 @@ const SIG = { G: "#22c55e", g: "#22c55e", y: "#f0b429", Y: "#f0b429",
 const CAR_COLORS = ["#8fa3bd", "#a08f6e", "#6e8fa0", "#7a6a9c", "#4f8f7a",
                     "#a37f8a", "#b7bdc7", "#5b7ea8", "#8a8f66", "#7d94ab"];
 
+// ---- fast world-pixel projection --------------------------------------
+// Positions are stored ONCE per network frame as spherical-mercator world
+// coordinates (0..256 at zoom 0); each rAF frame then needs only one
+// multiply-add per entity instead of a Leaflet LatLng+Point allocation —
+// at 5000 cars x 60 fps that is the difference between jank and smooth.
+function lonToW(lon) { return (lon + 180) / 360 * 256; }
+function latToW(lat) {
+  const s = Math.sin(lat * Math.PI / 180);
+  return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256;
+}
+function lonFromW(wx) { return wx / 256 * 360 - 180; }
+function latFromW(wy) {
+  return Math.atan(Math.sinh(Math.PI * (1 - 2 * wy / 256))) * 180 / Math.PI;
+}
+let vpScale = 1, vpX = 0, vpY = 0;     // view transform, updated per rAF
+function updateViewTransform(zoom) {
+  vpScale = Math.pow(2, zoom);
+  const pb = map.getPixelBounds().min;
+  vpX = pb.x; vpY = pb.y;
+}
+
+// ---- sprite cache ------------------------------------------------------
+// Car bodies and signal fixtures are baked once per (variant, zoom tier)
+// into offscreen canvases and stamped with drawImage; nothing re-paths
+// gradients or shadows per entity per frame.
+const spriteCache = new Map();
+function bakeSprite(key, w, h, draw) {
+  let s = spriteCache.get(key);
+  if (s) return s;
+  const dpr = Math.min(devicePixelRatio || 1, 3);
+  const c = document.createElement("canvas");
+  c.width = Math.ceil(w * dpr); c.height = Math.ceil(h * dpr);
+  const g = c.getContext("2d");
+  g.scale(dpr, dpr);
+  g.translate(w / 2, h / 2);
+  draw(g);
+  s = { c, w, h };
+  spriteCache.set(key, s);
+  return s;
+}
+
 // pseudo-3D car: shadowed rounded body, roof highlight, windows — heading
 // along its travel direction.  mode 1 = simple, mode 2 = full detail.
-function drawMiniCar(x, y, angDeg, color, mode, zoom) {
-  const rot = (angDeg - 90) * Math.PI / 180;
+function carSprite(color, mode, zoom) {
   const L = zoom >= 17 ? 16 : zoom >= 16 ? 13 : 10.5;
   const W = L * 0.52;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(rot);
-  if (mode === 2 && zoom >= 16) {
-    ctx.beginPath();
-    ctx.ellipse(1, 1.6, L * 0.6, W * 0.72, 0, 0, 7);
-    ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fill();
-  }
-  roundRect(ctx, -L / 2, -W / 2, L, W, W * 0.35);
-  ctx.fillStyle = color; ctx.fill();
-  if (mode === 2) {
-    ctx.fillStyle = "rgba(255,255,255,.26)";
-    roundRect(ctx, -L / 2, -W / 2, L, W * 0.45, W * 0.35); ctx.fill();
-    ctx.fillStyle = "#1b2433";
-    roundRect(ctx, L * 0.12, -W * 0.36, L * 0.22, W * 0.72, 1.5); ctx.fill();
-    roundRect(ctx, -L * 0.34, -W * 0.33, L * 0.14, W * 0.66, 1.2); ctx.fill();
-  } else {
-    ctx.fillStyle = "#1b2433";
-    roundRect(ctx, L * 0.1, -W * 0.35, L * 0.22, W * 0.7, 1.2); ctx.fill();
-  }
-  ctx.restore();
+  const shadow = mode === 2 && zoom >= 16;
+  return bakeSprite(`car|${color}|${mode}|${L}|${shadow}`,
+                    L + 8, L + 8, g => {
+    if (shadow) {
+      g.beginPath();
+      g.ellipse(1, 1.6, L * 0.6, W * 0.72, 0, 0, 7);
+      g.fillStyle = "rgba(0,0,0,.35)"; g.fill();
+    }
+    roundRect(g, -L / 2, -W / 2, L, W, W * 0.35);
+    g.fillStyle = color; g.fill();
+    if (mode === 2) {
+      g.fillStyle = "rgba(255,255,255,.26)";
+      roundRect(g, -L / 2, -W / 2, L, W * 0.45, W * 0.35); g.fill();
+      g.fillStyle = "#1b2433";
+      roundRect(g, L * 0.12, -W * 0.36, L * 0.22, W * 0.72, 1.5); g.fill();
+      roundRect(g, -L * 0.34, -W * 0.33, L * 0.14, W * 0.66, 1.2); g.fill();
+    } else {
+      g.fillStyle = "#1b2433";
+      roundRect(g, L * 0.1, -W * 0.35, L * 0.22, W * 0.7, 1.2); g.fill();
+    }
+  });
+}
+
+// stamp a sprite rotated about (x, y); resets the transform to dpr-scale
+const _DPR = () => devicePixelRatio || 1;
+function stampSprite(s, x, y, rot) {
+  const dpr = _DPR();
+  const cos = Math.cos(rot), sin = Math.sin(rot);
+  ctx.setTransform(dpr * cos, dpr * sin, -dpr * sin, dpr * cos,
+                   x * dpr, y * dpr);
+  ctx.drawImage(s.c, -s.w / 2, -s.h / 2, s.w, s.h);
+}
+function resetTransform() {
+  const dpr = _DPR();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawMiniCar(x, y, angDeg, color, mode, zoom) {
+  stampSprite(carSprite(color, mode, zoom), x, y,
+              (angDeg - 90) * Math.PI / 180);
 }
 
 // aggregate colour for one approach: green if any lane may go, amber if
@@ -616,40 +710,44 @@ function apprColor(state, idx) {
 }
 
 // per-approach signal: the SAME 3-lamp fixture as the junction housing,
-// scaled down — casing, three lamps, the approach's lamp lit and glowing
+// scaled down — casing, three lamps, the approach's lamp lit and glowing.
+// Baked per (lit lamp, zoom tier); "flash" alternates two baked frames.
+function fixtureSprite(lit, s) {
+  const w = 13, h = 30;
+  return bakeSprite(`fix|${lit}|${s}`, (w + 14) * s, (h + 12) * s, g => {
+    g.scale(s, s);
+    g.beginPath();
+    g.ellipse(1, h / 2 + 3, 8, 3, 0, 0, 7);
+    g.fillStyle = "rgba(0,0,0,.45)"; g.fill();
+    const grad = g.createLinearGradient(-w / 2, 0, w / 2, 0);
+    grad.addColorStop(0, "#3a4454");
+    grad.addColorStop(.5, "#181d27");
+    grad.addColorStop(1, "#0c0f15");
+    roundRect(g, -w / 2, -h / 2, w, h, 6);
+    g.fillStyle = grad; g.fill();
+    g.strokeStyle = "#4a586d"; g.lineWidth = 1.2; g.stroke();
+    const lamps = [["#ef4444", "#3a1414"], ["#f0b429", "#3a2f10"],
+                   ["#22c55e", "#123a20"]];
+    for (let i = 0; i < 3; i++) {
+      g.beginPath();
+      g.arc(0, -h / 2 + 6.5 + i * 8.5, 3.4, 0, 7);
+      if (i === lit) {
+        g.fillStyle = lamps[i][0];
+        g.shadowColor = lamps[i][0]; g.shadowBlur = 9;
+        g.fill(); g.shadowBlur = 0;
+      } else { g.fillStyle = lamps[i][1]; g.fill(); }
+    }
+  });
+}
 function drawApproachSignal(x, y, color, zoom, blinkOn) {
   const s = zoom >= 17 ? 0.85 : zoom >= 16 ? 0.68 : zoom >= 15.5 ? 0.58
           : zoom >= 14.5 ? 0.48 : 0.4;
-  const w = 13, h = 30;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(s, s);
-  ctx.beginPath();
-  ctx.ellipse(1, h / 2 + 3, 8, 3, 0, 0, 7);
-  ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fill();
-  const grad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
-  grad.addColorStop(0, "#3a4454");
-  grad.addColorStop(.5, "#181d27");
-  grad.addColorStop(1, "#0c0f15");
-  roundRect(ctx, -w / 2, -h / 2, w, h, 6);
-  ctx.fillStyle = grad; ctx.fill();
-  ctx.strokeStyle = "#4a586d"; ctx.lineWidth = 1.2; ctx.stroke();
-  const lamps = [["#ef4444", "#3a1414"], ["#f0b429", "#3a2f10"],
-                 ["#22c55e", "#123a20"]];
   // "flash": cross-street flasher during a corridor hold — the amber lamp
   // blinks (~1 Hz) and no other lamp is lit
   const lit = color === "flash" ? (blinkOn ? 1 : -1)
             : color === "#22c55e" ? 2 : color === "#f0b429" ? 1 : 0;
-  for (let i = 0; i < 3; i++) {
-    ctx.beginPath();
-    ctx.arc(0, -h / 2 + 6.5 + i * 8.5, 3.4, 0, 7);
-    if (i === lit) {
-      ctx.fillStyle = lamps[i][0];
-      ctx.shadowColor = lamps[i][0]; ctx.shadowBlur = 9;
-      ctx.fill(); ctx.shadowBlur = 0;
-    } else { ctx.fillStyle = lamps[i][1]; ctx.fill(); }
-  }
-  ctx.restore();
+  const spr = fixtureSprite(lit, s);
+  ctx.drawImage(spr.c, x - spr.w / 2, y - spr.h / 2, spr.w, spr.h);
 }
 
 function roundRect(c, x, y, w, h, r) {
@@ -760,7 +858,6 @@ function drawAmbulance(cx, cy, angleDeg, blue, lightsOn, label) {
   }
 }
 
-let lastRender = 0;
 function render(now) {
   requestAnimationFrame(render);
   const vw = canvas.clientWidth, vh = canvas.clientHeight;
@@ -768,22 +865,31 @@ function render(now) {
   ctx.clearRect(0, 0, vw, vh);
   if (!frame) return;
   const zoom = map.getZoom();
-  // frame-rate-independent smoothing factor for the car dots
-  const dtf = Math.min(0.1, (now - lastRender) / 1000 || 0.016);
-  lastRender = now;
-  const k = 1 - Math.exp(-12 * dtf);
+  updateViewTransform(zoom);
 
-  // planned routes (Dijkstra corridors), marching toward the destination
+  // planned routes (Dijkstra corridors), marching toward the destination.
+  // Projected once per route change into a typed array, not per frame.
   let ci = 0;
   for (const [amb, r] of Object.entries(frame.routes || {})) {
     const color = ROUTE_COLORS[ci++ % ROUTE_COLORS.length];
-    ctx.beginPath();
-    let first = true;
-    for (const [lat, lon] of r.pts) {
-      const p = map.latLngToContainerPoint([lat, lon]);
-      if (first) { ctx.moveTo(p.x, p.y); first = false; }
-      else ctx.lineTo(p.x, p.y);
+    const n = r.pts.length;
+    if (!n) continue;
+    const sig = n + ":" + r.pts[0] + ":" + r.pts[n >> 1] + ":" + r.pts[n - 1];
+    let rc = routeCache.get(amb);
+    if (!rc || rc.sig !== sig) {
+      const arr = new Float64Array(n * 2);
+      for (let i = 0; i < n; i++) {
+        arr[i * 2] = lonToW(r.pts[i][1]);
+        arr[i * 2 + 1] = latToW(r.pts[i][0]);
+      }
+      rc = { sig, arr };
+      routeCache.set(amb, rc);
     }
+    const arr = rc.arr;
+    ctx.beginPath();
+    ctx.moveTo(arr[0] * vpScale - vpX, arr[1] * vpScale - vpY);
+    for (let i = 1; i < n; i++)
+      ctx.lineTo(arr[i * 2] * vpScale - vpX, arr[i * 2 + 1] * vpScale - vpY);
     ctx.strokeStyle = color;
     ctx.globalAlpha = r.lights ? 0.85 : 0.3;
     ctx.lineWidth = 3.5;
@@ -792,15 +898,13 @@ function render(now) {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
-    const last = r.pts[r.pts.length - 1];
-    if (last) {
-      const p = map.latLngToContainerPoint(last);
-      ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 7);
-      ctx.fillStyle = color; ctx.fill();
-      ctx.fillStyle = "#0b0e14";
-      ctx.font = "700 8px sans-serif";
-      ctx.fillText("×", p.x - 2.5, p.y + 3);
-    }
+    const lx = arr[(n - 1) * 2] * vpScale - vpX;
+    const ly = arr[(n - 1) * 2 + 1] * vpScale - vpY;
+    ctx.beginPath(); ctx.arc(lx, ly, 6, 0, 7);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.fillStyle = "#0b0e14";
+    ctx.font = "700 8px sans-serif";
+    ctx.fillText("×", lx - 2.5, ly + 3);
   }
 
   // stop bars + direction chevrons, one per APPROACH (under the cars):
@@ -811,8 +915,8 @@ function render(now) {
       const st = frame.tls[t.id];
       if (!st) continue;
       for (const ap of t.appr || []) {
-        const p = map.latLngToContainerPoint([ap.lat, ap.lon]);
-        if (p.x < -24 || p.y < -24 || p.x > vw + 24 || p.y > vh + 24) continue;
+        const px0 = ap.wx * vpScale - vpX, py0 = ap.wy * vpScale - vpY;
+        if (px0 < -24 || py0 < -24 || px0 > vw + 24 || py0 > vh + 24) continue;
         const a = (ap.dir || 0) * Math.PI / 180;
         const px_ = Math.cos(a), py_ = Math.sin(a);      // perp (screen)
         const tx = Math.sin(a), ty = -Math.cos(a);       // travel (screen)
@@ -820,15 +924,15 @@ function render(now) {
         ctx.strokeStyle = "rgba(232,237,246,.8)";
         ctx.lineWidth = zoom >= 16.5 ? 3 : 2;
         ctx.beginPath();
-        ctx.moveTo(p.x - px_ * half, p.y - py_ * half);
-        ctx.lineTo(p.x + px_ * half, p.y + py_ * half);
+        ctx.moveTo(px0 - px_ * half, py0 - py_ * half);
+        ctx.lineTo(px0 + px_ * half, py0 + py_ * half);
         ctx.stroke();
         const ck = apprColor(st.s, ap.idx);
         const blinkOn = Math.floor(now / 500) % 2 === 0;
         const color = ck === "flash" ? (blinkOn ? "#f0b429" : "#3a2f10") : ck;
-        const bx = p.x - tx * 13, by = p.y - ty * 13;    // behind the bar
+        const bx = px0 - tx * 13, by = py0 - ty * 13;    // behind the bar
         ctx.beginPath();
-        ctx.moveTo(p.x - tx * 5, p.y - ty * 5);          // tip toward junction
+        ctx.moveTo(px0 - tx * 5, py0 - ty * 5);          // tip toward junction
         ctx.lineTo(bx - px_ * 4.5, by - py_ * 4.5);
         ctx.lineTo(bx + px_ * 4.5, by + py_ * 4.5);
         ctx.closePath();
@@ -840,24 +944,24 @@ function render(now) {
     }
   }
 
-  // cars: dots far out, 3D bodies up close
+  // cars: dots far out, 3D sprites up close.  Interpolation runs in world
+  // coordinates (one multiply-add per axis), the extrapolation cap of 1.6
+  // bridges one late network frame without freezing the traffic.
   const carMode = zoom >= 15.5 ? 2 : zoom >= 14 ? 1 : 0;
   for (const p of carPos.values()) {
-    const u = Math.max(0, Math.min((now - p.B.t) / Math.max(p.dt, 16), 1.15));
-    const lon = p.A.lon + (p.B.lon - p.A.lon) * u;
-    const lat = p.A.lat + (p.B.lat - p.A.lat) * u;
-    const ang = p.A.ang + (p.B.ang - p.A.ang) * u;
-    const c = map.latLngToContainerPoint([lat, lon]);
-    if (c.x < -14 || c.y < -14 || c.x > vw + 14 || c.y > vh + 14) continue;
+    const u = Math.max(0, Math.min((now - p.B.t) / Math.max(p.dt, 16), 1.6));
+    const cx = (p.A.wx + (p.B.wx - p.A.wx) * u) * vpScale - vpX;
+    const cy = (p.A.wy + (p.B.wy - p.A.wy) * u) * vpScale - vpY;
+    if (cx < -14 || cy < -14 || cx > vw + 14 || cy > vh + 14) continue;
     if (carMode === 0) {
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, 2.2, 0, 7);
       ctx.fillStyle = p.col;
-      ctx.fill();
+      ctx.fillRect(cx - 2, cy - 2, 4, 4);
     } else {
-      drawMiniCar(c.x, c.y, ang, p.col, carMode, zoom);
+      const ang = p.A.ang + (p.B.ang - p.A.ang) * u;
+      drawMiniCar(cx, cy, ang, p.col, carMode, zoom);
     }
   }
+  resetTransform();          // sprite stamps leave a rotated transform
 
   // ONE signal per approach — always the full 3-lamp fixture, standing on
   // the right of its traffic like a real installation
@@ -866,12 +970,12 @@ function render(now) {
       const st = frame.tls[t.id];
       if (!st) continue;
       for (const ap of t.appr || []) {
-        const p = map.latLngToContainerPoint([ap.lat, ap.lon]);
-        if (p.x < -24 || p.y < -24 || p.x > vw + 24 || p.y > vh + 24) continue;
+        const px0 = ap.wx * vpScale - vpX, py0 = ap.wy * vpScale - vpY;
+        if (px0 < -24 || py0 < -24 || px0 > vw + 24 || py0 > vh + 24) continue;
         const color = apprColor(st.s, ap.idx);
         const a = (ap.dir || 0) * Math.PI / 180;
         const off = zoom >= 15.5 ? 11 : 7;
-        drawApproachSignal(p.x + Math.cos(a) * off, p.y + Math.sin(a) * off,
+        drawApproachSignal(px0 + Math.cos(a) * off, py0 + Math.sin(a) * off,
                            color, zoom, Math.floor(now / 500) % 2 === 0);
       }
     }
@@ -893,7 +997,7 @@ function render(now) {
       if (!st) continue;
       if (zoom >= 15.5 && st.m === "normal"
           && !(restoredBadges.get(t.id) > Date.now())) continue;
-      const c = map.latLngToContainerPoint([t.lat, t.lon]);
+      const c = { x: t.wx * vpScale - vpX, y: t.wy * vpScale - vpY };
       if (c.x < -30 || c.y < -30 || c.x > vw + 30 || c.y > vh + 30) continue;
       // joined/adjacent junctions a few pixels apart share one badge
       if (placed.some(q => Math.hypot(q[0] - c.x, q[1] - c.y) < 26 * hs)) continue;
@@ -923,7 +1027,7 @@ function render(now) {
     for (const t of tlsStatic) {
       const st = frame.tls[t.id];
       if (!st || st.m !== "normal") continue;
-      const c = map.latLngToContainerPoint([t.lat, t.lon]);
+      const c = { x: t.wx * vpScale - vpX, y: t.wy * vpScale - vpY };
       if (c.x < -40 || c.y < -40 || c.x > vw + 40 || c.y > vh + 40) continue;
       if (tagged.some(q => Math.hypot(q[0] - c.x, q[1] - c.y) < 34)) continue;
       tagged.push([c.x, c.y]);
@@ -937,37 +1041,56 @@ function render(now) {
 
   $("zoomhint").style.display = zoom < 14.5 ? "block" : "none";
 
-  // ambulances: constant-velocity interpolation between snapshots
+  // ambulances: constant-velocity interpolation between snapshots (the
+  // 2.0 cap lets the unit keep gliding across a brief server stall)
   const blue = Math.floor(now / 260) % 2 === 0;
   let followed = false;
+  const labels = [];
   for (const [id, p] of ambPos) {
-    const u = Math.max(0, Math.min((now - p.B.t) / Math.max(p.dt, 16), 1.15));
-    const iLon = p.A.lon + (p.B.lon - p.A.lon) * u;
-    const iLat = p.A.lat + (p.B.lat - p.A.lat) * u;
+    const u = Math.max(0, Math.min((now - p.B.t) / Math.max(p.dt, 16), 2.0));
+    const iwx = p.A.wx + (p.B.wx - p.A.wx) * u;
+    const iwy = p.A.wy + (p.B.wy - p.A.wy) * u;
     const iAng = p.A.ang + (p.B.ang - p.A.ang) * u;
-    const c = map.latLngToContainerPoint([iLat, iLon]);
+    const cx = iwx * vpScale - vpX, cy = iwy * vpScale - vpY;
     if (p.lights) {
-      const grad = ctx.createRadialGradient(c.x, c.y, 3, c.x, c.y, 22);
+      const grad = ctx.createRadialGradient(cx, cy, 3, cx, cy, 22);
       grad.addColorStop(0, blue ? "rgba(59,130,246,.55)" : "rgba(255,45,45,.55)");
       grad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.beginPath(); ctx.arc(c.x, c.y, 22, 0, 7);
+      ctx.beginPath(); ctx.arc(cx, cy, 22, 0, 7);
       ctx.fillStyle = grad; ctx.fill();
     }
-    let label = null;
     if (zoom >= 14) {
-      label = `${id} · ${p.kmh} km/h`;
+      let label = `${id} · ${p.kmh} km/h`;
       if (p.limit && p.kmh > p.limit) label += ` (limit ${p.limit} · EXEMPT)`;
       if (!p.lights) label += " · lights OFF";
+      labels.push({ label, x: cx + 14, y: cy - 10 });
     }
-    drawAmbulance(c.x, c.y, iAng || 0, blue, p.lights, label);
+    drawAmbulance(cx, cy, iAng || 0, blue, p.lights, null);
     // continuous follow: the camera glides with the interpolated pose every
     // frame (no animated pans, no 1-second lurches)
     if (!followed && $("follow").checked && !picking) {
       followed = true;
+      const iLat = latFromW(iwy), iLon = lonFromW(iwx);
       const ctr = map.getCenter();
       if (Math.abs(ctr.lat - iLat) > 1e-6 || Math.abs(ctr.lng - iLon) > 1e-6)
         map.panTo([iLat, iLon], { animate: false, noMoveStart: true });
     }
+  }
+  // decluttered labels: nearby units' tags stack instead of overlapping
+  labels.sort((a, b) => a.y - b.y);
+  const placed = [];
+  ctx.font = "600 11px ui-monospace, monospace";
+  for (const l of labels) {
+    const w = l.label.length * 6.4;
+    let y = l.y;
+    for (const r of placed)
+      if (l.x < r.x + r.w && l.x + w > r.x && y > r.y - 13 && y < r.y + 13)
+        y = r.y + 14;
+    placed.push({ x: l.x, y, w });
+    ctx.strokeStyle = "rgba(0,0,0,.75)"; ctx.lineWidth = 3;
+    ctx.fillStyle = "#fff";
+    ctx.strokeText(l.label, l.x, y);
+    ctx.fillText(l.label, l.x, y);
   }
 }
 requestAnimationFrame(render);

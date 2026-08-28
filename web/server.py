@@ -82,17 +82,19 @@ class Hub:
                 await self._warmup()
                 continue
             try:
-                self.sim.step()
-                snap = self.sim.snapshot()
+                # SUMO step + snapshot + JSON serialisation run in a worker
+                # thread: at 5000+ vehicles a step can take hundreds of ms,
+                # and nothing else may block the event loop meanwhile —
+                # websockets, HTTP endpoints and heartbeats stay live.
+                # TraCI stays single-threaded: this is awaited before any
+                # other sim access (commands drain before the next call).
+                text = await asyncio.get_event_loop().run_in_executor(
+                    None, self._frame_worker)
             except Exception as exc:
                 self.error = f"Simulation died: {exc} — use Reset to restart"
                 print(self.error, file=sys.stderr)
                 continue
-            snap["speed"] = self.speed
-            snap["paused"] = self.paused
-            snap["error"] = None
-            self.last_snap = snap
-            await self._broadcast(snap)
+            await self._broadcast(None, text=text)
             # steady cadence: schedule against an absolute clock so frame
             # delivery has no cumulative drift or sleep jitter
             next_tick += step_len / self.speed
@@ -101,34 +103,97 @@ class Hub:
                 next_tick = nowp          # fell far behind: resync
             await asyncio.sleep(max(0.002, next_tick - nowp))
 
+    def _frame_worker(self):
+        """One frame of heavy work OFF the event loop: SUMO step, snapshot,
+        JSON serialisation.  Returns the ready-to-send payload."""
+        self.sim.step()
+        snap = self.sim.snapshot()
+        snap["speed"] = self.speed
+        snap["paused"] = self.paused
+        snap["error"] = None
+        self.last_snap = snap
+        return json.dumps(snap)
+
     async def _warmup(self):
         """Fast-forward the first minutes of city time at full speed so the
         network is already flowing when the first frame is served."""
         sim = self.sim
         target = float(getattr(sim.cfg, "warmup_s", 0) or 0)
+
+        def burst():
+            # time-boxed, not step-counted: late in a heavy warmup a single
+            # step can take 300 ms, and a fixed 20-step burst would starve
+            # progress frames for seconds
+            t0 = time.perf_counter()
+            while sim.time < target and time.perf_counter() - t0 < 0.35:
+                sim.step()
         try:
             while sim.time < target:
-                for _ in range(20):
-                    sim.step()
+                await asyncio.get_event_loop().run_in_executor(None, burst)
                 frame = {"t": sim.time, "paused": False, "speed": self.speed,
                          "error": None,
                          "warmup": {"done": round(sim.time),
                                     "total": round(target)}}
                 await self._broadcast(frame)
-                await asyncio.sleep(0)          # keep the server responsive
         except Exception as exc:
             self.error = f"Warm-up failed: {exc} — use Reset"
             print(self.error, file=sys.stderr)
         sim._warmed = True
 
     async def _drain_commands(self):
+        loop = asyncio.get_event_loop()
         while not self.commands.empty():
             cmd = await self.commands.get()
             try:
-                self._apply(cmd)
+                kind = cmd.get("cmd")
+                if kind == "reset":
+                    await self._reset_async(cmd)
+                elif kind == "dispatch" and self.sim is not None:
+                    # routing + insertion off the loop (~0.2 s at load)
+                    await loop.run_in_executor(None, self._apply, cmd)
+                else:
+                    self._apply(cmd)
             except Exception as exc:  # surface errors to the event log
                 if self.sim is not None:
                     self.sim.log_event(f"Command failed: {exc}")
+
+    async def _reset_async(self, cmd):
+        """Teardown + SUMO relaunch OFF the event loop, with a progress
+        frame first, so mode switches never freeze anyone's screen."""
+        if cmd.get("hour") is not None:
+            self.hour = int(cmd["hour"]) % 24
+        if cmd.get("scenario"):
+            self.scenario = str(cmd["scenario"])
+        if cmd.get("day_type"):
+            self.day_type = str(cmd["day_type"])
+        if cmd.get("traffic_level"):
+            self.traffic_level = str(cmd["traffic_level"])
+        keep = self.sim.controller.enabled if self.sim else True
+        sim_old = self.sim
+        self.sim = None
+        self.last_snap = None
+        self.error = None
+        await self._broadcast({"t": 0, "paused": False, "speed": self.speed,
+                               "error": None,
+                               "warmup": {"done": 0, "total": 1}})
+
+        def work():
+            if sim_old is not None:
+                sim_old.close()
+            self.start_sim(preemption=keep)
+        fut = asyncio.get_event_loop().run_in_executor(None, work)
+        # keep progress frames flowing while SUMO relaunches (the rebuild
+        # takes seconds; without these the screen sits on a stale frame)
+        while not fut.done():
+            await asyncio.sleep(0.4)
+            await self._broadcast({"t": 0, "paused": False,
+                                   "speed": self.speed, "error": None,
+                                   "warmup": {"done": 0, "total": 1}})
+        try:
+            await fut
+        except Exception as exc:
+            self.error = f"Restart failed: {exc} — try Reset again"
+            raise
 
     def _apply(self, cmd):
         kind = cmd.get("cmd")
@@ -156,30 +221,13 @@ class Hub:
             self.paused = True
         elif kind == "resume":
             self.paused = False
-        elif kind == "reset":
-            if cmd.get("hour") is not None:
-                self.hour = int(cmd["hour"]) % 24
-            if cmd.get("scenario"):
-                self.scenario = str(cmd["scenario"])
-            if cmd.get("day_type"):
-                self.day_type = str(cmd["day_type"])
-            if cmd.get("traffic_level"):
-                self.traffic_level = str(cmd["traffic_level"])
-            keep = self.sim.controller.enabled if self.sim else True
-            if self.sim is not None:
-                self.sim.close()
-                self.sim = None
-            self.last_snap = None
-            try:
-                self.start_sim(preemption=keep)
-            except Exception as exc:
-                self.error = f"Restart failed: {exc} — try Reset again"
-                raise
+        # ("reset" is handled by _reset_async in _drain_commands — it must
+        #  never run synchronously here, it would block the event loop)
 
-    async def _broadcast(self, snap):
+    async def _broadcast(self, snap, text=None):
         if not self.clients:
             return
-        payload = json.dumps(snap)
+        payload = text if text is not None else json.dumps(snap)
         dead = []
         for ws in list(self.clients):
             try:
@@ -313,8 +361,9 @@ def _rag_index():
     size = os.path.getsize(path) if os.path.exists(path) else 0
     if _rag["index"] is None or size > _rag["size"] * 1.2 + 4096:
         docs = build_corpus(ROOT)
-        if hub.sim is not None and hub.sim.markov is not None:
-            s = hub.sim.markov.summary()
+        sim = hub.sim               # local ref: survives a concurrent reset
+        if sim is not None and sim.markov is not None:
+            s = sim.markov.summary()
             lines = [f"Live Markov traffic analytics "
                      f"({s['total_observations']} observations, "
                      f"{s['loaded_from_previous_sessions']} carried over from "

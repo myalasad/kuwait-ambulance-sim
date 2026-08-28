@@ -67,7 +67,11 @@ class OperationsLog:
         return event
 
     def since(self, seq):
-        return [e for e in self.ring if e["seq"] > seq]
+        if seq >= self.seq:            # nothing new: skip the ring scan
+            return []
+        # list() first: the web thread reads this while the sim thread
+        # appends (an atomic snapshot avoids "deque mutated during iteration")
+        return [e for e in list(self.ring) if e["seq"] > seq]
 
     # ----------------------------------------------------------------- cases
 
@@ -91,7 +95,7 @@ class OperationsLog:
         c["outcome"] = outcome
 
     def case_list(self, limit=200):
-        cases = sorted(self.cases.values(),
+        cases = sorted(list(self.cases.values()),
                        key=lambda c: c["opened_t"], reverse=True)
         return cases[:limit]
 

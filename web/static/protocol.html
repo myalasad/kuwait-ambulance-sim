@@ -235,10 +235,10 @@
     <div class="sc"><h3><span class="id">C1</span>Dispatch — nearest AVAILABLE unit, always from a hospital</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>An operator dispatches to an incident scene (map click or named area).</dd>
-        <dt>Action</dt><dd>Origin is a hospital. "Auto" ranks every hospital by Dijkstra travel time to the scene in a single pass, then dispatches the nearest <b>available</b> unit: a hospital whose response time is within the rotation tolerance of the fastest may be chosen instead when the fastest already has units out on mission — real EMS coverage, and consecutive runs do not all launch from one hospital. Route computed (E1), speed exemption armed (F1), lights on.</dd>
-        <dt>Ends when</dt><dd>—</dd>
-        <dt>Logged as</dt><dd>A-case opens: <span class="tag">dispatch</span> with route length, signals on route, ETA, routing basis — and, when rotated, the full ruling ("X is nearest but has N units on mission — Y responds in T s, within the tolerance").</dd>
-        <dt>Parameters</dt><dd><code>snap_radius_m</code> per scenario <code>dispatch_rotation_tolerance = 0.25</code></dd>
+        <dt>Action</dt><dd>Origin is a hospital under the <b>ready-fleet model</b>: each hospital stations a limited number of ready units; a dispatch commits one, and a crew that delivers a patient rejoins the <b>receiving</b> hospital's pool only after turnaround. "Auto" ranks every hospital by Dijkstra travel time to the scene in a single pass, keeps only hospitals with a ready unit, and among those within the rotation tolerance of the fastest picks the one with the fewest crews already out — real EMS coverage, and never a convoy from a single gate. If every fleet is committed, the nearest hospital dispatches its reserve crew (logged). Route computed (E1), speed exemption armed (F1), lights on.</dd>
+        <dt>Ends when</dt><dd>The unit's crew completes turnaround and returns to a ready pool (logged: "unit READY again at X (n/2)").</dd>
+        <dt>Logged as</dt><dd>A-case opens: <span class="tag">dispatch</span> with route length, signals on route, ETA, routing basis — and, when not the nearest gate, the full ruling ("X is nearest but has no ready units (0/2 — crews on mission or in turnaround); Y responds in T s with 1/2 ready"). Live ready counts are shown at every hospital marker on the map.</dd>
+        <dt>Parameters</dt><dd><code>snap_radius_m</code> per scenario <code>hospital_ready_units = 2</code> <code>unit_turnaround_s = 180</code> <code>dispatch_rotation_tolerance = 0.25</code></dd>
       </dl></div>
 
     <div class="sc"><h3><span class="id">C2</span>Scene reached — patient loading</h3>
@@ -487,6 +487,7 @@
         <tr><td>max_hold_s / preempt_cooldown_s</td><td class="v">90 s / 20 s</td><td>Hold cap; guaranteed cross-traffic cycling</td><td>A4</td></tr>
         <tr><td>flash_amber / flash_harden_eta_s / flash_harden_min_m</td><td class="v">on / 12 s / 60 m</td><td>Cross approaches flash amber (yield) during a hold; solid red when the unit is this close in time, and always within the minimum distance</td><td>A6</td></tr>
         <tr><td>dispatch_rotation_tolerance</td><td class="v">25%</td><td>Nearest-available-unit rotation window over the fastest response</td><td>C1</td></tr>
+        <tr><td>hospital_ready_units / unit_turnaround_s</td><td class="v">2 / 180 s</td><td>Ready ambulances stationed per hospital; crew restock time before rejoining the pool</td><td>C1</td></tr>
         <tr><td>arbitration_tie_m</td><td class="v">20 m</td><td>Tie margin for operator referral</td><td>B2 B3</td></tr>
         <tr><td>operator_timeout_s</td><td class="v">8 s</td><td>Default policy applies after this</td><td>B3</td></tr>
         <tr><td>patient_load_s</td><td class="v">40 s</td><td>Loading stop at the scene</td><td>C2</td></tr>

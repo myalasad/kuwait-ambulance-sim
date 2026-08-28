@@ -94,11 +94,13 @@ class GreenWaveController:
                       f"by {who}", "warn", actor=who)
 
     def status(self) -> dict:
+        # list() first: the web thread reads these while the sim thread
+        # inserts/pops junctions (atomic snapshot avoids iteration races)
         return {tls: {"m": st.mode, "case": st.case, "amb": st.amb}
-                for tls, st in self.active.items()}
+                for tls, st in list(self.active.items())}
 
     def modes(self) -> dict:
-        return {tls: st.mode for tls, st in self.active.items()}
+        return {tls: st.mode for tls, st in list(self.active.items())}
 
     def active_count(self) -> int:
         return sum(1 for st in self.active.values()
@@ -109,7 +111,8 @@ class GreenWaveController:
                  "candidates": [{"amb": a, "dist": round(d)}
                                 for a, d in p["candidates"]],
                  "deadline": p["deadline"]}
-                for tls, p in self.pending.items() if p["choice"] is None]
+                for tls, p in list(self.pending.items())
+                if p["choice"] is None]
 
     def decide(self, tls_id, amb_id, who="operator"):
         """Operator/supervisor resolves a referred conflict."""
