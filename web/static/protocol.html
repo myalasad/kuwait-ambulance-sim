@@ -116,7 +116,7 @@
   <div id="toc">
     <a href="#A"><b>A</b><span>Green corridor for ambulances</span><small>5 rules</small></a>
     <a href="#B"><b>B</b><span>Priority conflicts</span><small>4 rules</small></a>
-    <a href="#C"><b>C</b><span>Ambulance mission lifecycle</span><small>7 rules</small></a>
+    <a href="#C"><b>C</b><span>Ambulance mission lifecycle</span><small>8 rules</small></a>
     <a href="#D"><b>D</b><span>Ordinary traffic — early green</span><small>4 rules</small></a>
     <a href="#E"><b>E</b><span>Routing &amp; prediction</span><small>3 rules</small></a>
     <a href="#F"><b>F</b><span>Enforcement</span><small>1 rule</small></a>
@@ -275,6 +275,15 @@
         <dt>Ends when</dt><dd>Lights switched back on.</dd>
         <dt>Logged as</dt><dd><span class="tag">lights</span> with who and when.</dd>
         <dt>Parameters</dt><dd>—</dd>
+      </dl></div>
+
+    <div class="sc warn"><h3><span class="id">C8</span>Stuck in traffic — adaptive reroute</h3>
+      <dl class="f">
+        <dt>Trigger</dt><dd>An en-route ambulance advances less than the progress threshold within the stuck window (stop-and-go creep counts as stuck).</dd>
+        <dt>Action</dt><dd>Re-plan from the current position under live weights. A meaningfully faster corridor (≥10% + 5 s) is applied immediately — the signal corridor and driver navigation follow. If the alternatives are equally congested, the ambulance <b>holds course and says so</b>: rerouting for its own sake is motion without progress. Rescue lanes (sublane model) are active on both network models so ambulances filter through queues physically.</dd>
+        <dt>Ends when</dt><dd>Progress resumes; re-checked each cooldown.</dd>
+        <dt>Logged as</dt><dd><span class="tag">reroute</span> — either "ADAPTIVE REROUTE around the blockage via …" or "checked for a faster corridor: none exists".</dd>
+        <dt>Parameters</dt><dd><code>stuck_progress_m = 40</code> <code>stuck_after_s = 25</code> <code>stuck_reroute_cooldown_s = 60</code></dd>
       </dl></div>
 
     <div class="sc err"><h3><span class="id">C7</span>Unexpected removal</h3>

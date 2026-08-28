@@ -256,6 +256,20 @@ junction purposely enabled for one corridor, opened at enablement, closed at
 restoration), A-nnn = ambulance case (dispatch to arrival), D-nnn = decision
 case (a referred conflict). AMB_n = ambulance n of the session.
 
+## Why an ambulance can be slow or stuck — and what the system does
+Under Extreme traffic an ambulance can be physically blocked: a corridor
+clears the signal, not a gridlocked junction box. The system responds three
+ways. Rescue lanes: the sublane model is active on both network models, so
+cars pull aside and the ambulance filters through queues. Adaptive reroute
+(Protocol C8): an ambulance that advances less than 40 m in 25 s re-plans
+from its current position; a corridor at least 10% + 5 s faster is applied
+immediately and the signal corridor follows; if the alternatives are equally
+congested it holds course and logs "checked for a faster corridor: none
+exists". Preemption itself: the corridor discharges the queue in front of
+the ambulance at each signal. In city-wide saturation, physics wins — which
+is the honest argument for staging ambulances forward during peak hours
+(future work), not a simulation defect.
+
 ## Why an ambulance disappears or loses its lights
 Nothing leaves the map silently. The close reason on the A-case is always one
 of: arrived (run complete); teleported by SUMO's congestion resolver after

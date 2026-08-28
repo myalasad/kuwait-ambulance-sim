@@ -127,6 +127,8 @@
     border-color: var(--kw-green); color: #fff; font-size: 12px; padding: 6px; }
   .decision-card .count { color: var(--muted); font-size: 11px; }
   .leaflet-container { background: #0b0e14; }
+  .basetiles { filter: invert(100%) hue-rotate(180deg) brightness(.62)
+               contrast(.92) saturate(.25); }
 </style>
 </head>
 <body>
@@ -267,9 +269,11 @@ const ROUTE_COLORS = ["#22c55e", "#22d3ee", "#f472b6", "#facc15", "#a78bfa"];
 // ---------------------------------------------------------------- map setup
 const map = L.map("map", { zoomControl: true, preferCanvas: true })
   .setView([29.375, 47.982], 15);
-L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-  attribution: "© OpenStreetMap contributors © CARTO",
+// keyless OSM tiles, darkened client-side (CARTO now requires an API key)
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "© OpenStreetMap contributors",
   maxZoom: 19,
+  className: "basetiles",
 }).addTo(map);
 
 const canvas = $("overlay"), ctx = canvas.getContext("2d");

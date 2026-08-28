@@ -62,7 +62,7 @@ SCENARIOS = {
         "sumocfg": "scenario_metro.sumocfg",
         "query": "overpass_query_metro.txt",
         "peak_period_s": 0.25,   # ~14,400 veh/h metro-wide at peak
-        "lateral_resolution": 0.0,   # sublane off: 6-governorate network
+        "lateral_resolution": 0.8,   # rescue lanes ON (68 ms/step measured)
         "snap_radius_m": 1500.0,     # arterials only -> snap further
         "hospitals": {
             # one MoH general hospital per governorate (real locations)
@@ -221,6 +221,13 @@ class SimConfig:
     #                                      nearest hospital by travel time
     patient_load_s: float = 40.0         # loading stop at the scene; the
     #                                      corridor is paused while loading
+    adaptive_reroute: bool = True        # a stuck ambulance re-plans around
+    #                                      the blockage instead of waiting
+    stuck_progress_m: float = 40.0       # less than this progress...
+    stuck_after_s: float = 25.0          # ...within this window -> stuck
+    #                                      (progress-based: stop-and-go
+    #                                      creep still counts as stuck)
+    stuck_reroute_cooldown_s: float = 60.0
 
     # --- demand-responsive signals for ordinary traffic ---
     actuation_enabled: bool = True

@@ -384,6 +384,86 @@ class Dispatcher:
                       f"the signal corridor follows the new route", "warn",
                       actor=amb_id, case=rec["case"])
 
+    # ------------------------------------------------- adaptive stuck-reroute
+
+    def check_stuck(self, now):
+        """An ambulance crawling in a jam re-plans around the blockage: if a
+        faster corridor exists under live weights, the route (and with it
+        the signal corridor and driver navigation) switches immediately.
+        If no better path exists, it stays — rerouting for its own sake
+        would be motion without progress."""
+        for amb_id, rec in self.info.items():
+            if rec["departed"] is None or rec["arrived"] is not None:
+                continue
+            if rec.get("mission") == "loading":
+                continue
+            try:
+                odo = traci.vehicle.getDistance(amb_id)
+            except traci.TraCIException:
+                continue
+            mark = rec.get("stuck_mark")
+            if mark is None:
+                rec["stuck_mark"] = (now, odo)
+                continue
+            t0, d0 = mark
+            if odo - d0 >= self.cfg.stuck_progress_m:
+                rec["stuck_mark"] = (now, odo)   # made progress: reset window
+                continue
+            stuck_for = now - t0
+            if stuck_for < self.cfg.stuck_after_s:
+                continue
+            if now - rec.get("last_reroute", -1e9) < \
+                    self.cfg.stuck_reroute_cooldown_s:
+                continue
+            rec["last_reroute"] = now      # rate-limit even when no better
+            try:
+                cur_route = list(traci.vehicle.getRoute(amb_id))
+                idx = max(0, traci.vehicle.getRouteIndex(amb_id))
+                cur_edge = traci.vehicle.getRoadID(amb_id)
+                if cur_edge.startswith(":") or cur_edge not in cur_route:
+                    cur_edge = cur_route[min(idx, len(cur_route) - 1)]
+                remaining = cur_route[cur_route.index(cur_edge):]
+            except (traci.TraCIException, ValueError):
+                continue
+            if len(remaining) < 3:
+                continue                    # essentially at the destination
+            alt = self.router.route(cur_edge, remaining[-1], live=True)
+            better = False
+            if alt and alt != remaining:
+                t_rem = self.router.route_time(remaining, live=True)
+                t_alt = self.router.route_time(alt, live=True)
+                better = t_alt <= t_rem * 0.9 - 5.0
+            if not better:
+                # stuck, but no meaningfully faster corridor exists — say so
+                # (rerouting for its own sake would be motion without progress)
+                if now - rec.get("last_noalt", -1e9) > 180.0:
+                    rec["last_noalt"] = now
+                    self.ops.emit(now, "reroute",
+                                  f"{amb_id} stuck {stuck_for:.0f} s — checked "
+                                  f"for a faster corridor: none exists (the "
+                                  f"alternatives are equally congested); "
+                                  f"holding course, corridor active", "warn",
+                                  actor=amb_id, case=rec["case"])
+                continue
+            try:
+                traci.vehicle.setRoute(amb_id, alt)
+            except traci.TraCIException:
+                continue
+            rows = self.router.nodal_analysis(alt, live=True)
+            rec["route_edges"] = alt
+            rec["nav_rows"] = rows
+            rec["geometry"] = self.router.route_geometry(alt)
+            rec["signals_on_route"] = sum(1 for r in rows if r["signal"])
+            rec["stuck_mark"] = None
+            via = self.ops.rd(alt[min(2, len(alt) - 1)])
+            self.ops.emit(now, "reroute",
+                          f"{amb_id} stuck {stuck_for:.0f} s in traffic — "
+                          f"ADAPTIVE REROUTE around the blockage via {via} "
+                          f"(predicted {t_rem - t_alt:.0f} s faster than "
+                          f"pushing through); the signal corridor follows "
+                          f"the new route", "warn",
+                          actor=amb_id, case=rec["case"])
+
     # ---------------------------------------------------------------- lights
 
     def set_lights(self, amb_id, on, now, who="operator"):

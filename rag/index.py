@@ -103,7 +103,10 @@ class Index:
         q = question.strip()
         want = {
             "ambs": set(re.findall(r"AMB[_ ]?(\d+)", q, re.I)),
-            "cases": set(re.findall(r"\b([PAD])-?(\d{1,3})\b", q)),
+            # case ids have a dash or 2-3 digits (P-012); a bare letter+digit
+            # like D4 or A2 is a protocol RULE reference, not a case
+            "cases": set(re.findall(r"\b([PAD])-(\d{1,3})\b", q)
+                         + re.findall(r"\b([PAD])(\d{2,3})\b", q)),
             "tls": set(re.findall(r"\bJ-\d{3}\b|(?:GS_)?cluster_[\w#]+|\b\d{6,}\b",
                                   q, flags=re.I)),
             "kinds": set(),

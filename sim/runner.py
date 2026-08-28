@@ -182,6 +182,8 @@ class Simulation:
                                            self.time)
             if self.cfg.reroute_to_hospital:
                 self.dispatcher.check_scene_reached(self.time)
+            if self.cfg.adaptive_reroute:
+                self.dispatcher.check_stuck(self.time)
             self._attribute_delay(active)
         self.controller.update(
             self.dispatcher.active_ambulances(lights_only=True), self.time)
