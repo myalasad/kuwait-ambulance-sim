@@ -1,6 +1,6 @@
 """Central configuration for the Kuwait ambulance-preemption simulation.
 
-Two selectable network models (``SimConfig(scenario=...)``):
+Three selectable network models (``SimConfig(scenario=...)``):
 
 * ``downtown`` — the detailed Kuwait City core: every street, sublane model,
   rescue lanes.  Best for close-up demos of the signal mechanics.
@@ -8,6 +8,9 @@ Two selectable network models (``SimConfig(scenario=...)``):
   Mubarak Al-Kabeer, Ahmadi, Jahra) at arterial level: motorways, trunks,
   primary and secondary roads.  Real hospitals in every governorate,
   cross-governorate missions.  Sublane off for speed.
+* ``showcase`` — the downtown network with three fixed-density districts
+  (dense core, normal ring, light waterfront) baked into static demand, so
+  both early-green regimes are on screen at once.
 
 Everything tunable lives here so the control-room parameters (camera range,
 green-wave reach, amber times) can be changed in one place.
@@ -191,7 +194,7 @@ SCENARIOS["showcase"] = {
 @dataclass
 class SimConfig:
     # --- network model ---
-    scenario: str = "downtown"        # "downtown" | "metro" (all governorates)
+    scenario: str = "downtown"        # any key of SCENARIOS: "downtown" | "metro" | "showcase"
 
     # --- scenario files (set from SCENARIOS in __post_init__) ---
     net_file: str = ""
@@ -252,14 +255,15 @@ class SimConfig:
     #                                      intensity on top of the hourly
     #                                      shape (x0.45 / x1.0 / x1.8)
     demand_hours: float = 3.0            # hours of base demand to build
-    warmup_s: float = 420.0
+    warmup_s: float = 420.0              # seconds of city time fast-forwarded
+    #                                      on start so the city is already
+    #                                      flowing when the dashboard opens
+    #                                      (0 disables)
     demand_factor: float = 0.6           # global multiplier on background
     #                                      demand: the calendar SHAPE is
     #                                      kept, the vehicle count is scaled
     #                                      for a fluid presentation (1.0 =
-    #                                      full calibrated demand)              # fast-forwarded on start so the
-    #                                      city is already flowing when the
-    #                                      dashboard opens (0 disables)
+    #                                      full calibrated demand)
 
     # --- routing ---
     route_live_weights: bool = True      # Dijkstra uses live travel times;
@@ -305,6 +309,13 @@ class SimConfig:
     #                                   (across edge boundaries), like an
     #                                   advance loop detector — never just
     #                                   the final connector stub
+    junction_clear_radius_m: float = 75.0
+    #                                    PHYSICAL clearance test for early
+    #                                    green: no vehicle may be standing
+    #                                    within this radius of the junction
+    #                                    on any approach other than the one
+    #                                    being served — ground truth, not
+    #                                    just the mapped approach list
     lone_quiet_s: float = 45.0        # ...and must not have carried ANY
     #                                   traffic within this window: a junction
     #                                   in use from several directions stays

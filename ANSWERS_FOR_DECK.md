@@ -195,7 +195,7 @@ purpose — a ministry has to be able to audit why a light went green."
    *"the junction only needs to know whether anyone is there."*
 46. ✅ Every simulation step — 0.5 s of simulated time — using one batched
     subscription round-trip, not per-lane polling.
-47. ⚠️ **No.** Cycle length is untouched (static 72–90 s programmes).
+47. ⚠️ **No.** Cycle length is untouched (static 90 s programmes).
 48. ⚠️ Only in the sense that an early green is granted and then ended; it does
     not re-compute splits.
 49. ✅ Yes — it **jumps to** the phase serving the occupied approach (a phase

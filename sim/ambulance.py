@@ -11,6 +11,7 @@ leave the map without the reason being on record.
 import random
 
 import traci
+import traci.constants as tc
 
 
 
@@ -22,8 +23,6 @@ class Dispatcher:
         self.router = router
         self.count = 0
         self.info = {}  # amb_id -> lifecycle + navigation record
-        self._edges = [e for e in net.getEdges()
-                       if e.allows("passenger") and e.getLength() > 30]
         self._rng = random.Random(1)
         self._logics = {}  # tls id -> cached signal programme phases
         # Ready-fleet model: each hospital stations a limited number of
@@ -36,10 +35,17 @@ class Dispatcher:
         self.call_queue = []   # calls waiting for a crew (all committed)
         self._last_gate_t = {}  # hospital -> sim time of last departure
         self.response_log = []  # call-to-scene times, per governorate
+        self._resp_cache = (-1, None)  # (log length, summary) — log is append-only
         # offer only places that actually snap to the modelled network, so
         # the UI never lists a scene or hospital that cannot be reached
-        self.hospitals = {n: ll for n, ll in cfg.hospitals_d().items()
-                          if self.nearest_edges(ll[0], ll[1], k=1)}
+        self.hospitals = {}
+        self._hospital_cand_of = {}  # candidate edge id -> hospital (first wins)
+        for n, ll in cfg.hospitals_d().items():
+            cands = self.nearest_edges(ll[0], ll[1], k=3)
+            if cands:
+                self.hospitals[n] = ll
+                for c in cands:
+                    self._hospital_cand_of.setdefault(c.getID(), n)
         self._fleet = {n: cfg.hospital_ready_units for n in self.hospitals}
         self.areas = {n: ll for n, ll in cfg.areas_d().items()
                       if self.nearest_edges(ll[0], ll[1], k=1)}
@@ -65,9 +71,6 @@ class Dispatcher:
         candidates.sort(key=lambda ed: ed[1])
         return [e for e, _ in candidates[:k]]
 
-    def random_edge(self):
-        return self._rng.choice(self._edges)
-
     # -------------------------------------------------------------- dispatch
 
     GOVERNORATES = ("Capital", "Hawalli", "Farwaniya", "Mubarak Al-Kabeer",
@@ -78,6 +81,11 @@ class Dispatcher:
             if f"({g})" in desc:
                 return g
         return "Other"
+
+    def _algorithm_name(self):
+        return ("Dijkstra (live + Markov-predicted travel times)"
+                if self.router.predictor is not None
+                else "Dijkstra (live edge travel times)")
 
     def dispatch(self, origin=None, destination=None, now=0.0,
                  _desc_override=None, _call_t=None):
@@ -109,10 +117,7 @@ class Dispatcher:
             # current travel time in a single pass (instead of a full
             # search per hospital); the winning unit's actual route is then
             # computed forward with the full predictive weights.
-            cand_of = {}   # candidate edge id -> hospital name
-            for name, (lat, lon) in self.hospitals.items():
-                for cand in self.nearest_edges(lat, lon, k=3):
-                    cand_of.setdefault(cand.getID(), name)
+            cand_of = self._hospital_cand_of
             ranked, to_id = [], None
             for te in to_edges:
                 costs = self.router.cost_from_many(
@@ -140,7 +145,6 @@ class Dispatcher:
             load = self._hospital_load()
             cap = self.cfg.hospital_ready_units
             candidates = [r for r in ranked if self._fleet.get(r[1], 0) > 0]
-            reserve_note = ""
             if not candidates:
                 # No reachable crew: the call QUEUES — real EMS never
                 # conjures an unlimited convoy out of one gate.  The next
@@ -182,7 +186,6 @@ class Dispatcher:
             if origin_hospital == nearest_name:
                 from_desc = (f"{origin_hospital} "
                              f"(nearest available hospital to the scene)")
-                rotation_note = reserve_note
             elif self._fleet.get(nearest_name, 0) <= 0:
                 from_desc = f"{origin_hospital} (nearest READY unit)"
                 rotation_note = (
@@ -190,8 +193,7 @@ class Dispatcher:
                     f"has no ready units (0/{cap} — crews on mission or in "
                     f"turnaround); {origin_hospital} responds in "
                     f"{eta_est:.0f} s with "
-                    f"{self._fleet.get(origin_hospital, 0)}/{cap} ready"
-                    f"{reserve_note}")
+                    f"{self._fleet.get(origin_hospital, 0)}/{cap} ready")
             else:
                 from_desc = f"{origin_hospital} (nearest AVAILABLE unit)"
                 rotation_note = (
@@ -200,25 +202,21 @@ class Dispatcher:
                     f"{load.get(nearest_name, 0)} unit(s) on mission — "
                     f"{origin_hospital} responds in {eta_est:.0f} s, within "
                     f"the {self.cfg.dispatch_rotation_tolerance:.0%} "
-                    f"rotation tolerance{reserve_note}")
-            algorithm = ("Dijkstra (live + Markov-predicted travel times)"
-                             if self.router.predictor is not None
-                             else "Dijkstra (live edge travel times)")
+                    f"rotation tolerance")
+            algorithm = self._algorithm_name()
         else:
             from_edges, from_desc = self._resolve(origin, "origin")
             if isinstance(origin, str) and origin in self.hospitals:
                 # manual hospital dispatch counts toward that hospital's
                 # load, or the availability rotation would treat it as idle
                 origin_hospital = origin
+            algorithm = self._algorithm_name()
             for from_edge in from_edges:
                 for to_edge in to_edges:
                     if to_edge.getID() == from_edge.getID():
                         continue
                     route = self.router.route(from_edge.getID(),
                                               to_edge.getID(), live=live)
-                    algorithm = ("Dijkstra (live + Markov-predicted travel times)"
-                             if self.router.predictor is not None
-                             else "Dijkstra (live edge travel times)")
                     if route is None:
                         stage = traci.simulation.findRoute(
                             from_edge.getID(), to_edge.getID(),
@@ -254,7 +252,7 @@ class Dispatcher:
                 else:
                     routing_note = ("; predictive routing agrees with "
                                     "live-only routing for this trip")
-                algorithm = "Dijkstra (live + Markov-predicted travel times)"
+                algorithm = self._algorithm_name()
 
         rows = self.router.nodal_analysis(route,
                                           live=self.cfg.route_live_weights)
@@ -442,6 +440,9 @@ class Dispatcher:
             vals = sorted(vals)
             return round(vals[min(len(vals) - 1,
                                   int(q * (len(vals) - 1) + 0.5))], 1)
+        n = len(self.response_log)
+        if n == self._resp_cache[0]:
+            return self._resp_cache[1]
         rows = self.response_log
         out = {"n": len(rows),
                "p50_s": pct([r["response_s"] for r in rows], 0.5),
@@ -456,6 +457,7 @@ class Dispatcher:
             out["by_gov"][g] = {"n": len(vals),
                                 "p50_s": pct(vals, 0.5),
                                 "p90_s": pct(vals, 0.9)}
+        self._resp_cache = (n, out)
         return out
 
     # ------------------------------------------------- arrival-time analysis
@@ -510,8 +512,6 @@ class Dispatcher:
         return round(t, 1)
 
     def _resolve(self, spec, kind):
-        if spec is None:
-            return [self.random_edge()], f"random {kind}"
         if isinstance(spec, str):
             if spec in self.hospitals:
                 lat, lon = self.hospitals[spec]
@@ -582,11 +582,8 @@ class Dispatcher:
         # nearest hospital by actual routed travel time (one-ways
         # respected): ONE forward Dijkstra from the scene reaches every
         # hospital's candidate edges in a single pass
-        cand_of = {}
-        for name, (lat, lon) in self.hospitals.items():
-            for cand in self.nearest_edges(lat, lon, k=3):
-                if cand.getID() != scene_edge:
-                    cand_of.setdefault(cand.getID(), name)
+        cand_of = {cid: h for cid, h in self._hospital_cand_of.items()
+                   if cid != scene_edge}
         found = self.router.route_to_many(scene_edge, list(cand_of),
                                           live=self.cfg.route_live_weights)
         best = None
@@ -726,13 +723,16 @@ class Dispatcher:
         the signal corridor and driver navigation) switches immediately.
         If no better path exists, it stays — rerouting for its own sake
         would be motion without progress."""
+        results = traci.vehicle.getAllSubscriptionResults()
         for amb_id, rec in self.info.items():
             if rec["departed"] is None or rec["arrived"] is not None:
                 continue
             if rec.get("mission") == "loading":
                 continue
             try:
-                odo = traci.vehicle.getDistance(amb_id)
+                odo = results.get(amb_id, {}).get(tc.VAR_DISTANCE)
+                if odo is None:
+                    odo = traci.vehicle.getDistance(amb_id)
             except traci.TraCIException:
                 continue
             mark = rec.get("stuck_mark")

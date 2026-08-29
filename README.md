@@ -6,17 +6,26 @@ in which **traffic-light cameras detect an ambulance running its emergency
 lights** and the traffic-management centre opens a **green corridor** along the
 ambulance's route: each signal ahead switches — after a proper amber
 transition — to green for the ambulance's approach, so the queue in front of it
-discharges, while every conflicting movement is held red. Once the ambulance
+discharges, while conflicting movements switch to flashing amber (yield),
+hardening to solid red as the ambulance closes in. Once the ambulance
 passes, each junction returns to its normal programme.
+
+Downtown is the **default of three scenarios** — **metro** (all six
+governorates) and **showcase** (3-district demo) are the others — selected
+via `SimConfig(scenario=...)` or the live UI's scenario command (there is
+no `--scenario` CLI flag).
 
 Built on [Eclipse SUMO](https://eclipse.dev/sumo/) (the industry-standard
 traffic microsimulator) controlled live from Python via **TraCI**.
 
 ## The control model
 
-1. **Camera detection** — every signalized junction has a virtual camera that
-   recognises an ambulance with active lights up to `camera_range_m` (200 m)
-   along its approaches.
+1. **Camera detection** — every signalized junction carries a camera whose
+   field of view is the real approach roadway, built by walking the road
+   graph up to `camera_range_m` (200 m) upstream of the stop lines;
+   detection fires only when the unit with active lights is physically
+   inside that field of view, never inferred from the vehicle's own route
+   or position feed.
 2. **Confirmation** — the first camera hit confirms the vehicle to the control
    centre, which knows the dispatched route.
 3. **Green wave** — signals along the route are preempted in sequence, based
@@ -26,14 +35,16 @@ traffic microsimulator) controlled live from Python via **TraCI**.
    crawling through a jam hold junctions ahead for minutes and gridlock the
    cross streets.
 4. **Preempting a junction** = amber (3 s) for conflicting greens, an all-red
-   clearance interval (2 s) so vehicles trapped in the box can leave, then the
-   controller **jumps to and holds the real programme phase** that serves the
-   ambulance's approach green — the queue in front of the ambulance
-   discharges, conflicts wait at red. Holding a real phase (rather than a
-   hand-crafted "everything red" state) is what real preemption controllers
-   do, and it keeps compatible movements and drain paths alive so the
-   intersection cannot deadlock itself. Signals are never switched dark —
-   dark signals cause collisions.
+   clearance interval (2 s), then the ambulance's approach is held on
+   **protected green** while cross approaches show **flashing amber**
+   (yield — vehicles caught in the box can clear), hardening to solid red
+   once the unit is within `flash_harden_eta_s` (12 s ETA) or
+   `flash_harden_min_m` (60 m), with hysteresis so arbitration changes
+   cannot flicker the state. The flashing-amber yield state avoids the
+   box-sealing deadlock a "corridor green, everything else red" hold can
+   cause; the classic jump-to-and-hold-a-real-programme-phase behaviour is
+   retained as the `flash_amber = False` fallback. Signals are never
+   switched dark.
 5. **Guards** — a single hold is capped at `max_hold_s` (90 s), after which
    cross traffic is guaranteed a normal cycle (`preempt_cooldown_s`) unless
    the ambulance is already at the stop line; the hold also persists while
@@ -52,12 +63,17 @@ python3 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python scripts/download_map.py       # fetch downtown Kuwait City from OSM
-python scripts/build_network.py      # netconvert + 2 h background traffic
+python scripts/build_network.py      # netconvert + 3 h background traffic (cfg.demand_hours)
 ```
+
+The build targets the **downtown** scenario by default; **metro** (all six
+governorates) and **showcase** (3-district demo) are selected via
+`SimConfig(scenario=...)` or the live UI's scenario command — there is no
+`--scenario` CLI flag.
 
 ## Run
 
-**Live website** (four pages, all served from one local server):
+**Live website** (seven pages, all served from one local server):
 
 ```bash
 python run_live.py                   # open http://127.0.0.1:8642
@@ -71,6 +87,7 @@ python run_live.py                   # open http://127.0.0.1:8642
 | `/navigation` | The Dijkstra corridor per ambulance: route on the network, node-by-node analysis (distance, ETA, signals, live preemption state) |
 | `/operations` | Real-time typed operations feed with severity filters and search, the full case ledger (P/A/D cases with durations and outcomes), pending supervisor decisions |
 | `/protocol` | The complete operating rulebook: dual-ambulance arbitration, operator referral, error fail-safes, why-did-it-disappear guarantees, data provenance, scope-of-use |
+| `/copilot` | Operations Copilot: retrieval-backed bilingual Q&A over the project's own docs and live operations data (`rag/`), plus per-corridor Markov-chain views |
 
 Every operation also persists to `data/operations.jsonl` for after-action
 review.
@@ -105,13 +122,22 @@ ready-made launch configurations in the Run & Debug panel.
 |---|---|
 | `scripts/download_map.py` | Overpass API extract of downtown Kuwait City |
 | `scripts/build_network.py` | netconvert → SUMO net, randomTrips background traffic, ambulance vType, scenario config |
+| `scripts/build_showcase.py` | showcase scenario: three fixed-density districts baked into the downtown demand |
 | `sim/config.py` | all tunable parameters (camera range, wave distance, amber times, hospitals) |
 | `sim/preemption.py` | camera detection + green-wave controller (per-junction state machine: amber → preempt → clear → amber → normal) |
 | `sim/ambulance.py` | dispatcher: lat/lon → nearest edge, routing, insertion |
+| `sim/router.py` | own Dijkstra over the edge graph — one-way streets and turn restrictions respected, live/predicted travel-time weights |
+| `sim/actuation.py` | demand-responsive early green for ordinary traffic |
+| `sim/markov.py` | self-feeding Markov-chain traffic predictor (DTMC + CTMC) with validated forecasts |
+| `sim/places.py` | real-name registry: human labels for junctions, roads and corridors |
+| `sim/operations.py` | structured operations log and P/A/D case tracking |
+| `sim/traffic_profile.py` | Kuwait demand calendar and traffic-level presets |
+| `sim/sumo_env.py` | locates the SUMO installation and exposes its binaries |
 | `sim/runner.py` | TraCI wrapper: stepping, subscriptions, snapshots for the web layer |
 | `sim/metrics.py` | ambulance run KPIs |
+| `rag/` | Operations Copilot retrieval pipeline: ingest, index, answer, evaluate |
 | `web/server.py` | FastAPI + WebSocket live dashboard backend |
-| `web/static/index.html` | live dashboard (Leaflet + canvas overlay) |
+| `web/static/` (`index` / `driver` / `how` / `navigation` / `operations` / `protocol` / `copilot` `.html`) | the seven live pages — Live Map (Leaflet + canvas overlay) and the rest |
 | `web/replay_export.py`, `web/static/replay_template.html` | self-contained replay page generator |
 | `run_live.py`, `run_headless.py` | entry points |
 
@@ -143,6 +169,8 @@ day.
   referral and supervisor override, own Dijkstra router + navigation page,
   protocol page, Kuwait demand calendar, 3D map visuals, lights control,
   watchdog/autostart.
+- `v2.1`–`v3.9` — see `git tag` / `git log --oneline`; each release message
+  states its measured claims.
 
 To push to GitHub (needs your login once):
 `brew install gh && gh auth login && gh repo create kuwait-ambulance-sim --private --source . --push && git push --tags`

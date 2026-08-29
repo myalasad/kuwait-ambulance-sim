@@ -323,9 +323,11 @@
       <dl class="f">
         <dt>Trigger</dt><dd>Exactly one approach occupied; every other approach empty for the confirmation window <b>and</b> carrying no traffic at all within the quiet window; no ambulance involved.</dd>
         <dt>Action</dt><dd>Through the junction's own amber, move to the phase serving that approach and hold it (or extend it if already green).</dd>
+        <dt>Physical clearance</dt><dd>The signal's wiring map knows only the edges wired to it — ramp stubs, service roads and parallel carriageways feeding the same box are invisible to it. Before any grant the junction must therefore be <b>physically clear on the road</b>: no vehicle standing within <code>junction_clear_radius_m</code> of the junction centre on any approach other than the one being served, measured from live vehicle positions rather than from the wiring. A grant is impossible while another direction is occupied, whatever the map says.</dd>
+        <dt>Complex rule</dt><dd>A divided junction is several signal nodes carrying one name. The lone-approach test covers the <b>whole complex</b>: if any sibling node's external approach carried traffic within the quiet window, no early green fires anywhere in it — several approaches occupied means fair timers, exactly as the utilitarian doctrine requires.</dd>
         <dt>Ends when</dt><dd>Rule D2.</dd>
-        <dt>Logged as</dt><dd><span class="tag">actuation</span>. Map label <b>EARLY GREEN</b>.</dd>
-        <dt>Parameters</dt><dd><code>lone_confirm_s = 3</code> <code>lone_quiet_s = 20</code> <code>lone_min_green_s = 5</code></dd>
+        <dt>Logged as</dt><dd><span class="tag">actuation</span>. Map label <b>EARLY GREEN</b>. Blocked attempts are counted in the self-audit as <code>proximity_blocked</code> and <code>complex_blocked</code> — silently, because nothing happened.</dd>
+        <dt>Parameters</dt><dd><code>lone_confirm_s = 3</code> <code>lone_quiet_s = 45</code> <code>lone_min_green_s = 5</code> <code>junction_clear_radius_m = 75</code></dd>
       </dl></div>
 
     <div class="sc info"><h3><span class="id">D2</span>Fairness returns instantly</h3>
@@ -427,7 +429,7 @@
     <div class="sc err"><h3><span class="id">G3</span>Never dark</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>Always.</dd>
-        <dt>Action</dt><dd>No rule may switch a signal off or to flashing; corridors use real programme phases.</dd>
+        <dt>Action</dt><dd>No rule may ever switch a signal head dark (unlit). Cross approaches may show the flashing-amber <b>yield</b> state of rule A6 — a defined, drivable indication — but a head is never off. With <code>flash_amber</code> off, corridors instead hold a real phase of the junction's own programme (protected green with solid red where no programme phase serves the route).</dd>
         <dt>Ends when</dt><dd>—</dd>
         <dt>Logged as</dt><dd>—</dd>
         <dt>Parameters</dt><dd>—</dd>
@@ -463,19 +465,19 @@
       <dl class="f">
         <dt>Real</dt><dd>Road networks, one-way system, turn restrictions, signal locations and street names (OpenStreetMap); hospital locations.</dd>
         <dt>Calibrated</dt><dd>Background demand follows the published shape of Kuwaiti weekly traffic, with the volume anchored to Kuwait's ~2.4 million registered vehicles (PACI) and an operator estimate for the downtown core (a weekend evening at Extreme ≈ 3,000+ vehicles on the core network at once). Kuwait exposes no public live feed and Google Maps publishes travel times, not vehicle counts. Real hourly counts (e.g. the licensed <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data" style="color:#4ade80">xMap Kuwait catalog</a>) drop into <code>data/real_counts.csv</code> as <code>hour,multiplier</code> and override the profile.</dd>
-        <dt>Synthetic</dt><dd>Individual signal timing plans (static 72–90 s cycles per junction); replaceable with real MOI plans in the network file.</dd>
+        <dt>Synthetic</dt><dd>Individual signal timing plans (static 90 s cycles per junction); replaceable with real MOI plans in the network file.</dd>
         <dt>Learned</dt><dd>Markov chains learn from simulated traffic here; the identical estimator ingests real detector data unchanged.</dd>
       </dl></div>
     <div class="sc"><h3><span class="id">I2</span>Network models</h3>
       <dl class="f">
         <dt>Downtown</dt><dd>Kuwait City core, every street, sublane model with rescue-lane behaviour.</dd>
-        <dt>Metro</dt><dd>All six governorates at arterial level (motorways, trunks, primary and secondary roads; residential side streets not modelled), a real MoH hospital per governorate, ~100 named areas.</dd>
+        <dt>Metro</dt><dd>All six governorates at arterial level (motorways, trunks, primary and secondary roads; residential side streets not modelled), a real MoH hospital per governorate, 79 named areas.</dd>
       </dl></div>
     <div class="sc"><h3><span class="id">I3</span>Calendar and traffic scenarios</h3>
       <dl class="f">
         <dt>Day type</dt><dd><b>Weekday (Sun–Thu)</b>: 06:30–08:30 peak, congested 13:00–21:00, near-empty 01:00–05:00. <b>Weekend (Fri–Sat)</b>: quiet 01:00–12:00, congested 13:00–24:00.</dd>
-        <dt>Traffic level</dt><dd><b>Easy</b> ×0.45, <b>Medium</b> ×1.0 (calibrated baseline), <b>Extreme</b> ×1.8 — on top of the hourly shape. One flat peak-rate demand base is scaled live each hour; any start hour 0–23 is selectable on the Live Map.</dd>
-        <dt>Parameters</dt><dd><code>day_type</code> <code>traffic_level</code> <code>start_hour</code> <code>demand_hours = 3</code></dd>
+        <dt>Traffic level</dt><dd><b>Easy</b> ×0.45, <b>Medium</b> ×1.0 (calibrated baseline), <b>Extreme</b> ×1.8 — on top of the hourly shape. One flat peak-rate demand base is scaled live each hour; any start hour 0–23 is selectable on the Live Map. A global <code>demand_factor</code> (default 0.6) then scales the vehicle count while keeping the calendar shape, for a fluid presentation; set 1.0 for the full calibrated volume.</dd>
+        <dt>Parameters</dt><dd><code>day_type</code> <code>traffic_level</code> <code>start_hour</code> <code>demand_hours = 3</code> <code>demand_factor = 0.6</code></dd>
       </dl></div>
     <div class="sc"><h3><span class="id">I4</span>Names and codes</h3>
       <dl class="f">
@@ -497,11 +499,13 @@
         <tr><td>flash_amber / flash_harden_eta_s / flash_harden_min_m</td><td class="v">on / 12 s / 60 m</td><td>Cross approaches flash amber (yield) during a hold; solid red when the unit is this close in time, and always within the minimum distance</td><td>A6</td></tr>
         <tr><td>dispatch_rotation_tolerance</td><td class="v">25%</td><td>Nearest-available-unit rotation window over the fastest response</td><td>C1</td></tr>
         <tr><td>hospital_ready_units / unit_turnaround_s / gate_headway_s</td><td class="v">2 / 180 s / 8 s</td><td>Ready ambulances per hospital; crew restock time; minimum spacing between departures from one gate</td><td>C1</td></tr>
-        <tr><td>flush_lead_factor</td><td class="v">2&times;</td><td>Extra activation lead for a congested approach ahead on the route (queue flush)</td><td>A6</td></tr>
+        <tr><td>demand_factor</td><td class="v">0.6</td><td>Global multiplier on background demand &mdash; calendar shape kept, vehicle count scaled for a fluid presentation (1.0 = full calibrated volume)</td><td>I3</td></tr>
+        <tr><td>flush_lead_factor</td><td class="v">2&times;</td><td>Extra activation lead for a congested approach ahead on the route (queue flush)</td><td>A7</td></tr>
         <tr><td>arbitration_tie_m</td><td class="v">20 m</td><td>Tie margin for operator referral</td><td>B2 B3</td></tr>
         <tr><td>operator_timeout_s</td><td class="v">8 s</td><td>Default policy applies after this</td><td>B3</td></tr>
         <tr><td>patient_load_s</td><td class="v">40 s</td><td>Loading stop at the scene</td><td>C2</td></tr>
-        <tr><td>lone_confirm_s / lone_quiet_s / lone_min_green_s / lone_max_hold_s</td><td class="v">3 s / 20 s / 5 s / 30 s</td><td>Early green: confirmation, quiet window on other approaches, minimum, cap</td><td>D1 D2 D4</td></tr>
+        <tr><td>junction_clear_radius_m</td><td class="v">75 m</td><td>No early green while another approach is physically occupied within this radius of the junction</td><td>D1</td></tr>
+        <tr><td>lone_confirm_s / lone_quiet_s / lone_min_green_s / lone_max_hold_s</td><td class="v">3 s / 45 s / 5 s / 30 s</td><td>Early green: confirmation, quiet window on other approaches, minimum, cap</td><td>D1 D2 D4</td></tr>
         <tr><td>actuation_cooldown_s</td><td class="v">10 s</td><td>Between early greens per junction</td><td>D3</td></tr>
         <tr><td>speed_exemption_factor / ambulance_max_kmh</td><td class="v">1.5 / 140 km/h</td><td>Exemption above the posted limit; absolute cap</td><td>F1</td></tr>
         <tr><td>markov_sample_s / markov_min_obs / markov_max_edges</td><td class="v">30 s / 40 / 160</td><td>Observation period; history needed; corridors monitored</td><td>E2 E3</td></tr>

@@ -34,6 +34,7 @@ class OperationsLog:
         self._rotate_if_large()
         self._fh = open(self.path, "a", encoding="utf-8")
         self.cases = {}
+        self.open_count = 0
         self._case_counters = {"P": 0, "A": 0, "D": 0}
         self.places = None   # real-name registry, attached by the runner
 
@@ -105,12 +106,14 @@ class OperationsLog:
             "status": "open", "summary": summary, "outcome": None,
             "events": [],
         }
+        self.open_count += 1
         return case_id
 
     def close_case(self, case_id, t, outcome, status="closed"):
         c = self.cases.get(case_id)
         if c is None or c["status"] != "open":
             return
+        self.open_count -= 1
         c["closed_t"] = round(t, 1)
         c["status"] = status
         c["outcome"] = outcome

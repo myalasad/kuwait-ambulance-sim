@@ -55,7 +55,7 @@ Built on **Eclipse SUMO** (the industry-standard open-source traffic microsimula
 
 - **Real:** the road network, one-way system, turn restrictions and signal locations, taken directly from OpenStreetMap. Two selectable models: (1) **downtown Kuwait City**, detailed, **78 signalized junctions**; (2) **all six governorates** (Capital, Hawalli, Farwaniya, Mubarak Al-Kabeer, Ahmadi, Jahra) at arterial level — **13,300 road segments, 223 signalized junctions**, a real Ministry of Health hospital per governorate, 100 named places. Residential side streets are not modelled in the six-governorate version — say so plainly.
 - **Calibrated, not measured:** background traffic demand follows the published shape of a Kuwaiti weekday (07:00 morning peak by default; 01:00–05:00 gives near-empty night streets — verified 14 vehicles at 03:00 vs 202 at 07:00). Kuwait exposes no public live traffic feed. A ministry file of hourly counts (`hour,multiplier`) drops straight in and overrides the calibrated profile.
-- **Synthetic:** the individual signal timing plans (static 72–90 s cycles generated per junction). The real ministry timing plans can be substituted directly into the network file when provided.
+- **Synthetic:** the individual signal timing plans (static 90 s cycles generated per junction). The real ministry timing plans can be substituted directly into the network file when provided.
 - Simulation runs at **20 ms per step**, on an ordinary computer, with no internet connection required.
 
 ### How the green corridor works — the five steps

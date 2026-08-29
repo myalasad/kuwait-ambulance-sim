@@ -6,8 +6,9 @@ Kuwait. It simulates, on the real Kuwaiti road network, a system in which
 traffic-light cameras detect an ambulance running its emergency lights and the
 traffic-management centre opens a "green corridor" along the ambulance's
 route: each signal ahead turns green for the ambulance's approach (so the cars
-in front of it clear the way) and red for conflicting traffic, then returns
-to normal after the ambulance passes. It also gives ordinary drivers an early
+in front of it clear the way) while cross approaches flash amber (yield),
+hardening to red as the unit closes in, then returns to normal after the
+ambulance passes. It also gives ordinary drivers an early
 green when they are alone at an empty junction, routes ambulances with
 Dijkstra, predicts congestion with Markov chains, records every decision as an
 auditable case, and explains itself through a set of web pages. It is a
@@ -61,8 +62,8 @@ pages; it opens in VS Code with ready-made launch configurations.
   PURPOSELY ENABLED, EARLY GREEN, BACK TO NORMAL. Controls: dispatch
   (origin hospital or auto-nearest, incident scene from a map click or a
   named area), preemption on/off, follow ambulance, simulation speed
-  0.5×–16×, pause/reset, network model (downtown or all governorates), and
-  the Kuwait clock start hour. KPIs, active ambulances with lights toggles,
+  0.5×–16×, pause/reset, network model (downtown, all governorates, or the
+  3-district showcase), and the Kuwait clock start hour. KPIs, active ambulances with lights toggles,
   the operations feed and a legend are in the side panel.
 - **Driver (/driver)** — the phone mounted in the ambulance: heading-up
   navigation with the corridor drawn ahead, the next signal's state ("will
@@ -77,8 +78,9 @@ pages; it opens in VS Code with ready-made launch configurations.
   D-cases with status, duration, outcome), pending supervisor decisions
   with grant buttons, the arrival-time comparison (with vs without
   preemption) and the Decision-Making Matrix with a live feed of rulings.
-- **Protocol (/protocol)** — the full operating rulebook, numbered sections
-  1–9, including fail-safes, arbitration, the speed exemption, early green,
+- **Protocol (/protocol)** — the full operating rulebook — lettered
+  categories A–I (39 rules, A1…I4) plus a parameter appendix — including
+  fail-safes, arbitration, the speed exemption, early green,
   predictive routing, data provenance and the scope-of-use disclaimer.
 - **How it works (/how)** — three continuous animated loops with English and
   Arabic captions: for the ambulance, for the normal driver, and normal vs
@@ -193,6 +195,24 @@ table on the Operations page lists each situation, its deciding criterion,
 the ruling and where it is logged, with a live feed of actual rulings.
 
 ## Early green for ordinary drivers (demand-responsive signals)
+Before any early green is granted the junction must be PHYSICALLY CLEAR:
+no vehicle standing within junction_clear_radius_m (75 m) of the junction
+centre on any approach other than the one being served, measured from live
+vehicle positions. This matters because the signal's wiring map knows only
+the edges wired to it — ramp stubs, service roads and parallel carriageways
+feeding the same junction box are invisible to it, so "every other approach
+is empty" could be true of the map while cars stood on the road. Blocked
+attempts are counted in the self-audit as proximity_blocked (measured: 188
+blocks against 178 grants over 900 s of dense showcase traffic, with zero
+grants having another direction occupied on the road).
+
+At a divided junction — several signal nodes carrying one name, such as a
+dual-carriageway interchange — the lone-approach test covers the WHOLE
+complex: internal connector edges between the sibling nodes never count as
+a lone arrival, and if any sibling's external approach carried traffic
+within the quiet window, no early green fires anywhere in the complex
+(counted in the self-audit as complex_blocked). One physical junction,
+one fairness decision.
 When exactly one approach of a junction is occupied and every other approach
 has been empty for 3 s (lone_confirm_s), the junction moves through its own
 amber to the phase serving that approach. The early green ends the moment any
@@ -294,14 +314,23 @@ traffic has waited beyond the minimum green) — measured 0 violations at
 2,659 vehicles with 70% of in-use junctions on fair timers.
 
 ## Network models and places
-Two models: Downtown Kuwait City (detailed; every street; sublane model and
+Three models: Downtown Kuwait City (detailed; every street; sublane model and
 rescue lanes) and All governorates (metro arterials: motorways, trunks,
 primary and secondary roads across Capital, Hawalli, Farwaniya, Mubarak
-Al-Kabeer, Ahmadi and Jahra — 13,300 edges, 223 signalized junctions). Real
+Al-Kabeer, Ahmadi and Jahra — 13,300 edges, 223 signalized junctions).
+Showcase — 3 districts (downtown): the downtown network with three
+fixed-density districts baked into the demand — a dense core keeping 100% of
+routed downtown trips, a normal ring keeping ~45% and a light waterfront
+keeping ~10%, each trip kept or dropped by a deterministic hash of its
+vehicle id by the district its route starts in — so lone-driver early greens
+and dense-junction fair timers are on screen at once. Its demand is static:
+the clock does not scale it, the warm state always caches, and the Live Map
+hides the day, traffic-level and start-hour controls; the district circles
+are drawn on the map. Real
 MoH hospitals per governorate (Amiri, Al-Sabah, Mubarak Al-Kabeer,
-Farwaniya, Al-Adan, Al-Jahra). About 100 named incident areas, grouped by
-governorate; at startup only places that snap to the modelled network are
-offered.
+Farwaniya, Al-Adan, Al-Jahra). 100 named incident areas across the two
+models (21 downtown, 79 metro), grouped by governorate; at startup only
+places that snap to the modelled network are offered.
 
 ## Names and codes
 Every road is labelled from its real OpenStreetMap name (English name when
@@ -352,7 +381,8 @@ Kuwaiti weekday traffic because Kuwait exposes no public live traffic feed;
 real hourly counts (for example from the licensed xMap Kuwait road-traffic
 catalog) can be dropped into data/real_counts.csv as hour,multiplier rows to
 override the profile. Synthetic: individual signal timing plans (static
-72–90 s cycles generated per junction). The Markov chains learn from
+90 s cycles generated per junction (netconvert --tls.cycle.time 90)). The
+Markov chains learn from
 simulated traffic here; the identical estimator ingests real detector data.
 
 ## Measured results

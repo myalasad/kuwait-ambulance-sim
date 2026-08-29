@@ -49,10 +49,6 @@ DAY_LABEL = {"weekday": "Weekday (Sun–Thu)", "weekend": "Weekend (Fri–Sat)"}
 LEVELS = {"easy": 0.45, "medium": 1.0, "extreme": 1.8}
 LEVEL_LABEL = {"easy": "Easy", "medium": "Medium", "extreme": "Extreme"}
 
-# Kept for backwards compatibility with earlier imports.
-HOURLY = WEEKDAY
-PEAK_PERIOD_S = 1.3
-
 
 def hourly_profile(root, day_type="weekday"):
     """The calibrated shape for the day type; data/real_counts.csv (if
@@ -68,20 +64,9 @@ def hourly_profile(root, day_type="weekday"):
     return profile
 
 
-def demand_multiplier(root, day_type, level, hour):
-    """Effective scale on the flat peak-rate demand base."""
-    prof = hourly_profile(root, day_type)
-    return LEVELS.get(level, 1.0) * prof.get(hour % 24, 0.3)
-
-
 def describe(day_type, level, hour):
     """Plain words for the UI: 'Weekday 15:00 — heavy'."""
     m = PROFILES.get(day_type, WEEKDAY).get(hour % 24, 0.3) * LEVELS.get(level, 1.0)
     word = ("near-empty" if m < 0.15 else "light" if m < 0.45
             else "moderate" if m < 0.8 else "heavy" if m < 1.3 else "saturated")
     return {"multiplier": round(m, 2), "word": word}
-
-
-def period_for_hour(profile, hour):
-    """randomTrips --period for the given clock hour (legacy helper)."""
-    return PEAK_PERIOD_S / max(profile.get(hour % 24, 0.3), 0.02)

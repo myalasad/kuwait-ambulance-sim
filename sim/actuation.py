@@ -46,7 +46,13 @@ class DemandResponsiveController:
         # permanent self-audit: a held early green that persists while
         # another approach has traffic (beyond the minimum green) is a
         # FAIRNESS VIOLATION; the count is shown on the dashboard
+        self.complex_ext = {}      # tls -> {external edge: zone lanes} of
+        #                            its multi-node junction complex
+        self._all_complex_edges = {}
+        self._seen_any = {}        # complex external edge -> last seen t
+        self._lane_res = {}        # this step's lane occupancy
         self.audit = {"grants": 0, "extensions": 0, "violations": 0,
+                      "complex_blocked": 0, "proximity_blocked": 0,
                       "ended_for_other_traffic": 0}
         self.skipped_nonconflict = 0
         self._build()
@@ -111,7 +117,163 @@ class DemandResponsiveController:
                 for lane in lanes:
                     traci.lane.subscribe(lane, [tc.LAST_STEP_VEHICLE_NUMBER])
             self.tls_info[tls_id] = {"approach": approach, "serve": serve,
-                                     "phases": phases}
+                                     "phases": phases,
+                                     "near": {}, "centre": None}
+        self._build_near_approaches()
+        self._build_complexes()
+
+    def _build_near_approaches(self):
+        """Physical ground truth for the lone-approach doctrine.
+
+        The controlled-links map only knows the edges wired to the signal;
+        ramp stubs, service roads and carriageways feeding the same box are
+        invisible to it, so "every other approach is empty" could be true of
+        the MAP while cars stood at the junction.  For every junction we
+        therefore collect the edges that physically ARRIVE at it — those
+        ending inside ``junction_clear_radius_m`` of the junction centre and
+        coming from outside it — and require them to be empty too."""
+        if self.net is None:
+            return
+        R = self.cfg.junction_clear_radius_m
+        arrivals = []
+        for e in self.net.getEdges():
+            eid = e.getID()
+            if eid.startswith(":") or not e.allows("passenger"):
+                continue
+            arrivals.append((eid, e.getToNode().getCoord(),
+                             e.getFromNode().getCoord(),
+                             {l.getID() for l in e.getLanes()}))
+        for tls_id, info in self.tls_info.items():
+            pts = []
+            for lanes in info["approach"].values():
+                for lane in lanes:
+                    try:
+                        pts.append(self.net.getLane(lane).getShape()[-1])
+                    except Exception:
+                        pass
+            if not pts:
+                continue
+            cx = sum(p[0] for p in pts) / len(pts)
+            cy = sum(p[1] for p in pts) / len(pts)
+            info["centre"] = (cx, cy)
+            near = {}
+            for eid, (tx, ty), (fx, fy), lanes in arrivals:
+                if (tx - cx) ** 2 + (ty - cy) ** 2 > R * R:
+                    continue                    # does not end at this box
+                if (fx - cx) ** 2 + (fy - cy) ** 2 <= R * R:
+                    continue                    # leaves the box: an exit
+                near[eid] = lanes
+            info["near"] = near
+            for lanes in near.values():
+                for lane in lanes:
+                    traci.lane.subscribe(lane, [tc.LAST_STEP_VEHICLE_NUMBER])
+
+    def _junction_physically_clear(self, info, edge):
+        """No vehicle standing at the junction on any approach other than
+        the served one — measured on the road, not on the wiring map.
+        Returns (clear, evidence dict of blocking edge -> vehicle count)."""
+        served = info["approach"].get(edge, set())
+        blockers = {}
+        for eid, lanes in info["near"].items():
+            if eid == edge or lanes & served:
+                continue                        # the served stream itself
+            n = sum(self._lane_res.get(l, {})
+                    .get(tc.LAST_STEP_VEHICLE_NUMBER, 0) for l in lanes)
+            if n:
+                blockers[eid] = n
+        return (not blockers), blockers
+
+    def _build_complexes(self):
+        """A divided junction is several signal nodes carrying one name;
+        the lone-approach doctrine must apply to the WHOLE complex.  Two
+        nodes are siblings when a short edge (<60 m) leaves one and is an
+        approach of the other — the internal carriageway connectors."""
+        tls_in, tls_out, tls_pos = {}, {}, {}
+        for tls_id in traci.trafficlight.getIDList():
+            try:
+                links = traci.trafficlight.getControlledLinks(tls_id)
+            except traci.TraCIException:
+                continue
+            ins, outs = set(), set()
+            pts = []
+            for group in links:
+                if group:
+                    ins.add(group[0][0].rsplit("_", 1)[0])
+                    outs.add(group[0][1].rsplit("_", 1)[0])
+                    try:
+                        pts.append(self.net.getLane(
+                            group[0][0]).getShape()[-1])
+                    except Exception:
+                        pass
+            tls_in[tls_id], tls_out[tls_id] = ins, outs
+            if pts:
+                tls_pos[tls_id] = (sum(p[0] for p in pts) / len(pts),
+                                   sum(p[1] for p in pts) / len(pts))
+
+        def elen(eid):
+            try:
+                return self.net.getEdge(eid).getLength()
+            except Exception:
+                return 1e9
+        parent = {t: t for t in tls_in}
+
+        def find(t):
+            while parent[t] != t:
+                parent[t] = parent[parent[t]]
+                t = parent[t]
+            return t
+        ids = list(tls_in)
+        for a in ids:
+            for b in ids:
+                if a >= b:
+                    continue
+                near = False
+                pa, pb = tls_pos.get(a), tls_pos.get(b)
+                if pa and pb:
+                    # wide interchanges: sibling stop lines can sit ~90 m
+                    # apart with no short connector between them
+                    near = ((pa[0] - pb[0]) ** 2
+                            + (pa[1] - pb[1]) ** 2) < 90.0 ** 2
+                if near or \
+                   any(elen(e) < 60.0 for e in tls_out[a] & tls_in[b]) or \
+                   any(elen(e) < 60.0 for e in tls_out[b] & tls_in[a]):
+                    parent[find(a)] = find(b)
+        groups = {}
+        for t in ids:
+            groups.setdefault(find(t), []).append(t)
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            all_in = set().union(*(tls_in[t] for t in members))
+            all_out = set().union(*(tls_out[t] for t in members))
+            internal = {e for e in all_in & all_out if elen(e) < 60.0}
+            ext = {}
+            for e in all_in - internal:
+                lanes = self._zone_lanes(e)
+                if lanes:
+                    ext[e] = lanes
+                    for lane in lanes:
+                        traci.lane.subscribe(
+                            lane, [tc.LAST_STEP_VEHICLE_NUMBER])
+            for t in members:
+                if t in self.tls_info:
+                    self.complex_ext[t] = ext
+            self._all_complex_edges.update(ext)
+
+    def _complex_clear(self, tls_id, edge, now):
+        """True when the WHOLE junction complex (all sibling nodes) has no
+        other external approach that carried traffic within the quiet
+        window — the doctrine's definition of "alone at the junction"."""
+        ext = self.complex_ext.get(tls_id)
+        if not ext:
+            return True
+        if edge not in ext:
+            return False      # internal connector: never a lone arrival
+        for e in ext:
+            if e != edge and now - self._seen_any.get(e, -1e9) \
+                    <= self.cfg.lone_quiet_s:
+                return False
+        return True
 
     def _zone_lanes(self, edge_id):
         """All lanes within detection_zone_m upstream of the stop line,
@@ -162,6 +324,11 @@ class DemandResponsiveController:
             self.pending.clear()
             return
         lane_res = traci.lane.getAllSubscriptionResults()
+        self._lane_res = lane_res
+        for e, lanes in self._all_complex_edges.items():
+            if any(lane_res.get(l, {}).get(tc.LAST_STEP_VEHICLE_NUMBER, 0)
+                   for l in lanes):
+                self._seen_any[e] = now
         fair = lone = occ_n = 0
         for tls_id, info in self.tls_info.items():
             if tls_id in excluded:
@@ -193,7 +360,13 @@ class DemandResponsiveController:
                 self._advance(tls_id, claim, occ, occupied, now)
             elif (len(occupied) == 1 and len(in_use) == 1
                   and now >= self.cooldown.get(tls_id, 0.0)):
-                self._consider(tls_id, info, occupied[0], now)
+                if self._complex_clear(tls_id, occupied[0], now):
+                    self._consider(tls_id, info, occupied[0], now)
+                else:
+                    # a sibling node of the SAME physical junction has
+                    # traffic: fair timers by design, no statement emitted
+                    self.audit["complex_blocked"] += 1
+                    self.pending.pop(tls_id, None)
             else:
                 self.pending.pop(tls_id, None)
         self._modes = {"fair": fair, "lone": lone, "occupied": occ_n}
@@ -207,6 +380,14 @@ class DemandResponsiveController:
             self.pending[tls_id] = (edge, now)
             return
         if now - pend[1] < self.cfg.lone_confirm_s:
+            return
+        clear, blockers = self._junction_physically_clear(info, edge)
+        if not clear:
+            # another direction of this junction is physically occupied:
+            # fair timers by design — and no statement is emitted, because
+            # nothing happened
+            self.audit["proximity_blocked"] += 1
+            self.pending.pop(tls_id, None)
             return
         try:
             cur = traci.trafficlight.getPhase(tls_id)
@@ -228,8 +409,10 @@ class DemandResponsiveController:
             self.audit["extensions"] += 1
             self.ops.emit(now, "actuation",
                           f"Junction {self.ops.jn(tls_id)}: green EXTENDED for the only "
-                          f"occupied approach ({self.ops.rd(edge)}) — all other "
-                          f"approaches empty", "info")
+                          f"occupied approach ({self.ops.rd(edge)}) — every other "
+                          f"approach empty, and no vehicle standing within "
+                          f"{self.cfg.junction_clear_radius_m:.0f} m of the "
+                          f"junction on any of them", "info")
             return
         self._grant(tls_id, info, edge, serve_idx, cur, now)
 
@@ -259,8 +442,10 @@ class DemandResponsiveController:
         self.ops.emit(now, "actuation",
                       f"Junction {self.ops.jn(tls_id)}: EARLY GREEN granted to the only "
                       f"occupied approach ({self.ops.rd(edge)}) — every other approach "
-                      f"empty for {self.cfg.lone_confirm_s:.0f} s; no reason "
-                      f"to hold traffic on a timer", "info")
+                      f"empty for {self.cfg.lone_confirm_s:.0f} s and no vehicle "
+                      f"standing within {self.cfg.junction_clear_radius_m:.0f} m of "
+                      f"the junction on any of them; no reason to hold traffic "
+                      f"on a timer", "info")
 
     def _advance(self, tls_id, claim, occ, occupied, now):
         try:

@@ -19,8 +19,12 @@ Control model (mirrors real emergency-vehicle-preemption deployments):
     junctions far ahead for minutes, starving cross streets and gridlocking
     the very grid it is trying to cross.
 4.  Preempting a junction means: conflicting greens get ``yellow_time_s`` of
-    amber, then an all-red clearance interval, then the controller **jumps to
-    and holds the real programme phase** serving the ambulance's approach.
+    amber, then an all-red clearance interval, then the ambulance's approach
+    is held on protected green with every cross approach on flashing amber
+    ('o', yield) — hardening to solid red once the ambulance is within
+    ``flash_harden_eta_s`` seconds ETA or ``flash_harden_min_m`` metres.
+    With ``flash_amber`` off, the controller instead jumps to and holds the
+    real programme phase serving the approach (classic preemption).
     Signals are never switched dark — dark signals cause crashes.
 5.  A single hold is capped at ``max_hold_s``; beyond it the junction cycles
     normally for at least ``preempt_cooldown_s`` (unless the ambulance is
@@ -46,6 +50,7 @@ the purposely-enabled period of each junction is fully reported from
 activation to restoration.
 """
 import traci
+import traci.constants as tc
 
 NORMAL = "normal"
 TO_PREEMPT = "transition"    # amber / all-red shown before the corridor
@@ -110,9 +115,6 @@ class GreenWaveController:
         return {tls: {"m": st.mode, "case": st.case, "amb": st.amb}
                 for tls, st in list(self.active.items())}
 
-    def modes(self) -> dict:
-        return {tls: st.mode for tls, st in list(self.active.items())}
-
     def active_count(self) -> int:
         return sum(1 for st in self.active.values()
                    if st.mode in (TO_PREEMPT, PREEMPTED, CLEARING))
@@ -142,8 +144,10 @@ class GreenWaveController:
 
     # ------------------------------------------------------------------ tick
 
-    def update(self, ambulance_ids, now: float) -> None:
-        """Advance the controller one simulation step."""
+    def update(self, ambulance_ids, now: float, next_tls=None) -> None:
+        """Advance the controller one simulation step.  ``next_tls`` is an
+        optional per-step cache of post-reroute getNextTLS results (filled
+        by the runner's delay attribution pass) checked before fetching."""
         cfg = self.cfg
         self._now = now
         # tls_id -> {amb_id: [set of link indices, min dist]}
@@ -159,12 +163,18 @@ class GreenWaveController:
             # 2. The centre plans the corridor for CONFIRMED units only:
             #    it knows their planned route, as a real dispatch centre
             #    does — but it never acts on a unit no camera has seen.
+            results = traci.vehicle.getAllSubscriptionResults()
             for amb_id in ambulance_ids:
                 if amb_id not in self.confirmed:
                     continue
                 try:
-                    upcoming = traci.vehicle.getNextTLS(amb_id)
-                    speed = traci.vehicle.getSpeed(amb_id)
+                    upcoming = (None if next_tls is None
+                                else next_tls.get(amb_id))
+                    if upcoming is None:
+                        upcoming = traci.vehicle.getNextTLS(amb_id)
+                    speed = results.get(amb_id, {}).get(tc.VAR_SPEED)
+                    if speed is None:
+                        speed = traci.vehicle.getSpeed(amb_id)
                 except traci.TraCIException:
                     continue
                 amb_speed[amb_id] = speed
@@ -182,10 +192,17 @@ class GreenWaveController:
                     # Once flush-enabled, the request is STICKY for this
                     # unit until it passes: a flickering congestion state
                     # must not flap the junction.
-                    if (not within and dist <= flush_reach
-                            and ((amb_id, tls_id) in self._flush_sticky
-                                 or self._approach_congested(tls_id,
-                                                             link_index))):
+                    # A granted flush keeps its reach even when the unit
+                    # crawls: the speed-scaled window would collapse to
+                    # 320 m exactly in the gridlock the drain lead was
+                    # built for.  Bounded by greenwave_distance_m, and the
+                    # hold cap and cooldown still protect cross traffic.
+                    sticky = (amb_id, tls_id) in self._flush_sticky
+                    if (not within
+                            and ((sticky and dist <= cfg.greenwave_distance_m)
+                                 or (dist <= flush_reach
+                                     and self._approach_congested(
+                                         tls_id, link_index)))):
                         within = True
                         flush_tls.add(tls_id)
                         self._flush_sticky.add((amb_id, tls_id))
@@ -477,7 +494,10 @@ class GreenWaveController:
         """The tls id whose junction the vehicle is currently inside, if any
         (vehicles on internal lanes have lane ids like ':<node>_<i>_<j>')."""
         try:
-            lane = traci.vehicle.getLaneID(veh_id)
+            lane = traci.vehicle.getAllSubscriptionResults().get(
+                veh_id, {}).get(tc.VAR_LANE_ID)
+            if lane is None:
+                lane = traci.vehicle.getLaneID(veh_id)
         except traci.TraCIException:
             return None
         if not lane.startswith(":"):
@@ -548,16 +568,21 @@ class GreenWaveController:
         the control centre ever learns a unit exists."""
         if self._camera_zones is None:
             self._build_camera_zones()
+        results = traci.vehicle.getAllSubscriptionResults()
         for amb_id in ambulance_ids:
             try:
-                eid = traci.vehicle.getRoadID(amb_id)
+                eid = results.get(amb_id, {}).get(tc.VAR_ROAD_ID)
+                if eid is None:
+                    eid = traci.vehicle.getRoadID(amb_id)
             except traci.TraCIException:
                 continue
             hits = self._camera_zones.get(eid)
             if not hits:
                 continue
             try:
-                pos = traci.vehicle.getLanePosition(amb_id)
+                pos = results.get(amb_id, {}).get(tc.VAR_LANEPOSITION)
+                if pos is None:
+                    pos = traci.vehicle.getLanePosition(amb_id)
             except traci.TraCIException:
                 continue
             remain = max(0.0, self._edge_len.get(eid, 0.0) - pos)
@@ -601,7 +626,8 @@ class GreenWaveController:
         With ``flash_amber`` on (the default), the held state is: corridor
         approach protected green, every cross approach FLASHING AMBER
         ('o' — drivers yield, and vehicles caught in the box can clear it)
-        until the ambulance is within ``flash_harden_dist_m``, when the
+        until the ambulance is within ``flash_harden_eta_s`` seconds ETA
+        (or ``flash_harden_min_m`` metres), when the
         flash hardens to solid red for final clearance.  With it off, the
         target is a *real phase* of the junction's own signal programme
         that serves every ambulance link green — what classic preemption

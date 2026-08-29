@@ -16,11 +16,13 @@ from .ambulance import Dispatcher
 from .metrics import Metrics
 from .operations import OperationsLog
 from .router import Router
-from .traffic_profile import hourly_profile, LEVELS, DAY_LABEL, LEVEL_LABEL, describe
+from .traffic_profile import hourly_profile, LEVELS, DAY_LABEL, LEVEL_LABEL, describe, PROFILES
 from .markov import TrafficMarkov
 from .places import Places
 
-VEH_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED]
+VEH_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE, tc.VAR_SPEED,
+            tc.VAR_ROAD_ID, tc.VAR_LANE_ID, tc.VAR_LANEPOSITION,
+            tc.VAR_DISTANCE]
 # background cars never need speed in the frame — position + heading only
 CAR_VARS = [tc.VAR_POSITION, tc.VAR_ANGLE]
 
@@ -124,17 +126,29 @@ class Simulation:
             d = self.places.describe(t["id"])
             t["code"], t["name"] = d["code"], d["name"]
             t["category"], t["area"] = d["category"], d["area"]
-        d0 = describe(self.cfg.day_type, self.cfg.traffic_level,
-                      self.cfg.start_hour)
-        self.ops.emit(0.0, "system",
-                      f"Simulation started: {self.cfg.label()}, "
-                      f"{len(self._tls_static)} signalized junctions, "
-                      f"{DAY_LABEL[self.cfg.day_type]} "
-                      f"{self.clock()}, {LEVEL_LABEL[self.cfg.traffic_level]} "
-                      f"traffic (demand {d0['word']}, {d0['multiplier']} x "
-                      f"peak), preemption "
-                      f"{'ARMED' if self._preemption_wanted else 'DISARMED'}",
-                      "info")
+        if self._static_demand:
+            self.ops.emit(0.0, "system",
+                          f"Simulation started: {self.cfg.label()}, "
+                          f"{len(self._tls_static)} signalized junctions, "
+                          f"{self.clock()}, fixed 3-district demand "
+                          f"(showcase — the clock never scales it), "
+                          f"preemption "
+                          f"{'ARMED' if self._preemption_wanted else 'DISARMED'}",
+                          "info")
+        else:
+            d0 = describe(self.cfg.day_type, self.cfg.traffic_level,
+                          self.cfg.start_hour)
+            m0 = (self._level * self.cfg.demand_factor
+                  * self._profile.get(self._scale_hour, 0.3))
+            self.ops.emit(0.0, "system",
+                          f"Simulation started: {self.cfg.label()}, "
+                          f"{len(self._tls_static)} signalized junctions, "
+                          f"{DAY_LABEL[self.cfg.day_type]} "
+                          f"{self.clock()}, {LEVEL_LABEL[self.cfg.traffic_level]} "
+                          f"traffic (demand {d0['word']}, {m0:.2f} x "
+                          f"peak), preemption "
+                          f"{'ARMED' if self._preemption_wanted else 'DISARMED'}",
+                          "info")
 
     # ------------------------------------------------- warm-state caching
 
@@ -318,11 +332,15 @@ class Simulation:
             if self.cfg.adaptive_reroute:
                 self.dispatcher.check_stuck(self.time)
         self.dispatcher.process_returns(self.time)
+        # shared post-reroute getNextTLS cache: _attribute_delay fills it,
+        # the preemption controller reads it before fetching itself
+        next_tls = {}
         if self.dispatcher.info:
             self.dispatcher.check_pending_insertions(self.time)
-            self._attribute_delay(active)
+            self._attribute_delay(active, next_tls)
         self.controller.update(
-            self.dispatcher.active_ambulances(lights_only=True), self.time)
+            self.dispatcher.active_ambulances(lights_only=True), self.time,
+            next_tls)
         self.actuation.update(
             self.time,
             excluded=set(self.controller.active) | set(self.controller.pending))
@@ -331,25 +349,31 @@ class Simulation:
             self._markov_next_save = self.time + self.cfg.markov_save_every_s
             self.markov.save()
 
-    def _attribute_delay(self, active):
+    def _attribute_delay(self, active, next_tls):
         """Split each ambulance's lost time between 'waiting at a red signal'
         and 'stuck in traffic' — the measured side of the with/without
         arrival-time comparison."""
+        results = traci.vehicle.getAllSubscriptionResults()
         for amb_id in active:
             rec = self.dispatcher.info.get(amb_id)
             if rec is None or rec.get("mission") == "loading":
                 continue     # the loading stop is neither traffic nor signal
             try:
-                speed = traci.vehicle.getSpeed(amb_id)
+                speed = results.get(amb_id, {}).get(tc.VAR_SPEED)
+                if speed is None:
+                    speed = traci.vehicle.getSpeed(amb_id)
                 if speed < 0.5:
                     nxt = traci.vehicle.getNextTLS(amb_id)
+                    next_tls[amb_id] = nxt
                     if nxt and nxt[0][2] < 60 and nxt[0][3] in "ru":
                         rec["signal_wait_s"] += self.cfg.step_length
                     else:
                         rec["traffic_wait_s"] += self.cfg.step_length
                 else:
-                    limit = traci.lane.getMaxSpeed(
-                        traci.vehicle.getLaneID(amb_id))
+                    lane = results.get(amb_id, {}).get(tc.VAR_LANE_ID)
+                    if lane is None:
+                        lane = traci.vehicle.getLaneID(amb_id)
+                    limit = traci.lane.getMaxSpeed(lane)
                     if speed < 0.3 * limit:
                         rec["traffic_wait_s"] += self.cfg.step_length
             except traci.TraCIException:
@@ -393,10 +417,12 @@ class Simulation:
             if veh_id.startswith("AMB_"):
                 rec = self.dispatcher.info.get(veh_id, {})
                 # the posted limit only changes on a lane change — cached
-                try:
-                    lane = traci.vehicle.getLaneID(veh_id)
-                except traci.TraCIException:
-                    lane = None
+                lane = vals.get(tc.VAR_LANE_ID)
+                if lane is None:
+                    try:
+                        lane = traci.vehicle.getLaneID(veh_id)
+                    except traci.TraCIException:
+                        lane = None
                 cached = self._limit_cache.get(veh_id)
                 if cached is not None and cached[0] == lane:
                     limit = cached[1]
@@ -451,7 +477,7 @@ class Simulation:
                                self.controller.active_count())
         kpi["teleports"] = self.teleports
         kpi["clock"] = self.clock()
-        kpi["open_cases"] = len(self.ops.open_cases())
+        kpi["open_cases"] = self.ops.open_count
         kpi["early_greens"] = self.actuation.granted_total
         kpi["queued_calls"] = len(self.dispatcher.call_queue)
         kpi["queue_oldest_s"] = (round(self.time
@@ -516,8 +542,7 @@ class Simulation:
             "day_type": self.cfg.day_type,
             "traffic_level": self.cfg.traffic_level,
             "profiles": {k: [round(LEVELS["medium"] * v[h], 2) for h in range(24)]
-                         for k, v in __import__("sim.traffic_profile",
-                                                fromlist=["PROFILES"]).PROFILES.items()},
+                         for k, v in PROFILES.items()},
             "levels": LEVELS,
             "scenario": self.cfg.scenario,
             "scenarios": {k: v["label"] for k, v in SCENARIOS.items()},
