@@ -94,7 +94,18 @@ assertive ambulance vType, insertion watchdog (re-place at 60 s; a failed
 re-place now closes the case), progress-based stuck detection with honest
 "no faster corridor exists" events.
 
-## In flight toward v4.0 (resume here after any session cut)
+## Current state (v4.0, shipped)
+
+v4.0 — early green can never fire at an occupied junction (divided-junction
+complexes + a physical 75 m clearance gate measured from live vehicle
+positions, after instrumenting grants against ground truth exposed edges
+the controlled-links map never listed); Showcase 3-district model (both
+early-green regimes on one screen, static demand, always cacheable); 36
+adversarially-verified fixes from a 50-agent hallucination/organization/
+results/code audit. Regression: 164 grants / 99 proximity blocks / 0
+fairness violations, missions arriving, steps p50 33 ms at 880 vehicles.
+
+## Superseded note (v4.0 is now shipped)
 
 The Showcase 3-district scenario is DONE, verified, committed and pushed
 (untagged WIP commit on main — its message carries the measured numbers).
