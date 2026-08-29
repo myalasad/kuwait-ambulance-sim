@@ -66,7 +66,14 @@ class Simulation:
         self._profile = hourly_profile(self.root, self.cfg.day_type)
         self._level = LEVELS.get(self.cfg.traffic_level, 1.0)
         self._scale_hour = self.cfg.start_hour % 24
-        cmd += ["--scale", f"{self._level * self.cfg.demand_factor * self._profile.get(self._scale_hour, 0.3):.3f}"]
+        # showcase-style scenarios bake their densities into the route file:
+        # the clock does not scale them, and the state always caches
+        self._static_demand = bool(
+            SCENARIOS[self.cfg.scenario].get("static_demand"))
+        if self._static_demand:
+            cmd += ["--scale", "1.000"]
+        else:
+            cmd += ["--scale", f"{self._level * self.cfg.demand_factor * self._profile.get(self._scale_hour, 0.3):.3f}"]
         cmd += self.extra_args
         traci.start(cmd)
         self.ops = OperationsLog(self.root)
@@ -254,7 +261,9 @@ class Simulation:
         traci.simulationStep()
         self.time = traci.simulation.getTime()
         hour = int(self.cfg.start_hour + self.time / 3600) % 24
-        if hour != self._scale_hour:
+        if hour != self._scale_hour and self._static_demand:
+            self._scale_hour = hour          # clock ticks; demand is baked
+        elif hour != self._scale_hour:
             self._scale_hour = hour
             mult = (self._level * self.cfg.demand_factor
                     * self._profile.get(hour, 0.3))
@@ -455,10 +464,16 @@ class Simulation:
         kpi["lone_junctions"] = fm["lone"]
         kpi["occupied_junctions"] = fm["occupied"]
         kpi["early_audit"] = fm["audit"]
-        kpi["traffic"] = {"day": self.cfg.day_type,
-                          "level": self.cfg.traffic_level,
-                          **describe(self.cfg.day_type, self.cfg.traffic_level,
-                                     self._scale_hour)}
+        if self._static_demand:
+            kpi["traffic"] = {"day": "showcase", "level": "showcase",
+                              "word": "fixed 3-district demand",
+                              "multiplier": 1.0}
+        else:
+            kpi["traffic"] = {"day": self.cfg.day_type,
+                              "level": self.cfg.traffic_level,
+                              **describe(self.cfg.day_type,
+                                         self.cfg.traffic_level,
+                                         self._scale_hour)}
 
         return {
             "t": self.time,
@@ -490,6 +505,8 @@ class Simulation:
         return {
             "edges": edges,
             "tls": self._tls_static,
+            "districts": SCENARIOS[self.cfg.scenario].get("districts"),
+            "static_demand": self._static_demand,
             "hospitals": [{"name": name, "lat": lat, "lon": lon}
                           for name, (lat, lon) in
                           self.dispatcher.hospitals.items()],

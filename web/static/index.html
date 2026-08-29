@@ -201,14 +201,18 @@
       <label for="model">Network model</label>
       <select id="model"></select>
     </div>
-    <div>
+    <div id="clockctl-note" style="display:none;font-size:12px;color:var(--muted)">
+      Showcase: three fixed-density districts (dense core · normal ring ·
+      light waterfront) — the clock does not scale this demand.
+    </div>
+    <div class="clockctl">
       <label for="daytype">Day</label>
       <select id="daytype">
         <option value="weekday">Weekday (Sun–Thu)</option>
         <option value="weekend">Weekend (Fri–Sat)</option>
       </select>
     </div>
-    <div>
+    <div class="clockctl">
       <label>Traffic level</label>
       <div class="row" id="levels">
         <button data-l="easy">Easy</button>
@@ -216,11 +220,13 @@
         <button data-l="extreme">Extreme</button>
       </div>
     </div>
-    <div>
+    <div class="clockctl">
       <label>Kuwait clock start: <span id="hourval">07:00</span>
         <span id="hourword" style="float:right;color:var(--muted)"></span></label>
       <input type="range" id="hour" min="0" max="23" step="1" value="7">
       <div id="profbar" style="display:flex;gap:1px;height:16px;margin:4px 0 8px"></div>
+    </div>
+    <div>
       <button id="btn-applytime">Apply day, traffic, time &amp; model (restarts)</button>
     </div>
   </div>
@@ -393,6 +399,32 @@ fetch("/api/network").then(r => r.json()).then(net => {
     o.value = key; o.textContent = lbl;
     if (key === net.scenario) o.selected = true;
     msel.appendChild(o);
+  }
+  if (net.static_demand) {
+    for (const el of document.querySelectorAll(".clockctl"))
+      el.style.display = "none";
+    $("clockctl-note").style.display = "block";
+    // day/traffic/time are hidden here: the button's only job is the
+    // model switch, so say exactly that
+    $("btn-applytime").textContent = "Apply network model (restarts)";
+  } else {
+    $("btn-applytime").textContent =
+      "Apply day, traffic, time & model (restarts)";
+  }
+  if (net.districts) {
+    const tint = { dense: "#ef4444", normal: "#f0b429", light: "#22c55e" };
+    for (const d of net.districts) {
+      L.circle([d.lat, d.lon], { radius: d.radius_m,
+        color: tint[d.kind] || "#8b98ad", weight: 1.5, dashArray: "6 6",
+        fillColor: tint[d.kind] || "#8b98ad", fillOpacity: 0.05 })
+        .addTo(map);
+      L.marker([d.lat, d.lon], { icon: L.divIcon({ className: "",
+        html: `<div style="font: 700 11px -apple-system, sans-serif;` +
+              `color:${tint[d.kind]};text-shadow:0 1px 3px #000;` +
+              `white-space:nowrap;transform:translate(-50%,-50%)">` +
+              `${d.name.toUpperCase()}</div>`, iconSize: [0, 0] }) })
+        .addTo(map);
+    }
   }
   if (net.bounds) {
     let verifyTries = 0;
@@ -590,7 +622,8 @@ function updatePanel(f) {
   if (f.kpi.traffic) {
     const t = f.kpi.traffic;
     $("trafficchip").textContent =
-      `${t.day === "weekend" ? "Weekend" : "Weekday"} · ${t.level} traffic · ${t.word}` +
+      (t.day === "showcase" ? `Showcase · ${t.word}`
+       : `${t.day === "weekend" ? "Weekend" : "Weekday"} · ${t.level} traffic · ${t.word}`) +
       (f.kpi.occupied_junctions ? ` · ${Math.round(100 * f.kpi.fair_timer_junctions / f.kpi.occupied_junctions)}% of busy junctions on fair timers` : "");
   }
   const tb = $("runs").querySelector("tbody");

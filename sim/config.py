@@ -163,6 +163,30 @@ SCENARIOS = {
     },
 }
 
+# Showcase: the downtown network with THREE fixed-density districts baked
+# into the demand — dense core, normal ring, light waterfront — so both
+# early-green regimes are on screen at the same time: lone drivers earn
+# early greens in the light district while the dense district's junctions
+# rule "several approaches occupied — fair timers by design".  Demand is
+# static (no clock scaling), so the state caches and starts instantly.
+SCENARIOS["showcase"] = {
+    **SCENARIOS["downtown"],
+    "label": "Showcase — 3 districts (downtown)",
+    "routes": "background_showcase.rou.xml",
+    "sumocfg": "scenario_showcase.sumocfg",
+    "static_demand": True,
+    # trips are kept with probability `keep` by the district their route
+    # STARTS in (nearest-anchor assignment); build_showcase.py bakes this
+    "districts": [
+        {"name": "Dense core", "kind": "dense", "lat": 29.3745,
+         "lon": 47.9860, "radius_m": 850, "keep": 1.0},
+        {"name": "Normal ring", "kind": "normal", "lat": 29.3700,
+         "lon": 47.9655, "radius_m": 800, "keep": 0.45},
+        {"name": "Light waterfront", "kind": "light", "lat": 29.3868,
+         "lon": 48.0005, "radius_m": 750, "keep": 0.10},
+    ],
+}
+
 
 @dataclass
 class SimConfig:
