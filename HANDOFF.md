@@ -94,6 +94,18 @@ assertive ambulance vType, insertion watchdog (re-place at 60 s; a failed
 re-place now closes the case), progress-based stuck detection with honest
 "no faster corridor exists" events.
 
+## In flight toward v4.0 (resume here after any session cut)
+
+The Showcase 3-district scenario is DONE, verified, committed and pushed
+(untagged WIP commit on main — its message carries the measured numbers).
+Remaining before tagging v4.0: apply the confirmed findings of the
+four-agent audit (hallucination-fixer / code-organizer / result-optimizer
+/ code-optimizer; workflow run `wf_f85c7f01-785` — per-agent results in
+the session's `subagents/workflows/wf_f85c7f01-785/journal.jsonl`,
+resumable via `resumeFromRunId`), re-verify headless + browser, update
+knowledge.md (showcase section) and README, kill any test server on
+port 8643, then tag v4.0 and release.
+
 ## Open items
 
 1. **Extreme-gridlock physics limit** — at weekend Extreme one mission took
