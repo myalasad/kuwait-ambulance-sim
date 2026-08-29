@@ -93,6 +93,13 @@
             grid-template-columns: 1fr 1fr; gap: 4px 10px; }
   .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
               margin-right: 5px; vertical-align: -1px; }
+  /* two of the real map cues are rings and one is a dashed line, not dots */
+  .legend i.ring { background: transparent; border: 2px solid #8b98ad;
+                   box-sizing: border-box; }
+  .legend i.dash { width: 16px; height: 0; border-radius: 0;
+                   border-top: 2px dashed #8b98ad; vertical-align: 3px; }
+  /* hidden until the network payload says this model has districts */
+  .legend .districtctl { display: none; }
   @keyframes legendflash { 50% { background: #3a2f10; } }
 
   /* live scenario ticker: one pill per ACTION, straight from the ops log */
@@ -270,11 +277,16 @@
       <span><i style="background:#ef4444"></i>approach red</span>
       <span><i style="background:#f0b429"></i>amber transition</span>
       <span><i style="background:#f0b429;animation:legendflash 1s steps(2) infinite"></i>flashing amber (hold — cross street yields)</span>
-      <span><i style="background:#ef4444;animation:legendflashred 1s steps(2) infinite"></i>flashing red (unit close — full stop)</span>
-      <span><i style="background:#22c55e;box-shadow:0 0 6px #22c55e"></i>purposely enabled</span>
-      <span><i style="background:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>early green (lone traffic)</span>
-      <span><i style="background:#9aa7bb"></i>car (3D up close)</span>
+      <span><i style="background:#ef4444;animation:legendflashred 1s steps(2) infinite"></i>flashing red (cross approach — full stop)</span>
+      <span><i style="background:#ef4444;box-shadow:0 0 6px #ef4444;animation:legendflashred 1s steps(2) infinite"></i>purposely enabled (junction blinks red + red ring)</span>
+      <span><i class="ring" style="border-color:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>early green (lone traffic) — cyan ring + label</span>
+      <span><i class="ring" style="border-color:#f0b429;box-shadow:0 0 6px #f0b429"></i>enabling / restoring — amber ring + label</span>
+      <span><i style="background:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>incident area (click to dispatch)</span>
+      <span><i class="dash"></i>planned corridor (× = destination)</span>
+      <span><i style="background:#8fa3bd"></i>car (3D up close)</span>
       <span><i style="background:#ff2d2d;box-shadow:0 0 6px #3b82f6"></i>ambulance</span>
+      <span class="districtctl"><i class="ring" style="border-color:#ef4444;border-style:dashed"></i>district density (dense / normal / light)</span>
+      <span>🏥 hospital · "N ready" = idle units</span>
     </div>
   </div>
 </div>
@@ -393,6 +405,8 @@ fetch("/api/network").then(r => r.json()).then(net => {
   if (net.traffic_level) setLevel(net.traffic_level);
   PROFILES = net.profiles || {};
   LEVELS = net.levels || { easy: 0.45, medium: 1, extreme: 1.8 };
+  DEMAND_FACTOR = net.demand_factor === undefined ? 1 : net.demand_factor;
+  STATIC_SCENARIOS = new Set(net.static_scenarios || []);
   drawProfile();
   const msel = $("model");
   for (const [key, lbl] of Object.entries(net.scenarios || {})) {
@@ -409,9 +423,20 @@ fetch("/api/network").then(r => r.json()).then(net => {
     // model switch, so say exactly that
     $("btn-applytime").textContent = "Apply network model (restarts)";
   } else {
+    for (const el of document.querySelectorAll(".clockctl"))
+      el.style.display = "";
+    $("clockctl-note").style.display = "none";
     $("btn-applytime").textContent =
       "Apply day, traffic, time & model (restarts)";
   }
+  // The district legend row only tells the truth on a model that HAS
+  // districts, so gate it exactly where the districts are drawn — both
+  // branches.  Explicit "inline", not "": the CSS default for this row is
+  // display:none (so it never flashes on downtown/metro before the payload
+  // lands), and "" would fall straight back to that rule and hide the row
+  // on the one model where it IS true.
+  for (const el of document.querySelectorAll(".districtctl"))
+    el.style.display = net.districts ? "inline" : "none";
   if (net.districts) {
     const tint = { dense: "#ef4444", normal: "#f0b429", light: "#22c55e" };
     for (const d of net.districts) {
@@ -455,14 +480,25 @@ let routesMeta = null;              // offscreen layer validity metadata
 window.__dbg = { get amb() { return ambPos; }, get cars() { return carPos; } };  // test hook
 const restoredBadges = new Map();   // tls id -> hide-at wall time
 
+// one owner for the status chip: memoised so the per-frame restore does not
+// touch the DOM 20x a second, and correct because EVERY writer goes through it
+let statusShown = null;
+function setStatus(on, text) {
+  if (statusShown === text) return;
+  statusShown = text;
+  $("status").classList.toggle("on", on);
+  $("status-text").textContent = text;
+}
+
+let live = false;                   // is the picture on screen a running sim?
+
 let ws = null;
 function connect() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${scheme}://${location.host}/ws`);
-  ws.onopen = () => { $("status").classList.add("on"); $("status-text").textContent = "live"; };
+  ws.onopen = () => setStatus(true, "live");
   ws.onclose = () => {
-    $("status").classList.remove("on");
-    $("status-text").textContent = "disconnected — reconnecting…";
+    setStatus(false, "disconnected — reconnecting…");
     setTimeout(connect, 2000);
   };
   ws.onmessage = onFrame;
@@ -473,7 +509,6 @@ connect();
 // log, shown the moment it happens — never a canned statement
 const TICKER_RULES = [
   [/PURPOSELY ENABLED/, "#ef4444"],
-  [/queue flush/, "#ef4444"],
   [/hardened to RED/, "#ef4444"],
   [/confirmed .* green corridor|Control centre confirmed/, "#4ea0ff"],
   [/CALL QUEUED|QUEUED CALL served/, "#f0b429"],
@@ -481,7 +516,7 @@ const TICKER_RULES = [
   [/NO CITATION/, "#22c55e"],
   [/ARRIVED at/, "#22c55e"],
   [/READY again|stands down to reserve/, "#22c55e"],
-  [/granted priority|referred to the operator|refer/, "#a78bfa"],
+  [/granted priority|UNABLE TO DECIDE|default policy applied|corridors requested/, "#a78bfa"],
   [/BACK TO NORMAL/, "#8be9b6"],
 ];
 function maybeTicker(e) {
@@ -519,15 +554,27 @@ function advanceTrack(p, wx, wy, ang, tNow) {
 
 function onFrame(ev) {
   const f = JSON.parse(ev.data);
-  syncControls(f);
-  if (f.error) { $("status").classList.remove("on"); $("status-text").textContent = f.error; }
-  if (f.warmup) {
-    $("status").classList.add("on");
-    $("status-text").textContent =
-      `Warming up Kuwait traffic — ${Math.round(100 * f.warmup.done / Math.max(f.warmup.total, 1))}%`;
+  syncControls(f);                  // pause/resume + speed sync on EVERY frame
+  if (f.error) setStatus(false, f.error);
+  // an idle heartbeat is a replay of the last live frame with its event
+  // delta stripped (server.py): the Pause button and the error banner above
+  // still sync, but nothing here may consume it as if it were new — the map
+  // simply holds the frozen picture
+  if (f.heartbeat) return;
+  if (f.warmup || !f.cars) {
+    if (f.warmup)
+      setStatus(true,
+        `Warming up Kuwait traffic — ${Math.round(100 * f.warmup.done / Math.max(f.warmup.total, 1))}%`);
+    // a restart destroyed the simulation this screen is showing: drop the
+    // picture once, not on every 0.4 s progress frame
+    if (live) { live = false; clearLivePicture(); }
     return;
   }
-  if (!f.cars) return;              // heartbeat frame
+  live = true;
+  // a real frame means warm-up is over and any earlier failure has cleared:
+  // the server sends no terminal "done" frame (a cached warm state skips the
+  // warm-up loop entirely), so the client must retire the message itself
+  if (!f.error) setStatus(true, "live");
   frame = f;
   if (f.events) for (const e of f.events) maybeTicker(e);
   if (f.fleet) {
@@ -589,6 +636,42 @@ function onFrame(ev) {
 
   updatePanel(f);
   updateDecisions(f);
+}
+
+// A restart destroys the simulation this screen is presenting.  Everything
+// below belongs to that dead run, so it must leave the screen rather than
+// sit there being read as live: the canvas clears itself (ctx.clearRect runs
+// before the `if (!frame) return` guard, so the plain network, districts and
+// hospital markers stay), the panel goes to "—" rather than a stale number.
+function clearLivePicture() {
+  frame = null; routesMeta = null;
+  carPos.clear(); ambPos.clear(); routeCache.clear();
+  restoredBadges.clear(); fleetShown.clear();
+  for (const id of ["k-veh", "k-amb", "k-pre", "k-fair", "k-audit"])
+    $(id).textContent = "—";
+  $("k-clock").textContent = "--:--";
+  $("clock2").textContent = "--:--:--";
+  $("k-resp").textContent = "— (restarting)";
+  $("trafficchip").textContent = "restarting…";
+  $("k-queue-box").style.display = "none";
+  $("runs").querySelector("tbody").innerHTML = "";
+  $("amblist").innerHTML =
+    '<span style="color:var(--muted);font-size:12px">none</span>';
+  $("decisions").innerHTML = "";   // stale conflict card + its Grant buttons
+  $("ticker").innerHTML = "";
+  // the new run's timestamps restart at 0:00: divide the feed so the two
+  // runs are never read as one timeline
+  const div = document.createElement("div");
+  div.className = "t";
+  div.textContent = "— simulation restarted —";
+  $("log").appendChild(div);
+  // fleet badges are per-run; without clearing fleetShown above, the memo
+  // would suppress the rewrite whenever the new run's count matches the old
+  for (const mk of hospMarkers.values()) {
+    const el = mk.getElement && mk.getElement();
+    const b = el && el.querySelector(".fleetbadge");
+    if (b) { b.textContent = "— ready"; b.style.color = "var(--muted)"; }
+  }
 }
 
 function updatePanel(f) {
@@ -1301,6 +1384,12 @@ document.addEventListener("keydown", e => {
 });
 
 let PROFILES = {}, LEVELS = { easy: 0.45, medium: 1, extreme: 1.8 };
+// the global demand factor the simulation actually applies: the bar and
+// the word must show the demand being run, not the calendar figure
+let DEMAND_FACTOR = 1;
+// models whose demand is baked into the route file: day type and traffic
+// level do not scale them, so the Apply prompt must not say they do
+let STATIC_SCENARIOS = new Set();
 let level = "medium";
 function setLevel(l) {
   level = l;
@@ -1317,7 +1406,8 @@ function demandWord(m) {
 }
 function drawProfile() {
   const prof = PROFILES[$("daytype").value] || [];
-  const h = +$("hour").value, mult = LEVELS[level] || 1;
+  const h = +$("hour").value;
+  const mult = (LEVELS[level] || 1) * DEMAND_FACTOR;
   const bar = $("profbar");
   bar.innerHTML = prof.map((v, i) =>
     `<i class="${i === h ? "now" : ""}" title="${String(i).padStart(2,"0")}:00 · ${demandWord(v * mult)}" style="height:${Math.max(8, Math.min(100, v * mult * 55))}%"></i>`
@@ -1333,11 +1423,38 @@ $("btn-applytime").onclick = () => {
   const h = +$("hour").value;
   const m = $("model").value;
   const day = $("daytype").value;
-  if (confirm(`Restart: ${day === "weekend" ? "Weekend" : "Weekday"} ${String(h).padStart(2, "0")}:00, ${level} traffic, on "${$("model").selectedOptions[0].textContent}"?`)) {
-    send({ cmd: "reset", hour: h, scenario: m, day_type: day, traffic_level: level });
-    carPos.clear(); ambPos.clear();
-    setTimeout(() => location.reload(), 4000);  // new network layers
-  }
+  const label = $("model").selectedOptions[0].textContent;
+  const hh = String(h).padStart(2, "0");
+  // the SELECTED model decides what the restart will honour, not the running
+  // one: a static model bakes its demand into the route file, so promising
+  // that day and traffic level apply to it would be a claim the sim ignores
+  const q = STATIC_SCENARIOS.has(m)
+    ? `Restart on "${label}", Kuwait clock ${hh}:00? Fixed 3-district demand — day and traffic level do not scale it.`
+    : `Restart: ${day === "weekend" ? "Weekend" : "Weekday"} ${hh}:00, ${level} traffic, on "${label}"?`;
+  if (!confirm(q)) return;
+  send({ cmd: "reset", hour: h, scenario: m, day_type: day, traffic_level: level });
+  // the map on screen belongs to the OLD model until the server can hand us
+  // the new one: reload on identity, never on a timer.  A poll fired before
+  // the server has drained the reset command still sees the old payload, so
+  // "a 200 response" is not enough — the payload must BE the new scenario.
+  const want = { scenario: m, start_hour: h, day_type: day, traffic_level: level };
+  const t0 = Date.now();
+  const poll = () => {
+    if (Date.now() - t0 > 90000) {
+      $("btn-applytime").textContent = "Restart timed out — reload the page";
+      return;
+    }
+    fetch("/api/network", { cache: "no-store" }).then(r => r.json()).then(n => {
+      if (n.error) {                   // restart failed: say so, don't reload
+        $("btn-applytime").textContent = "Restart failed — use Reset";
+        return;
+      }
+      const ready = Object.keys(want).every(k => String(n[k]) === String(want[k]));
+      if (ready) location.reload(); else setTimeout(poll, 500);
+    }).catch(() => setTimeout(poll, 500));
+  };
+  $("btn-applytime").textContent = "Rebuilding network…";
+  setTimeout(poll, 500);
 };
 $("preemption").onchange = e => send({ cmd: "preemption", on: e.target.checked });
 $("speed").oninput = e => {
@@ -1352,8 +1469,11 @@ $("btn-pause").onclick = () => {
   send({ cmd: paused ? "pause" : "resume" });
 };
 $("btn-reset").onclick = () => {
-  if (confirm("Restart the simulation from t=0?")) send({ cmd: "reset" });
-  carPos.clear(); ambPos.clear();
+  // early return: on Cancel nothing at all happens — the screen keeps the
+  // running simulation it is showing.  The traffic is cleared by the first
+  // restart frame (onFrame -> clearLivePicture), not from here.
+  if (!confirm("Restart the simulation from t=0?")) return;
+  send({ cmd: "reset" });
 };
 </script>
 </body>

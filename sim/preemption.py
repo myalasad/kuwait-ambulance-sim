@@ -61,8 +61,8 @@ TO_NORMAL = "restoring"      # amber before normal programme resumes
 
 class _TlsState:
     __slots__ = ("mode", "orig_program", "orig_phase", "target",
-                 "link_indices", "until", "started_at", "did_allred",
-                 "amb", "case", "hardened")
+                 "link_indices", "until", "started_at", "enabled_at",
+                 "did_allred", "amb", "case", "hardened")
 
     def __init__(self, orig_program, orig_phase, now):
         self.mode = NORMAL
@@ -71,7 +71,13 @@ class _TlsState:
         self.target = ""
         self.link_indices = frozenset()
         self.until = 0.0
+        # started_at is the CURRENT CONTINUOUS hold: it is reset on every
+        # re-arm because rule A4 caps a continuous hold (max_hold_s).
+        # enabled_at is the activation of this P-case and is never reset,
+        # so the restore message can report the period the junction was
+        # actually purposely enabled — the figure the Cases table shows.
         self.started_at = now
+        self.enabled_at = now
         self.did_allred = False
         self.amb = None
         self.case = None
@@ -89,6 +95,12 @@ class GreenWaveController:
         self.active = {}          # tls_id -> _TlsState
         self.cooldown = {}        # tls_id -> sim time until re-arm is allowed
         self.confirmed = set()    # ambulance ids confirmed by a camera
+        # ambulance id -> the junctions a corridor was actually OPENED at
+        # for it.  A set, so "N junctions preempted for this unit" is exact
+        # even if one junction is enabled for the unit more than once.  It
+        # survives a mid-run disarm: a unit that did get corridors before
+        # the operator disarmed keeps its true count.
+        self.preempted_for = {}
         self.camera_logged = set()  # (tls_id, amb_id) pairs already reported
         self.pending = {}         # tls_id -> referred decision awaiting operator
         self._arb_logged = {}     # tls_id -> contender set already logged
@@ -153,7 +165,10 @@ class GreenWaveController:
         # tls_id -> {amb_id: [set of link indices, min dist]}
         requests = {}
         amb_speed = {}
-        flush_tls = set()
+        # (amb, tls) pairs whose request window came from the flush lead on
+        # THIS tick — per-pair, so the "congested approach" justification is
+        # only ever attached to the unit that actually earned it
+        flush_pairs = set()
         seen_pairs = set()
         if self.enabled:
             # 1. PHYSICAL cameras: detection happens only when a unit with
@@ -204,7 +219,7 @@ class GreenWaveController:
                                      and self._approach_congested(
                                          tls_id, link_index)))):
                         within = True
-                        flush_tls.add(tls_id)
+                        flush_pairs.add((amb_id, tls_id))
                         self._flush_sticky.add((amb_id, tls_id))
                     if within:
                         seen_pairs.add((amb_id, tls_id))
@@ -245,8 +260,15 @@ class GreenWaveController:
                                     or eta <= cfg.flash_harden_eta_s * 1.3))))
             if st is None:
                 if not in_cooldown:
+                    # the justification is the WINNER's own: was this unit's
+                    # window a flush window, and is its approach congested
+                    # right now (read fresh, at the moment of the emit)?
+                    is_flush = (amb, tls_id) in flush_pairs
+                    congested_now = is_flush and any(
+                        self._approach_congested(tls_id, i) for i in idxs)
                     st = self._begin(tls_id, frozenset(idxs), now, amb,
-                                     harden, flush=tls_id in flush_tls)
+                                     harden, flush=is_flush,
+                                     congested=congested_now)
                     if st is not None:
                         self.active[tls_id] = st
             else:
@@ -301,9 +323,17 @@ class GreenWaveController:
                                               f"for final clearance", "info",
                                               actor=amb, case=st.case)
                             else:
+                                # state only what the condition tested: the
+                                # unit is outside the final-clearance
+                                # window.  It may have slowed, or
+                                # arbitration may have handed the junction
+                                # to a farther unit — do not assert which.
                                 self.ops.emit(now, "preempt_phase",
-                                              f"Junction {jn}: unit moved "
-                                              f"away — cross approaches "
+                                              f"Junction {jn}: {amb} "
+                                              f"{dist:.0f} m / "
+                                              f"{min(eta, 999):.0f} s out — "
+                                              f"outside the final-clearance "
+                                              f"window, cross approaches "
                                               f"back to FLASHING AMBER "
                                               f"(yield)", "info",
                                               actor=amb, case=st.case)
@@ -404,6 +434,24 @@ class GreenWaveController:
             if (st is not None and st.amb in by_amb
                     and st.mode in (TO_PREEMPT, PREEMPTED, CLEARING)):
                 idxs, dist = by_amb[st.amb]
+                others = sorted(a for a in by_amb if a != st.amb)
+                if others:
+                    # B1 continuity is an applied rule, so it is logged like
+                    # every other ruling.  De-duplicated per contender set
+                    # (as the clear-margin ruling below is), and tagged
+                    # "continuity" so a later clear-margin ruling at this
+                    # junction is not suppressed by this entry.
+                    key = ("continuity",) + tuple(sorted(by_amb))
+                    if self._arb_logged.get(tls_id) != key:
+                        self._arb_logged[tls_id] = key
+                        follower = min(others, key=lambda a: by_amb[a][1])
+                        self.ops.emit(now, "arbitration",
+                                      f"Junction {self.ops.jn(tls_id)}: "
+                                      f"CONTINUITY — continues serving "
+                                      f"{st.amb} ({dist:.0f} m, already on "
+                                      f"approach); {follower} queued behind "
+                                      f"it ({by_amb[follower][1]:.0f} m)",
+                                      "warn", actor=st.amb, case=st.case)
                 wanted[tls_id] = [idxs, dist, st.amb]
                 continue
             ranked = sorted(by_amb.items(), key=lambda kv: kv[1][1])
@@ -742,7 +790,7 @@ class GreenWaveController:
         return mk.state_now.get(edge, 0) >= 2
 
     def _begin(self, tls_id, link_indices, now, amb, harden=False,
-               flush=False):
+               flush=False, congested=False):
         try:
             orig_program = traci.trafficlight.getProgram(tls_id)
             orig_phase = traci.trafficlight.getPhase(tls_id)
@@ -761,16 +809,27 @@ class GreenWaveController:
         cross_txt = ("cross approaches to FLASHING AMBER (yield) until the "
                      "unit closes in" if self.cfg.flash_amber and not harden
                      else "conflicts to red")
-        flush_txt = ("" if not flush else
-                     " — enabled EARLY (queue flush): this approach is "
-                     "congested, so the extra lead drains the standing "
-                     "queue before the unit arrives")
+        if not flush:
+            flush_txt = ""
+        elif congested:
+            flush_txt = (" — enabled EARLY (queue flush): this approach is "
+                         "congested, so the extra lead drains the standing "
+                         "queue before the unit arrives")
+        else:
+            # the window is being held from an earlier reading (sticky
+            # flush): do not assert congestion in the present tense
+            flush_txt = (" — enabled EARLY (queue flush): extra lead "
+                         "retained from an earlier congested reading on "
+                         "this approach")
         st.case = self.ops.open_case("P", tls_id, now,
                                      f"Junction {self.ops.jn(tls_id)} corridor for {amb}")
         self.ops.emit(now, "preempt_start",
                       f"Junction {self.ops.jn(tls_id)} PURPOSELY ENABLED for {amb}: "
                       f"approach green, {cross_txt}{flush_txt}", "warn",
                       actor=amb, case=st.case)
+        # a corridor was genuinely opened here for this unit: the arrival
+        # analysis reads this to know whether its run had a green wave
+        self.preempted_for.setdefault(amb, set()).add(tls_id)
         if yellow != current:
             self._set_state(tls_id, st, yellow)
             st.mode = TO_PREEMPT
@@ -807,11 +866,15 @@ class GreenWaveController:
             traci.trafficlight.setPhase(tls_id, st.orig_phase)
         except traci.TraCIException:
             pass
-        held = now - st.started_at
+        # the whole period this P-case had the junction purposely enabled,
+        # not just the segment since the last re-arm
+        held = now - st.enabled_at
+        seg = now - st.started_at
+        extra = "" if seg >= held - 0.5 else f", {seg:.0f} s since the last re-arm"
         self.ops.emit(now, "restore",
                       f"Junction {self.ops.jn(tls_id)} BACK TO NORMAL programme — "
-                      f"purposely-enabled period over (held {held:.0f} s "
-                      f"for {st.amb})", "info", case=st.case)
+                      f"purposely-enabled period over (held {held:.0f} s"
+                      f"{extra} for {st.amb})", "info", case=st.case)
         if st.case:
             self.ops.close_case(st.case, now,
                                 f"restored to normal after {held:.0f} s")

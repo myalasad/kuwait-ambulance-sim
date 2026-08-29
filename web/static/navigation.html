@@ -58,12 +58,13 @@
   .sig { color: #4ade80; font-weight: 700; }
   .sig.pre { color: #22c55e; text-shadow: 0 0 6px #22c55e; }
   .sig.none { color: #445069; font-weight: 400; }
+  .sig.other { color: var(--amber); font-weight: 600; }
   #rows-wrap { max-height: 60vh; overflow-y: auto; }
 </style>
 </head>
 <body>
 <header>
-  <h1><span class="flag"></span>Navigation — Dijkstra corridor</h1>
+  <h1><span class="flag"></span>Navigation — route corridor</h1>
   <span id="clock" style="font-weight:700">--:--:--</span>
   <nav>
     <a href="/">Live Map</a>
@@ -82,11 +83,11 @@
     <select id="amb"></select>
     <div id="summary"></div>
     <div class="algo" id="algo">The driver's navigation and the signal
-      corridor are the <b>same route object</b>: computed once with
-      <b>Dijkstra</b> over the road network's edge graph (one-way streets and
-      turn restrictions respected), weighted by <b>live travel times</b>, then
-      assigned to the vehicle and used by the control centre to know which
-      junction the ambulance reaches next.</div>
+      corridor are the <b>same route object</b>: computed once over the road
+      network's edge graph (one-way streets and turn restrictions respected),
+      then assigned to the vehicle and used by the control centre to know
+      which junction the ambulance reaches next. Dispatch an ambulance to see
+      which router and weights produced its corridor.</div>
     <canvas id="mapcv"></canvas>
   </section>
 
@@ -107,6 +108,16 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let network = null, nav = null, selected = null;
+
+// The routing basis is a per-run fact (Markov weights can be off, and a
+// failed Dijkstra falls back to SUMO's own router), so the box states the
+// basis the SELECTED run actually used and claims nothing before dispatch.
+const ALGO_IDLE = `The driver's navigation and the signal corridor are the
+  <b>same route object</b>: computed once over the road network's edge graph
+  (one-way streets and turn restrictions respected), then assigned to the
+  vehicle and used by the control centre to know which junction the
+  ambulance reaches next. Dispatch an ambulance to see which router and
+  weights produced its corridor.`;
 
 fetch("/api/network").then(r => r.json()).then(n => { network = n; draw(); });
 
@@ -132,23 +143,44 @@ function current() {
   return nav && nav.ambulances.find(a => a.id === selected);
 }
 
+// junction -> the unit its corridor is currently held FOR.  Only "preempted"
+// and "transition" are a live hold; "restoring" is the junction being handed
+// back to its normal programme, and a corridor open for another ambulance is
+// not "purposely enabled" for this one.
+function corridorOwners() {
+  return new Map(Object.entries((nav && nav.tls_status) || {})
+    .filter(([, s]) => s.m === "preempted" || s.m === "transition")
+    .map(([k, s]) => [k, s.amb]));
+}
+
 function render() {
   const a = current();
-  if (!a) { $("summary").innerHTML = ""; $("rows").innerHTML =
+  if (!a) { $("summary").innerHTML = ""; $("algo").innerHTML = ALGO_IDLE;
+    $("rows").innerHTML =
     `<tr><td colspan="6" style="color:var(--muted)">Dispatch an ambulance on
-     the Live Map to see its Dijkstra corridor here.</td></tr>`; draw(); return; }
-  const preempted = new Set(Object.entries(nav.tls_status || {})
-    .filter(([, s]) => s.m === "preempted" || s.m === "transition")
-    .map(([k]) => k));
+     the Live Map to see its corridor here.</td></tr>`; draw(); return; }
+  $("algo").innerHTML =
+    `The driver's navigation and the signal corridor are the <b>same route
+     object</b>: computed once over the road network's edge graph (one-way
+     streets and turn restrictions respected) by <b>${a.algorithm}</b>, then
+     assigned to the vehicle and used by the control centre to know which
+     junction the ambulance reaches next.`;
+  const owner = corridorOwners();
   $("summary").innerHTML =
-    `<div class="kpi"><div class="v">${(a.length_m / 1000).toFixed(1)} km</div><div class="l">route length</div></div>` +
-    `<div class="kpi"><div class="v">${Math.round(a.eta_s)} s</div><div class="l">planned ETA</div></div>` +
+    // both totals are mission-cumulative (depot -> scene -> hospital) while
+    // the node table below is leg-relative, so the labels must say so
+    `<div class="kpi"><div class="v">${(a.length_m / 1000).toFixed(1)} km</div><div class="l">route length (whole mission)</div></div>` +
+    `<div class="kpi"><div class="v">${Math.round(a.eta_s)} s</div><div class="l">planned ETA (whole mission)</div></div>` +
     `<div class="kpi"><div class="v">${a.signals_on_route}</div><div class="l">signals on route</div></div>` +
     `<div class="kpi"><div class="v">${a.lights ? "ON" : "OFF"}</div><div class="l">lights (${a.case})</div></div>`;
   $("rows").innerHTML = a.rows.map((r, i) => {
+    const own = r.signal ? owner.get(r.signal) : undefined;
     const sig = r.signal
-      ? `<span class="sig ${preempted.has(r.signal) ? "pre" : ""}">●
-         ${preempted.has(r.signal) ? "PURPOSELY ENABLED" : "signal"}</span>`
+      ? (own === selected
+          ? `<span class="sig pre">● PURPOSELY ENABLED</span>`
+          : own
+            ? `<span class="sig other">● held for ${own}</span>`
+            : `<span class="sig">● signal</span>`)
       : `<span class="sig none">—</span>`;
     return `<tr><td class="num">${i + 1}</td><td>${r.junction || "<span style='color:#445069'>—</span>"}</td>` +
       `<td>${r.street}</td>` +
@@ -199,13 +231,13 @@ function draw() {
     c.beginPath(); c.arc(px(s0[1]), py(s0[0]), 5, 0, 7); c.fill();
     c.fillStyle = "#ce1126";
     c.beginPath(); c.arc(px(s1[1]), py(s1[0]), 5, 0, 7); c.fill();
-    // signals along the route
-    const preempted = new Set(Object.entries(nav.tls_status || {})
-      .filter(([, st]) => st.m !== "normal").map(([k]) => k));
+    // signals along the route — corridor green only where the junction is
+    // held for THIS unit
+    const owner = corridorOwners();
     for (const r of a.rows) {
       if (!r.signal) continue;
       c.beginPath(); c.arc(px(r.lon), py(r.lat), 3.5, 0, 7);
-      c.fillStyle = preempted.has(r.signal) ? "#22c55e" : "#f0b429";
+      c.fillStyle = owner.get(r.signal) === selected ? "#22c55e" : "#f0b429";
       c.fill();
     }
   }

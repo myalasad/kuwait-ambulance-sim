@@ -25,6 +25,11 @@ class Dispatcher:
         self.info = {}  # amb_id -> lifecycle + navigation record
         self._rng = random.Random(1)
         self._logics = {}  # tls id -> cached signal programme phases
+        self._links = {}   # tls id -> cached controlled-link groups
+        self._vtype_vmax = None   # ambulance vType's own maxSpeed (m/s)
+        # set by the runner: lets the stuck-reroute message check whether a
+        # corridor is actually active for a unit before saying so
+        self.controller = None
         # Ready-fleet model: each hospital stations a limited number of
         # ready units; a dispatch commits one, and a unit that delivers a
         # patient rejoins the RECEIVING hospital's pool after crew
@@ -371,11 +376,21 @@ class Dispatcher:
                               f"({self._fleet[target]}/{cap})",
                               "info", actor=amb_id)
             else:
-                # nothing leaves circulation silently, not even to reserve
+                # nothing leaves circulation silently, not even to reserve.
+                # Claim only what was tested: `target` is at strength and
+                # the origin had no debt to repay.  The pools that ARE
+                # short are then named from a real read of every pool.
+                short = sorted((n, v) for n, v in self._fleet.items()
+                               if v < cap)
+                short_note = ("; still below stationed strength: "
+                              + ", ".join(f"{n} {v}/{cap}" for n, v in short)
+                              ) if short else ""
                 self.ops.emit(now, "lifecycle",
-                              f"{amb_id} crew turnaround complete — every "
-                              f"pool at stationed strength; unit stands "
-                              f"down to reserve at {target}", "info",
+                              f"{amb_id} crew turnaround complete — {target} "
+                              f"already at stationed strength "
+                              f"({self._fleet[target]}/{cap}) "
+                              f"and no pool debt to repay; unit stands down "
+                              f"to reserve there{short_note}", "info",
                               actor=amb_id)
         # Freed crews serve waiting calls, oldest first.  Guarded against
         # re-entry (dispatch calls process_returns), and BOUNDED to one
@@ -462,47 +477,103 @@ class Dispatcher:
 
     # ------------------------------------------------- arrival-time analysis
 
+    def _movement_links(self, tls, in_edge, out_edge):
+        """Controlled-link indices of the ambulance's own movement through
+        `tls`: the links entering from `in_edge` and leaving towards
+        `out_edge`.  When the outgoing edge is unknown (the last row of a
+        route) every link of the approach is used — the conservative
+        fallback.  Returns ([indices], total number of controlled links)."""
+        groups = self._links.get(tls)
+        if groups is None:
+            try:
+                groups = traci.trafficlight.getControlledLinks(tls)
+            except traci.TraCIException:
+                groups = []
+            self._links[tls] = groups
+        approach, movement = [], []
+        for i, g in enumerate(groups):
+            if not g or not g[0] or not g[0][0]:
+                continue
+            if g[0][0].rsplit("_", 1)[0] != in_edge:
+                continue
+            approach.append(i)
+            if out_edge and g[0][1] \
+                    and g[0][1].rsplit("_", 1)[0] == out_edge:
+                movement.append(i)
+        return (movement or approach), len(groups)
+
     def _expected_signal_wait(self, rows):
         """Expected red-light wait per signal on the route WITHOUT preemption,
         from each junction's real programme: for a vehicle arriving at a
-        uniformly random point of the cycle, E[wait] = r^2 / (2C) with r the
-        red time for its approach and C the cycle — quadratic in the signal
-        timer, which is why the timer is the highest-weight variable in the
-        with/without comparison."""
+        uniformly random point of the cycle, E[wait] = r^2 / (2C) with C the
+        cycle and r the red time FOR THE AMBULANCE'S OWN MOVEMENT — the
+        cycle minus the total duration of every phase that gives that
+        movement green.  Quadratic in the signal timer, which is why the
+        timer is the highest-weight variable in the with/without comparison.
+
+        A movement that is green in every phase therefore contributes 0 s.
+        A junction whose links cannot be resolved (no controlled link from
+        the approach, or a programme whose phase states do not match the
+        link count) is NOT silently folded into the total: it is returned
+        with ``exp_wait_s: None`` and ``modelled: False`` and excluded from
+        the modelled count, so no screen can count it behind a number it did
+        not contribute to.  Returns (total, per-signal rows); the modelled
+        count is ``sum(1 for p in per if p["modelled"])``, which stays in
+        step with the total because both come from the same list."""
         total = 0.0
         per = []
-        for r in rows:
+        for i, r in enumerate(rows):
             if not r["signal"]:
                 continue
+            tls = r["signal"]
+            row = {"tls": tls, "name": self.ops.jn(tls), "cycle": None,
+                   "red": None, "exp_wait_s": None, "modelled": False}
             # programme definitions are static — fetch each signal's once
-            if r["signal"] in self._logics:
-                phases = self._logics[r["signal"]]
+            if tls in self._logics:
+                phases = self._logics[tls]
             else:
                 try:
-                    logics = traci.trafficlight.getAllProgramLogics(
-                        r["signal"])
+                    logics = traci.trafficlight.getAllProgramLogics(tls)
                 except traci.TraCIException:
                     logics = None
                 phases = logics[0].phases if logics else None
-                self._logics[r["signal"]] = phases
+                self._logics[tls] = phases
             if phases is None:
+                per.append(row)
                 continue
             cycle = sum(p.duration for p in phases)
             if cycle <= 0:
+                per.append(row)
                 continue
-            green = max((p.duration for p in phases
-                         if "G" in p.state or "g" in p.state), default=0.0)
+            row["cycle"] = round(cycle)
+            in_edge = r.get("in_edge")
+            out_edge = (rows[i + 1].get("in_edge")
+                        if i + 1 < len(rows) else None)
+            idxs, n_links = self._movement_links(tls, in_edge, out_edge)
+            if not idxs or any(len(p.state) != n_links for p in phases):
+                per.append(row)          # cannot resolve: not modelled
+                continue
+            # SUM the movement's green over every phase that serves it (a
+            # movement served by two phases is not red between them), then
+            # red is what is left of the cycle
+            green = sum(p.duration for p in phases
+                        if all(p.state[k] in "Gg" for k in idxs))
             red = max(0.0, cycle - green)
             e_wait = red * red / (2 * cycle)
             total += e_wait
-            per.append({"tls": r["signal"],
-                        "name": self.ops.jn(r["signal"]),
-                        "cycle": round(cycle),
-                        "red": round(red), "exp_wait_s": round(e_wait, 1)})
+            row.update({"red": round(red), "exp_wait_s": round(e_wait, 1),
+                        "modelled": True})
+            per.append(row)
         return round(total, 1), per
 
     def _free_flow_exempt(self, route):
-        """Travel time on an empty road at the exempt speed profile."""
+        """Travel time on an empty road at the exempt speed profile.
+
+        A dispatch-time reference for what a clear exempt run would cost.
+        It assumes the lights stay ON for the whole trip: since lights-off
+        now genuinely withdraws the exemption (see set_lights), this is not
+        an achievable floor for a run whose lights were switched off
+        part-way, and must not be presented as one."""
         t = 0.0
         cap = self.cfg.ambulance_max_kmh / 3.6
         for eid in route:
@@ -660,27 +731,50 @@ class Dispatcher:
     def check_pending_insertions(self, now):
         """A dispatched ambulance that cannot enter the road (hospital gate
         jammed) is reported, and after a minute it is re-placed on the next
-        usable edge — never a silently missing vehicle."""
-        for amb_id, rec in self.info.items():
+        usable edge — up to twice.  If it still cannot merge the mission is
+        CLOSED with an error and the crew returns: never a silently missing
+        vehicle, and never a promise of a re-placement that cannot happen."""
+        for amb_id, rec in list(self.info.items()):
             if rec["departed"] is not None or rec["arrived"] is not None:
                 continue
             waiting = now - rec.get("created", now)
-            if waiting > 20 and not rec.get("insert_warned"):
+            left = 2 - rec.get("insert_retries", 0)
+            if waiting > 20 and left > 0 and not rec.get("insert_warned"):
                 rec["insert_warned"] = True
                 self.ops.emit(now, "lifecycle",
                               f"{amb_id} is waiting for space to enter the "
                               f"road (the departure edge is congested) — "
-                              f"re-placement in {60 - int(waiting)} s if it "
-                              f"cannot merge", "warn",
-                              actor=amb_id, case=rec["case"])
-            if waiting > 60 and rec.get("insert_retries", 0) < 2:
-                rec["insert_retries"] += 1
-                rec["created"] = now
-                rec["insert_warned"] = False
+                              f"re-placement in "
+                              f"{max(0, 60 - int(waiting))} s if it cannot "
+                              f"merge ({left} of 2 re-placements left)",
+                              "warn", actor=amb_id, case=rec["case"])
+            if waiting > 20 and left <= 0:
+                # re-placement is exhausted: say so once, and stop counting
+                # a unit that will never enter the network
+                try:
+                    traci.vehicle.remove(amb_id)   # so it cannot depart later
+                except traci.TraCIException:
+                    pass
+                rec["arrived"] = now
+                self.ops.emit(now, "error",
+                              f"{amb_id} could not enter the road after 2 "
+                              f"re-placements — re-placement exhausted; the "
+                              f"mission is CLOSED and the crew returns to "
+                              f"{rec.get('origin_hospital') or 'its hospital'}",
+                              "error", actor=amb_id, case=rec["case"])
+                self.ops.close_case(rec["case"], now,
+                                    "could not enter the road after 2 "
+                                    "re-placements", "error")
+                self._schedule_return(rec, amb_id, now)
+                continue
+            if waiting > 60 and left > 0:
                 try:
                     traci.vehicle.remove(amb_id)
                 except traci.TraCIException:
-                    continue
+                    continue      # retry NOT consumed: nothing was re-placed
+                rec["insert_retries"] = rec.get("insert_retries", 0) + 1
+                rec["created"] = now
+                rec["insert_warned"] = False
                 route = rec["route_edges"]
                 # re-enter one edge further along the planned route
                 new_route = route[min(rec["insert_retries"],
@@ -692,10 +786,14 @@ class Dispatcher:
                                       typeID=self.cfg.ambulance_type,
                                       departLane="best", departSpeed="max",
                                       departPos="free")
+                    # re-placement must not silently re-arm the exemption on
+                    # a unit whose lights the operator switched off
                     traci.vehicle.setSpeedFactor(
-                        amb_id, self.cfg.speed_exemption_factor)
+                        amb_id, self.cfg.speed_exemption_factor
+                        if rec["lights"] else 1.0)
                     traci.vehicle.setMaxSpeed(
-                        amb_id, self.cfg.ambulance_max_kmh / 3.6)
+                        amb_id, self.cfg.ambulance_max_kmh / 3.6
+                        if rec["lights"] else self._vtype_max_speed())
                     rec["route_edges"] = new_route
                     self.ops.emit(now, "lifecycle",
                                   f"{amb_id} re-placed one block further "
@@ -716,6 +814,20 @@ class Dispatcher:
                                         "re-placement failed after a "
                                         "blocked departure gate", "error")
                     self._schedule_return(rec, amb_id, now)
+
+    def _corridor_active(self, amb_id, rec):
+        """True only when this unit really has a signal corridor: the
+        preemption system armed (preemption.py's global toggle), the unit's
+        lights on, and a camera confirmation on record — the controller
+        plans corridors for confirmed units only.  Without the controller
+        wired in, nothing is asserted."""
+        ctl = self.controller
+        return bool(rec["lights"] and ctl is not None and ctl.enabled
+                    and amb_id in ctl.confirmed)
+
+    def _corridor_note(self, amb_id, rec):
+        return (", corridor active"
+                if self._corridor_active(amb_id, rec) else "")
 
     def check_stuck(self, now):
         """An ambulance crawling in a jam re-plans around the blockage: if a
@@ -762,22 +874,36 @@ class Dispatcher:
             if len(remaining) < 3:
                 continue                    # essentially at the destination
             alt = self.router.route(cur_edge, remaining[-1], live=True)
+            t_rem = t_alt = None
             better = False
             if alt and alt != remaining:
                 t_rem = self.router.route_time(remaining, live=True)
                 t_alt = self.router.route_time(alt, live=True)
                 better = t_alt <= t_rem * 0.9 - 5.0
             if not better:
-                # stuck, but no meaningfully faster corridor exists — say so
-                # (rerouting for its own sake would be motion without progress)
+                # stuck, but not enough to justify switching.  State the rule
+                # that was applied and the number it measured — "none exists"
+                # is only true in the first of the three cases below.
                 if now - rec.get("last_noalt", -1e9) > 180.0:
                     rec["last_noalt"] = now
+                    if not alt:
+                        why = ("no alternative route to the destination "
+                               "exists from here")
+                    elif alt == remaining:
+                        why = ("the route it is on is already the fastest "
+                               "under live weights")
+                    else:
+                        saved = t_rem - t_alt
+                        pct = (saved / t_rem * 100.0) if t_rem > 0 else 0.0
+                        why = (f"the best alternative saves only "
+                               f"{saved:.0f} s ({pct:.0f}%) — below the 10% "
+                               f"and 5 s switching margin, so switching is "
+                               f"not worth the disruption")
                     self.ops.emit(now, "reroute",
-                                  f"{amb_id} stuck {stuck_for:.0f} s — checked "
-                                  f"for a faster corridor: none exists (the "
-                                  f"alternatives are equally congested); "
-                                  f"holding course, corridor active", "warn",
-                                  actor=amb_id, case=rec["case"])
+                                  f"{amb_id} stuck {stuck_for:.0f} s — {why}; "
+                                  f"holding course"
+                                  f"{self._corridor_note(amb_id, rec)}",
+                                  "warn", actor=amb_id, case=rec["case"])
                 continue
             try:
                 traci.vehicle.setRoute(amb_id, alt)
@@ -789,16 +915,54 @@ class Dispatcher:
             rec["geometry"] = self.router.route_geometry(alt)
             rec["signals_on_route"] = sum(1 for r in rows if r["signal"])
             rec["stuck_mark"] = None
+            # The plan CHANGED: the distance and ETA now on record must be
+            # the plan the unit is actually driving.  Keeping the abandoned
+            # figures would make the runs table quote kilometres nobody
+            # drove and the driver's phone count down to the wrong place.
+            # Distance already covered on the old plan is preserved, so the
+            # total stays a real end-to-end distance.
+            try:
+                idx = traci.vehicle.getRouteIndex(amb_id)
+            except traci.TraCIException:
+                idx = 0
+            done_m = 0.0
+            for eid in rec.get("route_edges_done", []):
+                try:
+                    done_m += self.net.getEdge(eid).getLength()
+                except Exception:
+                    pass
+            rec["route_edges_done"] = (rec.get("route_edges_done", [])
+                                       + alt[:max(0, idx)])
+            rec["planned_length"] = round(done_m + (rows[-1]["dist_m"]
+                                                    if rows else 0), 0)
+            rec["eta_s"] = round(now - (rec.get("departed") or now)
+                                 + (rows[-1]["eta_s"] if rows else 0), 0)
+            rec["replans"] = rec.get("replans", 0) + 1
             via = self.ops.rd(alt[min(2, len(alt) - 1)])
+            # the corridor clause is a claim about the preemption system, so
+            # it is only made when that system is actually serving this unit
+            corridor_txt = ("; the signal corridor follows the new route"
+                            if self._corridor_active(amb_id, rec) else "")
             self.ops.emit(now, "reroute",
                           f"{amb_id} stuck {stuck_for:.0f} s in traffic — "
                           f"ADAPTIVE REROUTE around the blockage via {via} "
                           f"(predicted {t_rem - t_alt:.0f} s faster than "
-                          f"pushing through); the signal corridor follows "
-                          f"the new route", "warn",
+                          f"pushing through){corridor_txt}", "warn",
                           actor=amb_id, case=rec["case"])
 
     # ---------------------------------------------------------------- lights
+
+    def _vtype_max_speed(self):
+        """The ambulance vType's own physical top speed (m/s).  That is a
+        vehicle property, not an exemption, so it is what a lights-off unit
+        keeps once the exemption is withdrawn."""
+        if self._vtype_vmax is None:
+            try:
+                self._vtype_vmax = traci.vehicletype.getMaxSpeed(
+                    self.cfg.ambulance_type)
+            except traci.TraCIException:
+                self._vtype_vmax = self.cfg.ambulance_max_kmh / 3.6
+        return self._vtype_vmax
 
     def set_lights(self, amb_id, on, now, who="operator"):
         rec = self.info.get(amb_id)
@@ -807,16 +971,36 @@ class Dispatcher:
         if rec["lights"] == on:
             return True
         rec["lights"] = on
+        # The lights are not a label: switching them off actually withdraws
+        # the speed-limit exemption.  speedFactor 1.0, NOT the vType's own
+        # speedFactor — data/vtypes.add.xml sets that to 1.35, so restoring
+        # the type default would still run the unit over the posted limit.
+        if on:
+            factor = self.cfg.speed_exemption_factor
+            top = self.cfg.ambulance_max_kmh / 3.6
+        else:
+            factor, top = 1.0, self._vtype_max_speed()
+        try:
+            traci.vehicle.setSpeedFactor(amb_id, factor)
+            traci.vehicle.setMaxSpeed(amb_id, top)
+        except traci.TraCIException:
+            pass      # unit gone / not yet inserted: the record still flips
         if on:
             self.ops.emit(now, "lights",
                           f"{amb_id} emergency lights switched ON by {who} — "
-                          f"corridor requests resume", "warn",
+                          f"corridor requests resume; speed-limit exemption "
+                          f"re-armed (up to "
+                          f"{self.cfg.speed_exemption_factor:.0%} of the "
+                          f"posted limit, max "
+                          f"{self.cfg.ambulance_max_kmh:.0f} km/h)", "warn",
                           actor=who, case=rec["case"])
         else:
             self.ops.emit(now, "lights",
                           f"{amb_id} emergency lights switched OFF by {who} — "
                           f"it no longer requests priority; its junctions "
-                          f"will return to normal", "warn",
+                          f"will return to normal; the speed-limit exemption "
+                          f"is withdrawn — it now drives at the posted "
+                          f"limit", "warn",
                           actor=who, case=rec["case"])
         return True
 
@@ -840,7 +1024,7 @@ class Dispatcher:
                           f" not a comms loss", "warn",
                           actor=veh_id, case=rec["case"])
 
-    def on_arrive(self, veh_id, now, metrics):
+    def on_arrive(self, veh_id, now, metrics, junctions_preempted=0):
         rec = self.info.get(veh_id)
         if rec is None or rec["arrived"] is not None:
             return
@@ -853,7 +1037,15 @@ class Dispatcher:
             msig = rec.get("signal_wait_s", 0.0)
             mtraffic = rec.get("traffic_wait_s", 0.0)
             ff = rec.get("free_flow_s", 0.0)
-            recovered = max(0.0, exp - msig)   # timer delay the wave removed
+            per_signal = rec.get("per_signal", [])
+            modelled = sum(1 for p in per_signal if p.get("modelled"))
+            # A with/without comparison is only meaningful for a run that
+            # HAD a green wave.  A unit whose lights were off, that no
+            # camera confirmed, that lost every arbitration, or that ran
+            # while preemption was disarmed got no corridor at all: its run
+            # is a baseline, and claiming a saving for it would invent one.
+            had_wave = junctions_preempted > 0
+            recovered = max(0.0, exp - msig) if had_wave else 0.0
             est_without = duration + recovered
             metrics.analysis.append({
                 "id": veh_id,
@@ -866,17 +1058,37 @@ class Dispatcher:
                 "meas_traffic_wait_s": round(mtraffic, 1),
                 "recovered_s": round(recovered, 1),
                 "signals": rec.get("signals_on_route", 0),
-                "per_signal": rec.get("per_signal", []),
+                # of those signals, how many the r^2/2C model could resolve
+                # the ambulance's own movement at (the rest contribute
+                # nothing to exp_signal_wait_s and must not be counted
+                # behind it)
+                "signals_modelled": modelled,
+                "preemption": had_wave,
+                "junctions_preempted": junctions_preempted,
+                "per_signal": per_signal,
             })
-            self.ops.emit(now, "analysis",
-                          f"Arrival-time analysis {veh_id}: {duration:.0f} s "
-                          f"measured WITH the green wave; est. "
-                          f"{est_without:.0f} s WITHOUT it in the same "
-                          f"traffic (+{recovered:.0f} s at signal timers, "
-                          f"r²/2C per junction); no-traffic bounds "
-                          f"{ff:.0f} s / {ff + exp:.0f} s. Highest-weight "
-                          f"variable: the signal timer", "info",
-                          actor=veh_id, case=rec["case"])
+            if had_wave:
+                self.ops.emit(now, "analysis",
+                              f"Arrival-time analysis {veh_id}: "
+                              f"{duration:.0f} s measured WITH the green "
+                              f"wave ({junctions_preempted} junctions "
+                              f"purposely enabled for this unit); est. "
+                              f"{est_without:.0f} s WITHOUT it in the same "
+                              f"traffic (+{recovered:.0f} s at signal "
+                              f"timers, r²/2C over {modelled} modelled "
+                              f"junctions); no-traffic bounds {ff:.0f} s / "
+                              f"{ff + exp:.0f} s. Highest-weight variable: "
+                              f"the signal timer", "info",
+                              actor=veh_id, case=rec["case"])
+            else:
+                self.ops.emit(now, "analysis",
+                              f"Arrival-time analysis {veh_id}: "
+                              f"{duration:.0f} s measured with NO green "
+                              f"corridor opened for this unit (0 junctions "
+                              f"preempted); no-traffic bound {ff:.0f} s. "
+                              f"This run is a baseline, not a with/without "
+                              f"comparison", "info",
+                              actor=veh_id, case=rec["case"])
             where = rec.get("hospital") or "its destination"
             self.ops.emit(now, "arrival",
                           f"{veh_id} ARRIVED at {where} and was "

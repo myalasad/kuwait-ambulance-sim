@@ -43,9 +43,23 @@ class DemandResponsiveController:
         self.granted_total = 0
         self._modes = {"fair": 0, "lone": 0, "occupied": 0}
         self._last_seen = {}    # tls -> {edge: last sim time it had traffic}
-        # permanent self-audit: a held early green that persists while
-        # another approach has traffic (beyond the minimum green) is a
-        # FAIRNESS VIOLATION; the count is shown on the dashboard
+        # Permanent self-audit.  The release condition in _advance ends a
+        # hold on the FIRST step where another approach is occupied and the
+        # minimum green has been served, so "still holding while others
+        # wait" cannot arise while the claim is alive.  It can only arise if
+        # the release did not take effect, so the fairness tripwire is armed
+        # AFTER the release command and fires when the junction is still
+        # showing the early-green phase more than ``_release_grace_s`` later
+        # while another approach is occupied — a phase command overridden by
+        # the programme or silently dropped.  That is the one way this
+        # guarantee can actually break, so the counter CAN leave zero; if it
+        # stays at zero it means every early green really did end.
+        # ``max_other_wait_s`` is the quantity that varies on every run: how
+        # long another approach waited before the hold ended (bounded by
+        # lone_min_green_s by construction).
+        self.released = {}      # tls -> {"serve","edge","at"}: armed tripwire
+        self._release_grace_s = 2.0    # wind-down allowed after the command
+        self._release_watch_s = 5.0    # how long the tripwire stays armed
         self.complex_ext = {}      # tls -> {external edge: zone lanes} of
         #                            its multi-node junction complex
         self._all_complex_edges = {}
@@ -53,16 +67,29 @@ class DemandResponsiveController:
         self._lane_res = {}        # this step's lane occupancy
         self.audit = {"grants": 0, "extensions": 0, "violations": 0,
                       "complex_blocked": 0, "proximity_blocked": 0,
-                      "ended_for_other_traffic": 0}
+                      "ended_for_other_traffic": 0,
+                      "max_other_wait_s": 0.0}
         self.skipped_nonconflict = 0
         self._build()
 
     def mode_counts(self):
-        """How many junctions currently have several approaches occupied
-        (fair timers by design), a single occupied approach (early-green
-        candidates), and any traffic at all — plus the self-audit."""
+        """How many junctions are in use (an approach carried traffic within
+        ``lone_quiet_s``), how many of those have several approaches in use
+        (fair timers by design) and how many a single approach in use
+        (early-green candidates) — plus the self-audit.
+
+        ``audit["holds"]`` is the POPULATION every other audit number is a
+        subset of: every early-green hold, whether it was granted from
+        another phase (``grants``) or was an extension of a green already
+        running (``extensions``).  ``ended_for_other_traffic`` counts
+        endings of BOTH kinds, so it must never be presented beside
+        ``grants`` alone — it would read as more endings than grants."""
+        audit = dict(self.audit)
+        # granted_total is incremented at every claim-creation site, so this
+        # cannot drift if a third kind of hold is ever added
+        audit["holds"] = self.granted_total
         return {**self._modes, "early": self.granted_total,
-                "audit": dict(self.audit),
+                "audit": audit,
                 "arbitrated_junctions": len(self.tls_info),
                 "nonconflict_excluded": self.skipped_nonconflict}
 
@@ -322,6 +349,7 @@ class DemandResponsiveController:
         if not self.enabled:
             self.claims.clear()
             self.pending.clear()
+            self.released.clear()
             return
         lane_res = traci.lane.getAllSubscriptionResults()
         self._lane_res = lane_res
@@ -336,6 +364,9 @@ class DemandResponsiveController:
                 # the signal (the preemption controller owns it now)
                 self.claims.pop(tls_id, None)
                 self.pending.pop(tls_id, None)
+                # the preemption controller now drives the phases: our
+                # tripwire could no longer attribute what it sees to us
+                self.released.pop(tls_id, None)
                 continue
             occ = {edge: sum(lane_res.get(lane, {})
                              .get(tc.LAST_STEP_VEHICLE_NUMBER, 0)
@@ -355,6 +386,8 @@ class DemandResponsiveController:
                 lone += 1
             if in_use:
                 occ_n += 1
+            if tls_id in self.released:
+                self._check_released(tls_id, occupied, now)
             claim = self.claims.get(tls_id)
             if claim is not None:
                 self._advance(tls_id, claim, occ, occupied, now)
@@ -370,6 +403,43 @@ class DemandResponsiveController:
             else:
                 self.pending.pop(tls_id, None)
         self._modes = {"fair": fair, "lone": lone, "occupied": occ_n}
+
+    def _check_released(self, tls_id, occupied, now):
+        """Fairness tripwire, armed on the step an early green was ended.
+
+        The release command (setPhaseDuration -> 1 s) is an instruction, not
+        an outcome: the programme can override it or the command can be
+        dropped.  If the junction is STILL showing the early-green phase
+        more than ``_release_grace_s`` after the release while another
+        approach is occupied, the hold outlived its minimum green at another
+        approach's expense — that is a fairness violation, and it is counted
+        once per released hold.  Any real phase change disarms the wire."""
+        rec = self.released[tls_id]
+        if now - rec["at"] > self._release_watch_s:
+            self.released.pop(tls_id, None)
+            return
+        try:
+            phase = traci.trafficlight.getPhase(tls_id)
+        except traci.TraCIException:
+            self.released.pop(tls_id, None)
+            return
+        if phase != rec["serve"]:
+            self.released.pop(tls_id, None)     # the green really did end
+            return
+        if now - rec["at"] <= self._release_grace_s:
+            return                              # inside the wind-down
+        others = [e for e in occupied if e != rec["edge"]]
+        if not others:
+            return                              # nobody is being held up
+        self.released.pop(tls_id, None)         # one count per released hold
+        self.audit["violations"] += 1
+        self.ops.emit(now, "actuation",
+                      f"Junction {self.ops.jn(tls_id)}: FAIRNESS VIOLATION — "
+                      f"the early green on {self.ops.rd(rec['edge'])} was "
+                      f"ended {now - rec['at']:.0f} s ago but the junction "
+                      f"is still showing that phase while "
+                      f"{self.ops.rd(others[0])} is occupied; the release "
+                      f"command did not take effect", "warn")
 
     def _consider(self, tls_id, info, edge, now):
         serve_idx = info["serve"].get(edge)
@@ -405,6 +475,7 @@ class DemandResponsiveController:
                                    "serve": serve_idx, "until": 0.0,
                                    "since": now}
             self.pending.pop(tls_id, None)
+            self.released.pop(tls_id, None)   # this hold owns the phase now
             self.granted_total += 1
             self.audit["extensions"] += 1
             self.ops.emit(now, "actuation",
@@ -437,6 +508,7 @@ class DemandResponsiveController:
             return
         self.claims[tls_id] = claim
         self.pending.pop(tls_id, None)
+        self.released.pop(tls_id, None)       # this hold owns the phase now
         self.granted_total += 1
         self.audit["grants"] += 1
         self.ops.emit(now, "actuation",
@@ -461,20 +533,20 @@ class DemandResponsiveController:
             served_min = now - claim["since"] >= self.cfg.lone_min_green_s
             lane_empty = occ.get(claim["edge"], 0) == 0
             timeout = now - claim["since"] >= self.cfg.lone_max_hold_s
-            # self-audit: a hold that CONTINUES after other traffic has been
-            # waiting longer than the minimum green plus one second of grace
-            # is a fairness violation (releases on this step are not)
+            # how long another approach has been waiting for this hold to
+            # end.  Bounded by lone_min_green_s by construction (the release
+            # below fires on the first step where both conditions hold), so
+            # this measures the guarantee rather than asserting it.
             if others:
                 claim.setdefault("others_since", now)
-                waited = now - claim["others_since"]
-                if (waited > 1.0 and now - claim["since"]
-                        > self.cfg.lone_min_green_s + 1.0):
-                    self.audit["violations"] += 1
             else:
                 claim.pop("others_since", None)
             if others and served_min:
                 self.audit["ended_for_other_traffic"] += 1
             if (others and served_min) or (lane_empty and served_min) or timeout:
+                waited = now - claim.get("others_since", now)
+                if waited > self.audit["max_other_wait_s"]:
+                    self.audit["max_other_wait_s"] = round(waited, 1)
                 # end the green promptly; the programme then continues its
                 # normal cycle from here — fair timers for everyone
                 traci.trafficlight.setPhaseDuration(tls_id, 1.0)
@@ -488,5 +560,9 @@ class DemandResponsiveController:
                               f"{reason}", "info")
                 self.cooldown[tls_id] = now + self.cfg.actuation_cooldown_s
                 self.claims.pop(tls_id, None)
+                # arm the fairness tripwire: the command above must actually
+                # take the junction off this phase (see _check_released)
+                self.released[tls_id] = {"serve": claim["serve"],
+                                         "edge": claim["edge"], "at": now}
         except traci.TraCIException:
             self.claims.pop(tls_id, None)

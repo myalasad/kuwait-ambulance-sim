@@ -104,6 +104,9 @@ class Simulation:
                           f"itself every {self.cfg.markov_sample_s:.0f} s",
                           "info")
         self.dispatcher = Dispatcher(self.net, self.cfg, self.ops, self.router)
+        # so the dispatcher can CHECK a corridor claim before printing it
+        # (armed + lights on + camera-confirmed) instead of asserting it
+        self.dispatcher.controller = self.controller
         self.metrics = Metrics()
         for tls_id in traci.trafficlight.getIDList():
             traci.trafficlight.subscribe(tls_id, [tc.TL_RED_YELLOW_GREEN_STATE])
@@ -137,15 +140,13 @@ class Simulation:
                           "info")
         else:
             d0 = describe(self.cfg.day_type, self.cfg.traffic_level,
-                          self.cfg.start_hour)
-            m0 = (self._level * self.cfg.demand_factor
-                  * self._profile.get(self._scale_hour, 0.3))
+                          self.cfg.start_hour, self.cfg.demand_factor)
             self.ops.emit(0.0, "system",
                           f"Simulation started: {self.cfg.label()}, "
                           f"{len(self._tls_static)} signalized junctions, "
                           f"{DAY_LABEL[self.cfg.day_type]} "
                           f"{self.clock()}, {LEVEL_LABEL[self.cfg.traffic_level]} "
-                          f"traffic (demand {d0['word']}, {m0:.2f} x "
+                          f"traffic (demand {d0['word']}, {d0['multiplier']:.2f} x "
                           f"peak), preemption "
                           f"{'ARMED' if self._preemption_wanted else 'DISARMED'}",
                           "info")
@@ -281,7 +282,8 @@ class Simulation:
             self._scale_hour = hour
             mult = (self._level * self.cfg.demand_factor
                     * self._profile.get(hour, 0.3))
-            d = describe(self.cfg.day_type, self.cfg.traffic_level, hour)
+            d = describe(self.cfg.day_type, self.cfg.traffic_level, hour,
+                         self.cfg.demand_factor)
             try:
                 traci.simulation.setScale(mult)
                 self.ops.emit(self.time, "system",
@@ -297,22 +299,35 @@ class Simulation:
             fm = self.actuation.mode_counts()
             # statement discipline: this check SPEAKS only when the audit
             # numbers actually moved — no narration without an action
-            key = (fm["audit"]["grants"],
-                   fm["audit"]["ended_for_other_traffic"],
-                   fm["audit"]["violations"])
+            a = fm["audit"]
+            key = (a["holds"], a["ended_for_other_traffic"],
+                   a["violations"], a["max_other_wait_s"])
             if fm["occupied"] >= 5 and key != getattr(
                     self, "_last_fair_key", None):
                 self._last_fair_key = key
                 pct = round(100 * fm["fair"] / max(fm["occupied"], 1))
+                # "in use" is the windowed reading mode_counts actually
+                # takes (an approach that carried traffic within
+                # lone_quiet_s), not an instantaneous occupancy; and the
+                # endings are counted over the SAME population as the
+                # holds — grants plus extensions — so the second number
+                # can never exceed the first.
                 self.ops.emit(self.time, "actuation",
-                              f"Traffic check: {fm['fair']} of {fm['occupied']} "
-                              f"occupied junctions have several approaches "
-                              f"occupied — early green cannot apply there, fair "
-                              f"timers by design ({pct}%); {fm['lone']} junctions "
-                              f"have a lone approach; {fm['audit']['grants']} early "
-                              f"greens granted so far, {fm['audit']['ended_for_other_traffic']} "
-                              f"ended the moment other traffic arrived, fairness "
-                              f"violations {fm['audit']['violations']}", "info")
+                              f"Traffic check: {fm['occupied']} junctions in "
+                              f"use (traffic on an approach within the last "
+                              f"{int(self.cfg.lone_quiet_s)} s); "
+                              f"{fm['fair']} of them have several approaches "
+                              f"in use — early green cannot apply there, fair "
+                              f"timers by design ({pct}%); {fm['lone']} have a "
+                              f"lone approach in use; {a['holds']} early greens "
+                              f"held so far ({a['grants']} granted, "
+                              f"{a['extensions']} extended), "
+                              f"{a['ended_for_other_traffic']} of them ended "
+                              f"the moment other traffic arrived (longest another "
+                              f"approach waited: {a['max_other_wait_s']:.1f} s, "
+                              f"capped by the {self.cfg.lone_min_green_s:.0f} s "
+                              f"minimum green); fairness violations "
+                              f"{a['violations']}", "info")
         for veh_id in traci.simulation.getDepartedIDList():
             traci.vehicle.subscribe(
                 veh_id,
@@ -322,7 +337,9 @@ class Simulation:
             self.teleports += 1
             self.dispatcher.on_teleport(veh_id, self.time)
         for veh_id in traci.simulation.getArrivedIDList():
-            self.dispatcher.on_arrive(veh_id, self.time, self.metrics)
+            self.dispatcher.on_arrive(
+                veh_id, self.time, self.metrics,
+                len(self.controller.preempted_for.get(veh_id, ())))
         active = self.dispatcher.active_ambulances(lights_only=False)
         if active:
             self.dispatcher.check_vanished(set(traci.vehicle.getIDList()),
@@ -499,7 +516,8 @@ class Simulation:
                               "level": self.cfg.traffic_level,
                               **describe(self.cfg.day_type,
                                          self.cfg.traffic_level,
-                                         self._scale_hour)}
+                                         self._scale_hour,
+                                         self.cfg.demand_factor)}
 
         return {
             "t": self.time,
@@ -544,6 +562,7 @@ class Simulation:
             "profiles": {k: [round(LEVELS["medium"] * v[h], 2) for h in range(24)]
                          for k, v in PROFILES.items()},
             "levels": LEVELS,
+            "demand_factor": self.cfg.demand_factor,
             "scenario": self.cfg.scenario,
             "scenarios": {k: v["label"] for k, v in SCENARIOS.items()},
             "bounds": [[lat0, lon0], [lat1, lon1]],

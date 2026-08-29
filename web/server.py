@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from sim.config import SimConfig  # noqa: E402
+from sim.config import SimConfig, SCENARIOS  # noqa: E402
 from sim.runner import Simulation  # noqa: E402
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -52,6 +52,11 @@ class Hub:
         sim.start()                # raises on failure; self.sim stays valid
         self.sim = sim
         self.network_cache = self.sim.network_payload()
+        # which models bake their demand into the route file: the Apply
+        # confirmation must not claim day/traffic level scale a scenario
+        # that ignores both
+        self.network_cache["static_scenarios"] = [
+            k for k, v in SCENARIOS.items() if v.get("static_demand")]
         self.error = None
 
     # ------------------------------------------------------------- sim loop
@@ -73,8 +78,19 @@ class Hub:
                 if time.perf_counter() - heartbeat > 0.5:
                     heartbeat = time.perf_counter()
                     frame = dict(self.last_snap) if self.last_snap else {"t": 0}
+                    # events are a strict one-shot delta (runner.snapshot
+                    # advances ops._last_seq), already delivered exactly once
+                    # in the live frame that carried them; everything else in
+                    # the snapshot is level state and is safe to repeat.
+                    # Re-sending events would make the feed and the ticker
+                    # re-announce actions that already happened, twice a
+                    # second, for as long as the pause or the error lasts.
+                    # Empty list, not a pop — index.html iterates f.events
+                    # unguarded.  dict() is a shallow copy, so last_snap
+                    # itself is untouched.
                     frame.update({"paused": self.paused, "speed": self.speed,
-                                  "error": self.error})
+                                  "error": self.error, "events": [],
+                                  "heartbeat": True})
                     await self._broadcast(frame)
                 await asyncio.sleep(0.1)
                 continue
@@ -184,6 +200,10 @@ class Hub:
         keep = self.sim.controller.enabled if self.sim else True
         sim_old = self.sim
         self.sim = None
+        self.network_cache = None    # the new scenario's payload does not
+                                     # exist yet: /api/network must WAIT, not
+                                     # serve the previous city's roads,
+                                     # hospitals and districts
         self.last_snap = None
         self.error = None
         await self._broadcast({"t": 0, "paused": False, "speed": self.speed,
@@ -206,6 +226,10 @@ class Hub:
             await fut
         except Exception as exc:
             self.error = f"Restart failed: {exc} — try Reset again"
+            self.network_cache = None   # a failed restart must not resurrect
+                                        # the old payload: the wait loop in
+                                        # /api/network breaks on hub.error
+                                        # and answers 503
             raise
 
     def _apply(self, cmd):
@@ -351,15 +375,21 @@ async def api_analysis():
     response = hub.sim.dispatcher.response_summary()
     queued = len(hub.sim.dispatcher.call_queue)
     agg = None
-    if runs:
-        saved = [r["est_without_s"] - r["actual_s"] for r in runs]
+    # a run made with preemption DISARMED has no green wave to credit:
+    # averaging it into "with the green wave" would dilute a measurement
+    # with runs that never had the thing being measured
+    waved = [r for r in runs if r.get("preemption", True)]
+    baseline = len(runs) - len(waved)
+    if waved:
+        saved = [r["est_without_s"] - r["actual_s"] for r in waved]
         agg = {
-            "runs": len(runs),
-            "mean_actual_s": round(sum(r["actual_s"] for r in runs) / len(runs), 1),
-            "mean_without_s": round(sum(r["est_without_s"] for r in runs) / len(runs), 1),
+            "runs": len(waved),
+            "baseline_runs": baseline,
+            "mean_actual_s": round(sum(r["actual_s"] for r in waved) / len(waved), 1),
+            "mean_without_s": round(sum(r["est_without_s"] for r in waved) / len(waved), 1),
             "mean_saved_s": round(sum(saved) / len(saved), 1),
             "mean_saved_pct": round(100 * sum(saved) /
-                                    max(1, sum(r["est_without_s"] for r in runs)), 1),
+                                    max(1, sum(r["est_without_s"] for r in waved)), 1),
         }
     return JSONResponse({"runs": runs, "aggregate": agg,
                          "response": response, "queued_calls": queued})

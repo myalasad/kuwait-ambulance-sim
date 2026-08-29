@@ -144,15 +144,20 @@
     literally reading one plan.</p>
     <h2>What the driver sees</h2>
     <p>• The road ahead, <b>heading-up</b>, with the corridor drawn in green.<br>
-    • The next signal's state before reaching it — <b>"will be GREEN"</b>
-    means the control centre has purposely enabled it.<br>
+    • The next signal's state before reaching it — <b>"will be GREEN for
+    you"</b> means the control centre has purposely enabled it <i>for this
+    unit</i>; a corridor open for another ambulance, a disarmed system or
+    lights off are each named instead.<br>
     • Speed beside the <b>posted limit sign</b>; above the limit with lights
     on, the <b>EMERGENCY EXEMPT</b> badge shows — enforcement cameras log the
     pass and issue no citation.<br>
     • Live arrival time on the Kuwait clock.</p>
     <h2>Why it matters</h2>
     <p>The driver never wonders whether the next junction knows about them.
-    If it's on the route, it knows — and this screen proves it.</p>
+    While priority is armed and the lights are on, a junction on the route is
+    either enabled for this unit or running its normal cycle until the unit is
+    close enough to claim it — and when no priority is being requested at all,
+    the card says so rather than promising a corridor.</p>
   </div>
 </main>
 
@@ -433,15 +438,20 @@ function tick(now) {
       if (d < bestD) { bestD = d; best = i; }
     }
     const here = route.rows[best];
+    // The node rows are LEG-relative (dist_m/eta_s restart at the hospital
+    // handover) while route.length_m / route.eta_s are mission-cumulative,
+    // so subtracting one from the other adds the whole leg already driven
+    // back in.  Measure what is left against the displayed leg's own end.
+    const last = route.rows[route.rows.length - 1];
+    const remM = Math.max(0, last.dist_m - here.dist_m);
+    const remS = Math.max(0, last.eta_s - here.eta_s);
     const next = route.rows[Math.min(best + 1, route.rows.length - 1)];
     $("i-street").textContent = next.street;
     const mtxt = ({ to_scene: "TO SCENE", loading: "LOADING PATIENT",
       to_hospital: `TO ${(route.hospital || "HOSPITAL").toUpperCase()}` })[route.mission] || "";
     $("i-dist").textContent =
-      `${mtxt} · ${Math.max(0, route.length_m - here.dist_m).toFixed(0)} m remaining · next:`;
-    const remM = Math.max(0, route.length_m - here.dist_m);
+      `${mtxt} · ${remM.toFixed(0)} m remaining · next:`;
     $("eta-d").textContent = (remM / 1000).toFixed(1) + " km";
-    const remS = Math.max(0, route.eta_s - here.eta_s);
     if (frame.kpi.clock) {
       const [h, m2, s2] = frame.kpi.clock.split(":").map(Number);
       const tot = h * 3600 + m2 * 60 + s2 + remS;
@@ -453,17 +463,31 @@ function tick(now) {
     const sigRow = route.rows.slice(best + 1).find(r2 => r2.signal);
     const card = $("signalcard");
     if (sigRow && frame.tls[sigRow.signal]) {
-      const stm = frame.tls[sigRow.signal].m;
-      if (stm === "preempted" || stm === "transition" || stm === "clearing") {
+      const st  = frame.tls[sigRow.signal];
+      const dm  = Math.max(0, sigRow.dist_m - here.dist_m).toFixed(0);
+      const hot = st.m === "preempted" || st.m === "transition" || st.m === "clearing";
+      // exactly the conditions under which the controller will request
+      // this junction for THIS unit — mirrors preemption.py (armed) and
+      // ambulance.py active_ambulances (lights on, not loading at the scene)
+      const requesting = frame.preemption !== false
+                         && amb.lights && amb.mission !== "loading";
+      if (hot && st.amb === amb.id) {
         card.className = "green";
-        $("sc-text").textContent =
-          `Signal in ${Math.max(0, sigRow.dist_m - here.dist_m).toFixed(0)} m ` +
-          `— PURPOSELY ENABLED, will be GREEN for you`;
+        $("sc-text").textContent = `Signal in ${dm} m — PURPOSELY ENABLED, will be GREEN for you`;
+      } else if (hot) {
+        card.className = "normal";
+        $("sc-text").textContent = `Signal in ${dm} m — corridor active for ${st.amb}, not for your approach`;
+      } else if (requesting) {
+        card.className = "normal";
+        $("sc-text").textContent = `Signal in ${dm} m — normal cycle (corridor opens as you approach)`;
       } else {
         card.className = "normal";
-        $("sc-text").textContent =
-          `Signal in ${Math.max(0, sigRow.dist_m - here.dist_m).toFixed(0)} m ` +
-          `— normal cycle (corridor opens as you approach)`;
+        $("sc-text").textContent = `Signal in ${dm} m — ` + (
+          frame.preemption === false
+            ? "preemption DISARMED — this junction runs its normal programme"
+            : !amb.lights
+              ? "lights OFF — no priority requested"
+              : "loading at scene — no priority requested");
       }
     } else card.className = "";
   }

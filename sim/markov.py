@@ -251,7 +251,11 @@ class TrafficMarkov:
                 data = json.load(f)
             for key, d in data.get("chains", {}).items():
                 self.chains[key] = _Chain.from_json(d)
-            self._loaded_obs = sum(c.n for c in self.chains.values())
+            # same definition as observations(): count each sample once,
+            # not once per chain it feeds (self.chains is fully populated
+            # from the file at this point)
+            self._loaded_obs = sum(c.n for k, c in self.chains.items()
+                                   if not k.startswith("class:"))
             self.sessions = int(data.get("sessions", 0)) + 1
             sc = data.get("scores")
             if sc:
@@ -427,7 +431,12 @@ class TrafficMarkov:
         }
 
     def observations(self):
-        return sum(c.n for c in self.chains.values())
+        """Distinct corridor samples taken.  Each sample also feeds the
+        pooled road-class chain (see the sampling loop in update()), so
+        summing every chain would report exactly 2x the measurements
+        actually made."""
+        return sum(c.n for k, c in self.chains.items()
+                   if not k.startswith("class:"))
 
     # ---------------------------------------------------------- forecasting
 
@@ -500,6 +509,11 @@ class TrafficMarkov:
         cls = self.chains.get("class:major")
         return {
             "total_observations": self.observations(),
+            # the same samples pooled by road class, reported separately so
+            # it can never be added into the corridor total again
+            "pooled_class_observations": sum(
+                c.n for k, c in self.chains.items()
+                if k.startswith("class:")),
             "loaded_from_previous_sessions": self._loaded_obs,
             "sessions": self.sessions,
             "corridors_with_history": sum(

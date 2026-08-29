@@ -153,15 +153,19 @@
       No completed runs yet — dispatch an ambulance and its analysis appears
       here on arrival.</p></div>
     <div class="legend2">
-      <span><i class="seg-ff"></i>free flow (exempt speed, empty road)</span>
+      <span><i class="seg-ff"></i>driving time (measured — moving above 30% of
+        the limit, plus the scene loading stop)</span>
       <span><i class="seg-traffic"></i>traffic delay (measured)</span>
       <span><i class="seg-signal"></i>signal wait suffered (measured)</span>
       <span><i class="seg-timer"></i>signal-timer delay the wave removed
         (r²/2C per junction)</span>
     </div>
     <div class="method"><b>Method &amp; weights.</b> The WITH bar is the
-    measured run: free-flow time at the exempt speed profile, plus measured
-    traffic delay, plus any residual signal wait. The WITHOUT bar adds the
+    measured run, split three ways: the time the unit was actually moving
+    (plus the scene loading stop), the measured traffic delay, and any
+    residual signal wait. The empty-road free-flow bound at the exempt speed
+    profile is not a bar segment — it is stated per run in the heading above
+    each bar. The WITHOUT bar adds the
     expected red-light wait at every signal on the route from that junction's
     real programme: a vehicle arriving at a random point of the cycle waits
     <b>E[w]&nbsp;=&nbsp;r²&nbsp;/&nbsp;2C</b> (r&nbsp;=&nbsp;red time for the
@@ -223,7 +227,8 @@
           <td>D-case</td></tr>
         <tr><td>7</td><td>Lights switched OFF</td>
           <td class="crit w-cont">NO PRIORITY BASIS</td>
-          <td class="act">Release corridors; drives as normal traffic</td>
+          <td class="act">Release corridors; drives at the posted limit,
+          no corridor</td>
           <td>lights op</td></tr>
         <tr><td>8</td><td>Above posted limit, lights ON, camera pass</td>
           <td class="crit w-safety">LEGAL EXEMPTION</td>
@@ -367,7 +372,7 @@ async function pollAnalysis() {
     if (d.aggregate) {
       const a = d.aggregate;
       document.getElementById("agg").innerHTML =
-        `<div class="aggbox"><div class="v">${a.runs}</div><div class="l">runs analysed</div></div>` +
+        `<div class="aggbox"><div class="v">${a.runs}</div><div class="l">runs with the green wave${a.baseline_runs ? ` (+${a.baseline_runs} baseline)` : ""}</div></div>` +
         `<div class="aggbox"><div class="v">${a.mean_actual_s.toFixed(0)} s</div><div class="l">mean · with green wave</div></div>` +
         `<div class="aggbox"><div class="v">${a.mean_without_s.toFixed(0)} s</div><div class="l">mean · without (est.)</div></div>` +
         `<div class="aggbox"><div class="v">−${a.mean_saved_s.toFixed(0)} s (${a.mean_saved_pct}%)</div><div class="l">mean saved at timers</div></div>`;
@@ -380,7 +385,7 @@ async function pollAnalysis() {
             x.actual_s - x.meas_traffic_wait_s - x.meas_signal_wait_s);
           const w = v => (100 * v / maxT).toFixed(2) + "%";
           return `<div class="runrow">
-            <h4>${x.id} <small>· ${x.signals} signals on route ·
+            <h4>${x.id} <small>· ${x.signals} signals on route${x.signals_modelled !== undefined && x.signals_modelled !== x.signals ? ` (${x.signals_modelled} modelled below)` : ""} ·
               empty-road bounds: ${x.free_flow_s.toFixed(0)} s with wave /
               ${x.no_traffic_without_s.toFixed(0)} s without</small></h4>
             <div class="barlab"><span>WITH green wave (measured)</span>

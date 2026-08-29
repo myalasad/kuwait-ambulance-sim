@@ -310,8 +310,14 @@ Extreme ≈ 3,000+ vehicles on the core network at once); Google Maps publishes
 travel times, not counts, so no count data comes from it. Early green carries
 a permanent self-audit shown on the Live Map: grants, holds ended because
 other traffic arrived, and fairness violations (a hold continuing after other
-traffic has waited beyond the minimum green) — measured 0 violations at
-2,659 vehicles with 70% of in-use junctions on fair timers.
+traffic has waited beyond the minimum green). Honesty note: until v4.1 that
+counter could never increment — it was a constant dressed as a measurement,
+and the "0 violations" figure quoted in earlier releases meant nothing. It
+now arms on every release of an early green and counts a violation when the
+junction is still showing the served phase more than 2 s after the release
+command while another approach is occupied — the one way the guarantee can
+actually break — alongside max_other_wait_s, the longest any other approach
+waited behind an early green, which varies run to run.
 
 ## Network models and places
 Three models: Downtown Kuwait City (detailed; every street; sublane model and

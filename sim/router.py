@@ -204,7 +204,14 @@ class Router:
 
     def nodal_analysis(self, edges, live=True):
         """Node-by-node breakdown of a route: cumulative distance, ETA,
-        street name, and whether the node ahead is signalized."""
+        street name, and whether the node ahead is signalized.
+
+        Each row also carries ``in_edge``, the edge id the route uses to
+        REACH that node.  Consecutive rows therefore give the (in, out)
+        pair of the movement through the node, which is what lets the
+        signal-wait model charge the ambulance's own movement rather than
+        the junction as a whole ("street" is a display name and cannot be
+        reversed into an edge id)."""
         rows = []
         cum_d = 0.0
         cum_t = 0.0
@@ -217,6 +224,7 @@ class Router:
             sig = self.tls_map.get(node.getID(), node.getID())
             rows.append({
                 "node": node.getID(),
+                "in_edge": eid,
                 "junction": (self.places.jn(sig) if self.places
                              and node.getType().startswith("traffic_light")
                              else ""),

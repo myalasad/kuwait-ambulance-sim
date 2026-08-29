@@ -64,9 +64,16 @@ def hourly_profile(root, day_type="weekday"):
     return profile
 
 
-def describe(day_type, level, hour):
-    """Plain words for the UI: 'Weekday 15:00 — heavy'."""
-    m = PROFILES.get(day_type, WEEKDAY).get(hour % 24, 0.3) * LEVELS.get(level, 1.0)
+def describe(day_type, level, hour, factor=1.0):
+    """Plain words for the UI: 'Weekday 15:00 — heavy'.
+
+    ``factor`` is the global demand factor actually applied to the
+    simulation (``SimConfig.demand_factor``).  It MUST be passed by every
+    caller: the multiplier and the word printed on screen have to be the
+    demand the model is really running, not the calendar figure before
+    scaling."""
+    m = (PROFILES.get(day_type, WEEKDAY).get(hour % 24, 0.3)
+         * LEVELS.get(level, 1.0) * factor)
     word = ("near-empty" if m < 0.15 else "light" if m < 0.45
             else "moderate" if m < 0.8 else "heavy" if m < 1.3 else "saturated")
     return {"multiplier": round(m, 2), "word": word}
