@@ -2,12 +2,16 @@
 
 Control model (mirrors real emergency-vehicle-preemption deployments):
 
-1.  Every signalized junction carries a virtual enforcement camera that can
-    recognise an ambulance running its emergency lights up to
-    ``camera_range_m`` along its approaches.
+1.  Every signalized junction carries an enforcement camera whose field of
+    view is the physical approach roadway up to ``camera_range_m`` from the
+    stop line.  Detection is JUNCTION-SIDE sensing: a camera reports an
+    ambulance only when the vehicle, with active emergency lights, is
+    physically inside that field of view — never inferred from the
+    vehicle's own route or position feed.
 2.  The first camera detection "confirms" the ambulance to the traffic-
-    management centre.  From then on the centre — which knows the planned
-    route — activates a *green corridor* along it.
+    management centre.  Only from then on does the centre — which knows the
+    planned route, as real dispatch centres do — activate a *green
+    corridor* along it.  A unit no camera has seen gets nothing.
 3.  A signal is switched when the ambulance's estimated arrival drops below
     ``greenwave_lead_s`` (never later than ``greenwave_min_m`` out, never
     earlier than ``greenwave_distance_m``).  ETA-based activation matters:
@@ -70,9 +74,12 @@ class _TlsState:
 
 
 class GreenWaveController:
-    def __init__(self, cfg, ops, enabled=True):
+    def __init__(self, cfg, ops, enabled=True, net=None):
         self.cfg = cfg
         self.ops = ops
+        self.net = net            # for building physical camera zones
+        self._camera_zones = None  # edge id -> [(tls id, offset m to stop)]
+        self._edge_len = {}
         self.enabled = enabled
         self.active = {}          # tls_id -> _TlsState
         self.cooldown = {}        # tls_id -> sim time until re-arm is allowed
@@ -145,24 +152,28 @@ class GreenWaveController:
         flush_tls = set()
         seen_pairs = set()
         if self.enabled:
+            # 1. PHYSICAL cameras: detection happens only when a unit with
+            #    active lights is inside a junction camera's actual field
+            #    of view — the sole source of confirmation.
+            self._sense_cameras(ambulance_ids)
+            # 2. The centre plans the corridor for CONFIRMED units only:
+            #    it knows their planned route, as a real dispatch centre
+            #    does — but it never acts on a unit no camera has seen.
             for amb_id in ambulance_ids:
+                if amb_id not in self.confirmed:
+                    continue
                 try:
                     upcoming = traci.vehicle.getNextTLS(amb_id)
                     speed = traci.vehicle.getSpeed(amb_id)
                 except traci.TraCIException:
                     continue
                 amb_speed[amb_id] = speed
-                if amb_id in self.confirmed:
-                    reach = min(cfg.greenwave_distance_m,
-                                max(cfg.greenwave_min_m,
-                                    speed * cfg.greenwave_lead_s))
-                else:
-                    reach = cfg.camera_range_m
+                reach = min(cfg.greenwave_distance_m,
+                            max(cfg.greenwave_min_m,
+                                speed * cfg.greenwave_lead_s))
                 flush_reach = min(cfg.greenwave_distance_m,
                                   reach * cfg.flush_lead_factor)
                 for tls_id, link_index, dist, _state in upcoming:
-                    if dist <= cfg.camera_range_m:
-                        self._camera_report(tls_id, amb_id, dist)
                     within = dist <= reach
                     # Queue flush: a congested approach ahead on the route
                     # is enabled with EXTRA lead so its standing queue
@@ -171,8 +182,7 @@ class GreenWaveController:
                     # Once flush-enabled, the request is STICKY for this
                     # unit until it passes: a flickering congestion state
                     # must not flap the junction.
-                    if (not within and amb_id in self.confirmed
-                            and dist <= flush_reach
+                    if (not within and dist <= flush_reach
                             and ((amb_id, tls_id) in self._flush_sticky
                                  or self._approach_congested(tls_id,
                                                              link_index))):
@@ -482,6 +492,79 @@ class GreenWaveController:
                             self._node2tls[node] = tls_id
         node = lane[1:].rsplit("_", 2)[0]
         return self._node2tls.get(node)
+
+    # ------------------------------------------------------ physical cameras
+
+    def _build_camera_zones(self):
+        """Each junction camera's real field of view: every edge within
+        camera_range_m upstream of its stop lines, with the offset from
+        that edge's end to the junction.  Detection then means the
+        ambulance is PHYSICALLY inside a camera's view — never inferred
+        from the vehicle's own route."""
+        zones = {}
+        if self.net is None:
+            self._camera_zones = zones
+            return
+        try:
+            tls_ids = traci.trafficlight.getIDList()
+        except traci.TraCIException:
+            self._camera_zones = zones
+            return
+        for tls_id in tls_ids:
+            try:
+                links = traci.trafficlight.getControlledLinks(tls_id)
+            except traci.TraCIException:
+                continue
+            approach = {grp[0][0].rsplit("_", 1)[0]
+                        for grp in links if grp}
+            for eid in approach:
+                if eid.startswith(":"):
+                    continue
+                try:
+                    start = self.net.getEdge(eid)
+                except Exception:
+                    continue
+                frontier = [(start, 0.0)]
+                seen = {eid}
+                while frontier:
+                    edge, off = frontier.pop()
+                    cur = edge.getID()
+                    self._edge_len[cur] = edge.getLength()
+                    zones.setdefault(cur, []).append((tls_id, off))
+                    off2 = off + edge.getLength()
+                    if off2 >= self.cfg.camera_range_m:
+                        continue
+                    for prev in edge.getIncoming():
+                        pid = prev.getID()
+                        if pid in seen or pid.startswith(":"):
+                            continue
+                        seen.add(pid)
+                        frontier.append((prev, off2))
+        self._camera_zones = zones
+
+    def _sense_cameras(self, ambulance_ids):
+        """Junction-side detection: an ambulance with active lights inside
+        a camera's field of view is reported and confirmed — the only way
+        the control centre ever learns a unit exists."""
+        if self._camera_zones is None:
+            self._build_camera_zones()
+        for amb_id in ambulance_ids:
+            try:
+                eid = traci.vehicle.getRoadID(amb_id)
+            except traci.TraCIException:
+                continue
+            hits = self._camera_zones.get(eid)
+            if not hits:
+                continue
+            try:
+                pos = traci.vehicle.getLanePosition(amb_id)
+            except traci.TraCIException:
+                continue
+            remain = max(0.0, self._edge_len.get(eid, 0.0) - pos)
+            for tls_id, off in hits:
+                dist = off + remain
+                if dist <= self.cfg.camera_range_m:
+                    self._camera_report(tls_id, amb_id, dist)
 
     def _camera_report(self, tls_id, amb_id, dist):
         if (tls_id, amb_id) in self.camera_logged:

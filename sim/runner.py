@@ -66,7 +66,7 @@ class Simulation:
         self._profile = hourly_profile(self.root, self.cfg.day_type)
         self._level = LEVELS.get(self.cfg.traffic_level, 1.0)
         self._scale_hour = self.cfg.start_hour % 24
-        cmd += ["--scale", f"{self._level * self._profile.get(self._scale_hour, 0.3):.3f}"]
+        cmd += ["--scale", f"{self._level * self.cfg.demand_factor * self._profile.get(self._scale_hour, 0.3):.3f}"]
         cmd += self.extra_args
         traci.start(cmd)
         self.ops = OperationsLog(self.root)
@@ -75,7 +75,8 @@ class Simulation:
         self.router = Router(self.net)
         self.router.places = self.places
         self.controller = GreenWaveController(
-            self.cfg, self.ops, enabled=self._preemption_wanted)
+            self.cfg, self.ops, enabled=self._preemption_wanted,
+            net=self.net)
         self.actuation = DemandResponsiveController(
             self.cfg, self.ops, enabled=self.cfg.actuation_enabled,
             net=self.net)
@@ -153,6 +154,7 @@ class Simulation:
         return {"v": self.WARM_STATE_VERSION, "mtimes": mtimes,
                 "warmup_s": self.cfg.warmup_s, "seed": self.seed,
                 "step": self.cfg.step_length,
+                "demand": self.cfg.demand_factor,
                 "latres": self.cfg.lateral_resolution}
 
     def _drop_warm_state(self):
@@ -254,7 +256,8 @@ class Simulation:
         hour = int(self.cfg.start_hour + self.time / 3600) % 24
         if hour != self._scale_hour:
             self._scale_hour = hour
-            mult = self._level * self._profile.get(hour, 0.3)
+            mult = (self._level * self.cfg.demand_factor
+                    * self._profile.get(hour, 0.3))
             d = describe(self.cfg.day_type, self.cfg.traffic_level, hour)
             try:
                 traci.simulation.setScale(mult)
@@ -269,7 +272,14 @@ class Simulation:
         if self.time >= self._fair_next_report:
             self._fair_next_report = self.time + 300.0
             fm = self.actuation.mode_counts()
-            if fm["occupied"] >= 5:
+            # statement discipline: this check SPEAKS only when the audit
+            # numbers actually moved — no narration without an action
+            key = (fm["audit"]["grants"],
+                   fm["audit"]["ended_for_other_traffic"],
+                   fm["audit"]["violations"])
+            if fm["occupied"] >= 5 and key != getattr(
+                    self, "_last_fair_key", None):
+                self._last_fair_key = key
                 pct = round(100 * fm["fair"] / max(fm["occupied"], 1))
                 self.ops.emit(self.time, "actuation",
                               f"Traffic check: {fm['fair']} of {fm['occupied']} "

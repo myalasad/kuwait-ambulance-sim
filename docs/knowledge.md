@@ -115,7 +115,16 @@ p90 — overall and per governorate — plus the worst queue wait appear on
 the live map panel and in a table on the Operations page. These are the
 numbers an EMS board asks for first, and the queue mechanism is measured
 by them, not just narrated.
-The incident scene is a map click or a named area. A mission has three phases: to scene; loading the
+The incident scene is a map click or a named area. Background demand is
+scaled by demand_factor (0.6 by default): the Kuwaiti calendar SHAPE is
+kept while the vehicle count is reduced for a fluid presentation — set it
+to 1.0 for the full calibrated demand. On the map, a junction under
+emergency control blinks its RED lamp and ring for the entire hold (the
+corridor approach's own fixture shows its green), and a live ticker shows
+each action — detection confirmed, junction enabled, queue flush, call
+queued/served, no-citation, arrival — the moment it happens; every pill is
+a real operations event, and periodic status lines are emitted only when
+their numbers actually changed. A mission has three phases: to scene; loading the
 patient at the scene (40 s stop, during which the corridor is paused so cross
 streets are not held for a stationary vehicle); and hot return, when the
 ambulance is automatically rerouted to the nearest hospital by travel time and
@@ -124,10 +133,14 @@ A-case; arrival is logged at the named hospital with travel time, distance,
 average speed and the planned ETA.
 
 ## Detection and the green corridor (preemption)
-Every signalized junction has a virtual camera that recognises an ambulance
-with active lights up to 200 m along its approaches (camera_range_m). The
-first detection confirms the ambulance to the control centre, which knows its
-planned route. Signals along the route are switched when the ambulance's
+Every signalized junction has a camera whose field of view is the physical
+approach roadway up to 200 m from the stop line (camera_range_m), built by
+walking the real road graph upstream. Detection is junction-side sensing:
+the camera reports an ambulance only when the vehicle, with active lights,
+is physically inside that field of view — never inferred from the vehicle's
+own route. The first detection confirms the ambulance to the control
+centre, which knows its planned route; a unit no camera has seen receives
+no corridor. Signals along the route are switched when the ambulance's
 ETA drops below 25 s (greenwave_lead_s), never later than 160 m out
 (greenwave_min_m) and never earlier than 800 m out (greenwave_distance_m).
 Switching means: 3 s of amber to conflicting traffic (yellow_time_s), a 2 s

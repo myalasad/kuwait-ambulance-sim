@@ -132,8 +132,8 @@
 
     <div class="sc"><h3><span class="id">A1</span>Camera detection and confirmation</h3>
       <dl class="f">
-        <dt>Trigger</dt><dd>An ambulance with active emergency lights enters a junction camera's range along one of its approaches.</dd>
-        <dt>Action</dt><dd>The detection is reported; the first detection <b>confirms</b> the ambulance to the control centre, which already holds its planned route.</dd>
+        <dt>Trigger</dt><dd>An ambulance with active emergency lights is <b>physically inside a junction camera's field of view</b> — the approach roadway up to the camera range from the stop line, built from the real road graph. Detection is junction-side sensing, never inferred from the vehicle's own route or position feed.</dd>
+        <dt>Action</dt><dd>The detection is reported; the first detection <b>confirms</b> the ambulance to the control centre, which already holds its planned route. A unit no camera has seen receives no corridor.</dd>
         <dt>Ends when</dt><dd>The mission ends or the lights are switched off.</dd>
         <dt>Logged as</dt><dd><span class="tag">camera</span><span class="tag">corridor</span> operations on the ambulance's A-case.</dd>
         <dt>Parameters</dt><dd><code>camera_range_m = 200</code></dd>
