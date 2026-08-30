@@ -94,7 +94,15 @@ assertive ambulance vType, insertion watchdog (re-place at 60 s; a failed
 re-place now closes the case), progress-based stuck detection with honest
 "no faster corridor exists" events.
 
-## Current state (v4.0, shipped)
+## Current state (v4.2, shipped)
+
+DEFAULT SCENARIO IS NOW THE 3-DISTRICT SHOWCASE — the point of the
+districts was to replace clock-scaled build-up, so the programme now opens
+in it: 3.5 s from `run_live.py` to a live frame with 734 vehicles (SUMO
+2.5 s + 0.3 s cached state), dispatch 184 ms. Downtown/metro (with the
+calendar) remain in the Network model selector.
+
+## Previous state (v4.0/v4.1)
 
 v4.0 — early green can never fire at an occupied junction (divided-junction
 complexes + a physical 75 m clearance gate measured from live vehicle

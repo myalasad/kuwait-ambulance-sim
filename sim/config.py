@@ -194,7 +194,11 @@ SCENARIOS["showcase"] = {
 @dataclass
 class SimConfig:
     # --- network model ---
-    scenario: str = "downtown"        # any key of SCENARIOS: "downtown" | "metro" | "showcase"
+    # DEFAULT: the 3-district showcase — fixed densities, so the city is
+    # already dense the moment it opens (no waiting for a clock-scaled
+    # rush hour to build up) and both early-green regimes are on screen
+    # at once.  "downtown" and "metro" add the Kuwaiti weekly calendar.
+    scenario: str = "showcase"        # any key of SCENARIOS: "downtown" | "metro" | "showcase"
 
     # --- scenario files (set from SCENARIOS in __post_init__) ---
     net_file: str = ""

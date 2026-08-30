@@ -320,7 +320,15 @@ actually break — alongside max_other_wait_s, the longest any other approach
 waited behind an early green, which varies run to run.
 
 ## Network models and places
-Three models: Downtown Kuwait City (detailed; every street; sublane model and
+The programme OPENS on the 3-district showcase: because its densities are
+baked into the demand rather than scaled by the clock, the city is already
+full the moment the dashboard loads — measured 3.5 s from launching
+run_live.py to a live frame with 734 vehicles on the streets (SUMO start
+2.5 s + a 0.3 s cached-state load), versus minutes of waiting for a
+clock-scaled rush hour to build up. The calendar models (downtown, metro)
+remain one click away in the Network model selector for "what does a real
+Tuesday at 17:00 look like".
+Three models (the showcase is the DEFAULT): Downtown Kuwait City (detailed; every street; sublane model and
 rescue lanes) and All governorates (metro arterials: motorways, trunks,
 primary and secondary roads across Capital, Hawalli, Farwaniya, Mubarak
 Al-Kabeer, Ahmadi and Jahra — 13,300 edges, 223 signalized junctions).
