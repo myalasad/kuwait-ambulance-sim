@@ -29,15 +29,15 @@ governorates, honest measured claims.
 | Module | Role |
 |---|---|
 | `sim/config.py` | SCENARIOS (showcase=DEFAULT, downtown, metro), SimConfig knobs, hospitals/areas |
-| `sim/runner.py` | Simulation orchestrator: hourly demand scale, snapshots, step loop |
-| `sim/preemption.py` | Green-wave controller: phase-hold preemption, DMM arbitration, camera/enforcement events |
+| `sim/runner.py` | Simulation orchestrator: snapshots, step loop; hourly demand scale for downtown/metro only — showcase launches `--scale 1.000` and never calls `setScale` |
+| `sim/preemption.py` | Green-wave controller: the held state is built explicitly and commanded with `setRedYellowGreenState`, then the original programme+phase is restored; DMM arbitration, camera/enforcement events |
 | `sim/actuation.py` | Demand-responsive early green with 120 m upstream detection zones + fairness self-audit |
 | `sim/ambulance.py` | Dispatcher: hospital-only origins, two-leg missions, insertion watchdog, progress-based stuck detection + reroute |
 | `sim/router.py` | Time-dependent Dijkstra (CTMC-predicted speeds), nodal analysis |
 | `sim/markov.py` | DTMC + CTMC per corridor, forecast ledger scored vs persistence/climatology (Brier skill) |
 | `sim/places.py` | Real-name registry: OSM names, J-codes, "Street × Street" junctions |
 | `sim/operations.py` | Ops log ring + JSONL persistence + P/A/D case counters |
-| `sim/traffic_profile.py` | Kuwaiti weekday/weekend hourly calendar × easy/medium/extreme levels |
+| `sim/traffic_profile.py` | Kuwaiti weekday/weekend hourly calendar × easy/medium/extreme levels (downtown/metro only — the showcase bakes its densities) |
 | `rag/` | BM25 + entity filters, Haiku 4.5 → Sonnet 5 tiering, extractive fallback without key |
 | `web/server.py` | Hub: warm-up fast-forward, absolute-clock pacing, all /api endpoints |
 | `web/static/` | Leaflet + canvas: A/B snapshot interpolation, 3-lamp fixtures, 3D cars |
@@ -47,7 +47,10 @@ governorates, honest measured claims.
 
 Verified directly, not recalled:
 
-- `git HEAD` = **b259932**, tag **v4.7**; working tree clean.
+- Last release: tag **v4.7** = **b259932**. HEAD may sit a doc commit or two
+  ahead of it — check `git describe --tags` rather than trusting a hash
+  written here. `data/markov_*.json` shows modified whenever the sim has
+  run; that is the forecast ledger persisting itself, not stray work.
 - `.venv/bin/python tests/test_markov.py` passes.
 - The dashboard runs the **3-district showcase only** (dense core / normal
   ring / light waterfront). There is no model, day, traffic-level or clock
@@ -83,9 +86,14 @@ since the A/B shows it is not the aggregate problem.
 
 1. **Extreme-gridlock physics limit** — at weekend Extreme one mission took
    1992 s for 6.6 km with repeated legitimate "no faster corridor exists"
-   verdicts. Offered but not yet requested: **peak-hour ambulance staging**
-   (pre-positioned units inside congested districts, nearest-staged-unit
-   dispatch, before/after measurement). Build it only when the owner says go.
+   verdicts (measured at v3.5; the run is in that release note). Since v4.6
+   there is no UI path to that load: reproducing it needs
+   `SimConfig(scenario="downtown", day_type="weekend", traffic_level="extreme")`
+   in a headless run, or a reset posted to `/api/command`. Offered but not yet
+   requested: **peak-hour ambulance staging** (pre-positioned units inside
+   congested districts, nearest-staged-unit dispatch, before/after
+   measurement) — unbuilt; the only mention in the tree is `docs/knowledge.md`
+   naming it future work. Build it only when the owner says go.
 2. The copilot needs `ANTHROPIC_API_KEY` in the server's environment for
    generative answers (extractive fallback works without it).
 
@@ -93,6 +101,11 @@ since the A/B shows it is not the aggregate problem.
 
 - **Never kill or restart the owner's server on port 8642.** Verify with
   headless runs or a temporary server on port 8643, and kill 8643 when done.
+- Since v4.7 that rule is no longer only about kill/restart commands:
+  **editing any `.py` under `sim/`, `web/` or `rag/`, or `run_live.py` itself,
+  restarts his server** — the watcher closes TraCI and re-execs (~3 s). Do not
+  touch watched source while he is demoing unless he confirms he started it
+  with `--no-reload`.
 - **Never handle API keys** — the owner exports theirs in their own terminal.
 - Real names everywhere (no raw OSM ids in user-facing text); neat
   categorization; honest metrics with baselines — this is board-pitch

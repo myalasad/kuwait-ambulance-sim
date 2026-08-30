@@ -110,7 +110,7 @@
     <span><b>Action</b> — what the system does</span>
     <span><b>Ends when</b> — how the rule releases</span>
     <span><b>Logged as</b> — the operation / case it leaves behind</span>
-    <span><b>Parameters</b> — the knobs in <code>sim/config.py</code></span>
+    <span><b>Parameters</b> — the knobs in <code>sim/config.py</code>, except where a row names another file</span>
   </div>
 
   <div id="toc">
@@ -141,7 +141,7 @@
 
     <div class="sc"><h3><span class="id">A2</span>Enabling a junction (purposely enabled)</h3>
       <dl class="f">
-        <dt>Trigger</dt><dd>A confirmed ambulance's ETA to a signal on its route drops below the lead time — never later than the minimum distance, and never earlier than the maximum <b>except under rule A7</b> (queue flush), which may double the lead when the approach ahead is congested.</dd>
+        <dt>Trigger</dt><dd>A confirmed ambulance's ETA to a signal on its route drops below the lead time — never later than the minimum distance, and <b>never earlier than the maximum</b>. Rule A7 (queue flush) doubles the speed-scaled lead when the approach ahead is congested, but the doubled window is clamped to the same maximum: no junction is ever enabled more than 800 m out, under any rule.</dd>
         <dt>Action</dt><dd>Amber to conflicting traffic → all-red clearance (which empties the junction box) → the ambulance's approach is held on <b>protected green</b> while every approach not on its route is held at <b>solid red</b> (rule A6). Cars in front of the ambulance discharge through the green. Signals are never switched dark.</dd>
         <dt>Ends when</dt><dd>Rule A3 (pass) or A4 (hold limit).</dd>
         <dt>Logged as</dt><dd>P-case opens: <span class="tag">preempt_start</span><span class="tag">preempt_phase</span> (amber, all-red, corridor active). Map label <b>PURPOSELY ENABLED</b>.</dd>
@@ -159,20 +159,20 @@
 
     <div class="sc warn"><h3><span class="id">A4</span>Hold limit — cross traffic is never starved</h3>
       <dl class="f">
-        <dt>Trigger</dt><dd>A junction has been held continuously for the maximum time while the ambulance is still beyond camera range.</dd>
+        <dt>Trigger</dt><dd>A junction has been held continuously for the maximum time. <b>Distance is not an exemption</b>: the cap fires whether the ambulance is 5 m or 500 m away — a unit stalled just short of the stop line would otherwise hold cross traffic indefinitely.</dd>
         <dt>Action</dt><dd>Release the corridor and guarantee cross traffic a normal cycle (cooldown) before re-arming.</dd>
-        <dt>Ends when</dt><dd>Cooldown elapses, or the ambulance reaches camera range (it is then served regardless).</dd>
-        <dt>Logged as</dt><dd><span class="tag">hold_limit</span> then <span class="tag">restore</span> on the P-case.</dd>
-        <dt>Parameters</dt><dd><code>max_hold_s = 90</code> <code>preempt_cooldown_s = 20</code></dd>
+        <dt>Ends when</dt><dd>Cooldown elapses. The single exemption from the cap is an ambulance <b>physically inside the junction box</b> (A5) — and that exemption is itself bounded: it lapses once the unit has been at a standstill in the box for <code>BOX_STALL_RELEASE_S</code>, because a stationary unit is not crossing, it is stuck.</dd>
+        <dt>Logged as</dt><dd><span class="tag">hold_limit</span> then <span class="tag">restore</span> on the P-case. A release taken while a stalled unit is still in the box states that reason in the line.</dd>
+        <dt>Parameters</dt><dd><code>max_hold_s = 90</code> <code>preempt_cooldown_s = 20</code> <code>BOX_STALL_RELEASE_S = 10</code></dd>
       </dl></div>
 
     <div class="sc"><h3><span class="id">A5</span>Ambulance physically inside the junction</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>The ambulance is on the junction's internal lanes.</dd>
-        <dt>Action</dt><dd>The hold is kept even if the signal is otherwise due to release — cross traffic must not receive green into an occupied box.</dd>
-        <dt>Ends when</dt><dd>The ambulance exits the box.</dd>
-        <dt>Logged as</dt><dd>Covered by the open P-case.</dd>
-        <dt>Parameters</dt><dd>—</dd>
+        <dt>Action</dt><dd>The hold is kept even if the signal is otherwise due to release — cross traffic must not receive green into an occupied box. This is the one exemption from both the hold cap (A4) and the cooldown.</dd>
+        <dt>Ends when</dt><dd>The ambulance exits the box — <b>or</b> it has been at a dead stop inside the box for <code>BOX_STALL_RELEASE_S</code>, at which point it is treated as stuck rather than crossing, the exemption lapses and the hold cap (A4) releases the corridor. A stalled unit is almost always blocked by traffic that this very hold is keeping on solid red.</dd>
+        <dt>Logged as</dt><dd>Covered by the open P-case; a release taken under the stall bound is the <span class="tag">hold_limit</span> line of A4.</dd>
+        <dt>Parameters</dt><dd><code>BOX_STALL_RELEASE_S = 10</code> — the one constant on this page that is defined in <code>sim/preemption.py</code>, not <code>sim/config.py</code></dd>
       </dl></div>
 
     <div class="sc"><h3><span class="id">A6</span>Cross traffic under a hold — solid red, junction blinks amber</h3>
@@ -186,7 +186,7 @@
 
     <div class="sc"><h3><span class="id">A7</span>Queue flush — the corridor looks after signals ahead</h3>
       <dl class="f">
-        <dt>Trigger</dt><dd>A signal ahead on the confirmed route whose approach is <b>CONGESTED or JAMMED</b> (live Markov state) comes within twice the normal activation lead.</dd>
+        <dt>Trigger</dt><dd>A signal ahead on the confirmed route whose approach is <b>CONGESTED or JAMMED</b> (live Markov state) comes within twice the normal activation lead — the doubled window clamped, like every other window, to <code>greenwave_distance_m</code>.</dd>
         <dt>Action</dt><dd>The junction is enabled <b>early</b> so the standing queue drains through the green before the ambulance arrives — an ambulance with a predetermined route clears numerous signals ahead, not just the next one. Once flush-enabled the request is held for that unit (no flapping if the congestion state flickers). All A4/A6 protections still apply: the hold cap, the cooldown, and the amber → all-red → hold sequence.</dd>
         <dt>Ends when</dt><dd>The unit passes (A3), or the hold cap releases the junction (A4).</dd>
         <dt>Logged as</dt><dd>The P-case's <span class="tag">preempt_start</span> carries the justification: "enabled EARLY (queue flush): this approach is congested, so the extra lead drains the standing queue before the unit arrives".</dd>
@@ -244,8 +244,8 @@
     <div class="sc"><h3><span class="id">C1</span>Dispatch — nearest AVAILABLE unit, always from a hospital</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>An operator dispatches to an incident scene (map click or named area).</dd>
-        <dt>Action</dt><dd>Origin is a hospital under the <b>ready-fleet model</b>: each hospital stations a limited number of ready units; a dispatch commits one, and a crew that delivers a patient rejoins the <b>receiving</b> hospital's pool only after turnaround. "Auto" ranks every hospital by Dijkstra travel time to the scene in a single pass, keeps only hospitals with a ready unit, and among those within the rotation tolerance of the fastest, a hospital that launched a unit within the gate headway yields to an equally-close peer; otherwise the fastest wins — the scene decides, not a rota, and never a convoy from a single gate. If every crew is committed, the call <b>queues</b> and the next crew to finish turnaround responds automatically (logged with queue position and wait); a gate-headway rule keeps two departures from stacking at one gate. Route computed (E1), speed exemption armed (F1), lights on.</dd>
-        <dt>Ends when</dt><dd>The unit's crew completes turnaround and returns to a ready pool (logged: "unit READY again at X (n/4)").</dd>
+        <dt>Action</dt><dd>Origin is a hospital under the <b>ready-fleet model</b>: each hospital stations a limited number of ready units; a dispatch commits one, and a crew that delivers a patient rejoins a ready pool only after turnaround — the <b>receiving</b> hospital's pool by preference, and if that pool is already at stationed strength (or is not a stationed pool at all) the origin hospital's, and failing that the pool with the largest shortfall. A crew is never dropped: with one in hand, the pools cannot all be at strength. "Auto" ranks every hospital by Dijkstra travel time to the scene in a single pass, keeps only hospitals with a ready unit, and among those within the rotation tolerance of the fastest, a hospital that launched a unit within the gate headway yields to an equally-close peer; otherwise the fastest wins — the scene decides, not a rota, and never a convoy from a single gate. If every crew is committed, the call <b>queues</b> and the next crew to finish turnaround responds automatically (logged with queue position and wait); a gate-headway rule keeps two departures from stacking at one gate. Route computed (E1), speed exemption armed (F1), lights on.</dd>
+        <dt>Ends when</dt><dd>The unit's crew completes turnaround and returns to a ready pool — logged "unit READY again at X (n/4)" when it joins a ready pool — its receiving hospital, or, if that pool was full, its origin hospital — or "crew REDEPLOYED to X (n/4)" with the reason when both were full and a third hospital took it.</dd>
         <dt>Logged as</dt><dd>A-case opens: <span class="tag">dispatch</span> with route length, signals on route, ETA, routing basis — and, when not the nearest gate, the full ruling ("X is nearest but has no ready units (0/4 — crews on mission or in turnaround); Y responds in T s with n/4 ready"). Live ready counts are shown at every hospital marker on the map.</dd>
         <dt>Parameters</dt><dd><code>snap_radius_m</code> per scenario <code>hospital_ready_units = 4</code> <code>unit_turnaround_s = 180</code> <code>dispatch_rotation_tolerance = 0.25</code></dd>
       </dl></div>
@@ -298,9 +298,9 @@
     <div class="sc warn"><h3><span class="id">C8</span>Stuck in traffic — adaptive reroute</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>An en-route ambulance advances less than the progress threshold within the stuck window (stop-and-go creep counts as stuck).</dd>
-        <dt>Action</dt><dd>Re-plan from the current position under live weights. A meaningfully faster corridor (≥10% + 5 s) is applied immediately — the signal corridor and driver navigation follow. If the alternatives are equally congested, the ambulance <b>holds course and says so</b>: rerouting for its own sake is motion without progress. Rescue lanes (sublane model) are active on both network models so ambulances filter through queues physically.</dd>
+        <dt>Action</dt><dd>Re-plan from the current position under live weights. A meaningfully faster corridor (≥10% + 5 s) is applied immediately — the signal corridor and driver navigation follow. If the alternatives are equally congested, the ambulance <b>holds course and says so</b>: rerouting for its own sake is motion without progress. Rescue lanes (sublane model) are active on every network model so ambulances filter through queues physically.</dd>
         <dt>Ends when</dt><dd>Progress resumes; re-checked each cooldown.</dd>
-        <dt>Logged as</dt><dd><span class="tag">reroute</span> — either "ADAPTIVE REROUTE around the blockage via …" or "checked for a faster corridor: none exists".</dd>
+        <dt>Logged as</dt><dd><span class="tag">reroute</span> — either "ADAPTIVE REROUTE around the blockage via … (predicted N s faster than pushing through)", or, when no switch is justified, "AMB_n stuck N s — <i>reason</i>; holding course". The line always names <b>which</b> of the three conditions applied: no alternative route to the destination exists from here; the route it is on is already the fastest under live weights; or the best alternative saves only X s (Y%) — below the 10% and 5 s switching margin.</dd>
         <dt>Parameters</dt><dd><code>stuck_progress_m = 40</code> <code>stuck_after_s = 25</code> <code>stuck_reroute_cooldown_s = 60</code></dd>
       </dl></div>
 
@@ -350,11 +350,11 @@
 
     <div class="sc warn"><h3><span class="id">D4</span>Saturation — fair timers by design</h3>
       <dl class="f">
-        <dt>Trigger</dt><dd>Heavy traffic: several approaches of a junction are occupied at once — the normal condition on Kuwaiti weekdays 13:00–21:00, on weekends 13:00–24:00, and throughout the Extreme traffic level.</dd>
+        <dt>Trigger</dt><dd>Heavy traffic: several approaches of a junction are in use at once — an approach counts as in use if it carried traffic within the quiet window (45 s), not only at this instant. On the model the dashboard runs, this is the standing condition across the dense core district, whose density is fixed in the route file rather than produced by a clock hour.</dd>
         <dt>Action</dt><dd>The early-green rule does not apply; the junction runs its normal fixed-time cycle so every approach gets its fair turn. This is not a failure of the priority system — it is the rule working as intended, and the system counts it.</dd>
-        <dt>Ends when</dt><dd>Traffic thins to a single occupied approach (D1 becomes possible again).</dd>
-        <dt>Logged as</dt><dd>A five-minute <span class="tag">actuation</span> traffic check ("N of M occupied junctions have several approaches occupied — fair timers by design"); the Live Map shows the live share of busy junctions on fair timers.</dd>
-        <dt>Parameters</dt><dd><code>traffic_level</code> <code>day_type</code> <code>start_hour</code></dd>
+        <dt>Ends when</dt><dd>Traffic thins to a single approach in use (D1 becomes possible again).</dd>
+        <dt>Logged as</dt><dd>An <span class="tag">actuation</span> traffic check evaluated every five minutes — but <b>emitted only when it has something to report</b>: at least 5 junctions in use and the early-green audit counters (holds, endings for other traffic, violations, longest other-approach wait) actually moved since the last entry. A quiet period leaves no entry at all; there is no narration without an action. The line reads "Traffic check: N junctions in use (traffic on an approach within the last 45 s); M of them have several approaches in use — early green cannot apply there, fair timers by design (P%)…". The Live Map shows the live share of junctions in use that are on fair timers.</dd>
+        <dt>Parameters</dt><dd><code>lone_quiet_s = 45</code></dd>
       </dl></div>
   </section>
 
@@ -438,10 +438,10 @@
     <div class="sc err"><h3><span class="id">G4</span>Transition invariants</h3>
       <dl class="f">
         <dt>Trigger</dt><dd>Any change that turns a green to red (enabling, retargeting, restoring).</dd>
-        <dt>Action</dt><dd>Amber first, then all-red clearance where a corridor is being created; a junction is never restored while an ambulance is inside its box (A5).</dd>
+        <dt>Action</dt><dd>Amber first, then all-red clearance where a corridor is being created; and <b>a junction is never restored while an ambulance is crossing its box</b> (A5) — no vehicle committed to a crossing is ever shown a red in front of it.<br><br>That invariant is <b>bounded, and deliberately so</b>. A unit that has been at a dead stop in the box for <code>BOX_STALL_RELEASE_S</code> is not crossing; it is stuck, and in almost every case it is stuck behind the very traffic this corridor is holding on solid red. Past that point it stops counting as crossing, and if the 90 s hold cap (A4) has also been reached the corridor is released. The bound is stated here rather than hidden because an unbounded hold would starve every other approach indefinitely on the strength of one stationary vehicle.</dd>
         <dt>Ends when</dt><dd>—</dd>
-        <dt>Logged as</dt><dd><span class="tag">preempt_phase</span></dd>
-        <dt>Parameters</dt><dd><code>yellow_time_s = 3</code> <code>allred_time_s = 2</code></dd>
+        <dt>Logged as</dt><dd><span class="tag">preempt_phase</span>; a release taken under the stall bound is a <span class="tag">hold_limit</span> line that states that reason explicitly.</dd>
+        <dt>Parameters</dt><dd><code>yellow_time_s = 3</code> <code>allred_time_s = 2</code> <code>BOX_STALL_RELEASE_S = 10</code> <code>max_hold_s = 90</code></dd>
       </dl></div>
   </section>
 
@@ -454,8 +454,8 @@
       <dl class="f"><dt>Action</dt><dd>Disarming releases every junction through the normal amber-down sequence; logged as <span class="tag">system</span>.</dd></dl></div>
     <div class="sc dec"><h3><span class="id">H3</span>Lights on / off per ambulance</h3>
       <dl class="f"><dt>Action</dt><dd>See C6; logged with who and when.</dd></dl></div>
-    <div class="sc dec"><h3><span class="id">H4</span>Pause, resume, reset, time of day, network model</h3>
-      <dl class="f"><dt>Action</dt><dd>Every state change is broadcast to all connected screens so no operator sees a stale picture; the Copilot is read-only and can never issue signal commands.</dd></dl></div>
+    <div class="sc dec"><h3><span class="id">H4</span>Pause, resume, reset, simulation speed</h3>
+      <dl class="f"><dt>Action</dt><dd>The Live Map's live controls are pause, resume, reset and simulation speed. Every state change is broadcast to all connected screens so no operator sees a stale picture; the Copilot is read-only and can never issue signal commands. Time of day and network model are <b>not</b> operator powers: their controls were removed from the dashboard in v4.6. The server still honours <code>hour</code>, <code>scenario</code>, <code>day_type</code> and <code>traffic_level</code> fields on a raw <code>reset</code> command, but no screen and no command-line flag offers them — changing them is an engineering action on <code>sim/config.py</code>, not an operator action.</dd></dl></div>
   </section>
 
   <!-- ================================================================ I -->
@@ -463,21 +463,25 @@
     <h2><span class="k">I</span>Data, models &amp; scope<small>what is real</small></h2>
     <div class="sc"><h3><span class="id">I1</span>Provenance</h3>
       <dl class="f">
-        <dt>Real</dt><dd>Road networks, one-way system, turn restrictions, signal locations and street names (OpenStreetMap); hospital locations.</dd>
-        <dt>Calibrated</dt><dd>Background demand follows the published shape of Kuwaiti weekly traffic, with the volume anchored to Kuwait's ~2.4 million registered vehicles (PACI) and an operator estimate for the downtown core (a weekend evening at Extreme ≈ 3,000+ vehicles on the core network at once). Kuwait exposes no public live feed and Google Maps publishes travel times, not vehicle counts. Real hourly counts (e.g. the licensed <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data" style="color:#4ade80">xMap Kuwait catalog</a>) drop into <code>data/real_counts.csv</code> as <code>hour,multiplier</code> and override the profile.</dd>
+        <dt>Real</dt><dd>Road networks, one-way system, turn restrictions, signal locations and street names (OpenStreetMap). Hospital locations are real on the Metro model — one MoH general hospital per governorate, at its true site. On the Downtown and Showcase models only <b>Amiri Hospital</b> sits at its real location; Al-Sabah and Dar Al Shifa are <b>modelled anchors</b>, placed inside the extract because their real sites fall outside it, and they are labelled as such in the dispatch list.</dd>
+        <dt>Calibrated</dt><dd>Background demand is <b>generated, not measured</b>: Kuwait exposes no public live feed, and Google Maps publishes travel times rather than vehicle counts. What is fixed and inspectable is the volume in the route file the dashboard actually runs — <code>data/background_showcase.rou.xml</code>, 25,853 vehicles departing over a three-hour window at <code>--scale 1.000</code>, distributed across three fixed-density districts. On the Downtown and Metro models the volume is instead scaled hour by hour against the weekly calendar shape (I3). Real hourly counts (e.g. the licensed <a href="https://www.xmap.ai/data-catalogs/kuwait-road-traffic-data" style="color:#4ade80">xMap Kuwait catalog</a>) drop into <code>data/real_counts.csv</code> as <code>hour,multiplier</code> rows and override the <b>weekday</b> shape only — the weekend shape is always the built-in calendar constant, and on the default Showcase model the file has no effect at all, its demand being baked into the route file rather than clock-scaled. No such file is shipped, so today's weekday shape is the calendar constant.</dd>
         <dt>Synthetic</dt><dd>Individual signal timing plans (static 90 s cycles per junction); replaceable with real MOI plans in the network file.</dd>
         <dt>Learned</dt><dd>Markov chains learn from simulated traffic here; the identical estimator ingests real detector data unchanged.</dd>
       </dl></div>
     <div class="sc"><h3><span class="id">I2</span>Network models</h3>
       <dl class="f">
-        <dt>Downtown</dt><dd>Kuwait City core, every street, sublane model with rescue-lane behaviour.</dd>
+        <dt>Showcase</dt><dd><b>The default — the model the dashboard runs.</b> The Downtown network, with demand baked into the route file as three fixed-density districts: dense core, normal ring, light waterfront. Both early-green regimes are therefore on screen at once, and there is no waiting for a clock-scaled rush hour to build up.</dd>
+        <dt>Downtown</dt><dd>Kuwait City core, every street, sublane model with rescue-lane behaviour. Same network as Showcase, but with clock-scaled demand under the weekly calendar (I3).</dd>
         <dt>Metro</dt><dd>All six governorates at arterial level (motorways, trunks, primary and secondary roads; residential side streets not modelled), a real MoH hospital per governorate, 79 named areas.</dd>
+        <dt>Switching</dt><dd>Selecting a model is an engineering action on <code>sim/config.py</code>, not an operator control — see H4.</dd>
       </dl></div>
     <div class="sc"><h3><span class="id">I3</span>Calendar and traffic scenarios</h3>
       <dl class="f">
+        <dt>Applies to</dt><dd><b>The Downtown and Metro models only.</b> On the default Showcase model the calendar and level machinery is inert: SUMO is launched at <code>--scale 1.000</code>, the hourly rescale is skipped, and <code>day_type</code>, <code>traffic_level</code> and <code>demand_factor</code> have no effect on the volume or shape of the running demand (<code>start_hour</code> still sets the Kuwait clock the dashboard displays, and the warm-state cache key). Saturation on the default map is produced by the fixed dense-core district, not by a clock hour or an Extreme level.</dd>
         <dt>Day type</dt><dd><b>Weekday (Sun–Thu)</b>: 06:30–08:30 peak, congested 13:00–21:00, near-empty 01:00–05:00. <b>Weekend (Fri–Sat)</b>: quiet 01:00–12:00, congested 13:00–24:00.</dd>
-        <dt>Traffic level</dt><dd><b>Easy</b> ×0.45, <b>Medium</b> ×1.0 (calibrated baseline), <b>Extreme</b> ×1.8 — on top of the hourly shape. One flat peak-rate demand base is scaled live each hour; any start hour 0–23 is selectable on the Live Map. A global <code>demand_factor</code> (default 0.6) then scales the vehicle count while keeping the calendar shape, for a fluid presentation; set 1.0 for the full calibrated volume.</dd>
-        <dt>Parameters</dt><dd><code>day_type</code> <code>traffic_level</code> <code>start_hour</code> <code>demand_hours = 3</code> <code>demand_factor = 0.6</code></dd>
+        <dt>Traffic level</dt><dd><b>Easy</b> ×0.45, <b>Medium</b> ×1.0 (baseline), <b>Extreme</b> ×1.8 — on top of the hourly shape. One flat peak-rate demand base is scaled live each hour. A global <code>demand_factor</code> (default 0.6) then scales the vehicle count while keeping the calendar shape, for a fluid presentation; set 1.0 for the full baseline volume.</dd>
+        <dt>Selecting</dt><dd>None of these is an operator control. No start hour, day type or traffic level is selectable anywhere in the UI or from the command line; changing one means editing <code>sim/config.py</code> (see H4).</dd>
+        <dt>Parameters</dt><dd><code>day_type</code> <code>traffic_level</code> <code>start_hour</code> <code>demand_hours = 3</code> <code>demand_factor = 0.6</code> — all inert on the default model except <code>start_hour</code>, which only sets the displayed clock</dd>
       </dl></div>
     <div class="sc"><h3><span class="id">I4</span>Names and codes</h3>
       <dl class="f">
@@ -486,20 +490,21 @@
   </section>
 
   <section class="cat" id="params">
-    <h2><span class="k">§</span>Parameter appendix<small>sim/config.py</small></h2>
+    <h2><span class="k">§</span>Parameter appendix<small>sim/config.py, except where the row says otherwise</small></h2>
     <table class="params">
       <thead><tr><th>Parameter</th><th>Value</th><th>Meaning</th><th>Rules</th></tr></thead>
       <tbody>
         <tr><td>camera_range_m</td><td class="v">200 m</td><td>Camera detection range along an approach</td><td>A1</td></tr>
         <tr><td>greenwave_lead_s</td><td class="v">25 s</td><td>Enable a signal when the ambulance's ETA drops below this</td><td>A2</td></tr>
-        <tr><td>greenwave_min_m / greenwave_distance_m</td><td class="v">160 m / 800 m</td><td>Never later / never earlier than these distances</td><td>A2</td></tr>
+        <tr><td>greenwave_min_m / greenwave_distance_m</td><td class="v">160 m / 800 m</td><td>Never later / never earlier than these distances. 800 m is absolute: the A7 queue-flush lead is clamped to it, and there is no rule that enables a junction beyond it</td><td>A2 A7</td></tr>
         <tr><td>yellow_time_s / allred_time_s</td><td class="v">3 s / 2 s</td><td>Amber to conflicts; all-red clearance</td><td>A2 G4</td></tr>
         <tr><td>clearance_after_pass_s</td><td class="v">2 s</td><td>Corridor held after the ambulance passes</td><td>A3 B4</td></tr>
-        <tr><td>max_hold_s / preempt_cooldown_s</td><td class="v">90 s / 20 s</td><td>Hold cap; guaranteed cross-traffic cycling</td><td>A4</td></tr>
+        <tr><td>max_hold_s / preempt_cooldown_s</td><td class="v">90 s / 20 s</td><td>Cap on one continuous hold, with distance no exemption; guaranteed cross-traffic cycling before re-arming</td><td>A4</td></tr>
+        <tr><td>BOX_STALL_RELEASE_S<br><small style="color:var(--muted)">defined in <code>sim/preemption.py</code>, not <code>sim/config.py</code></small></td><td class="v">10 s</td><td>How long a unit may sit at a dead stop inside a junction box before it stops counting as crossing. Past this, the in-box exemption from the hold cap lapses and the corridor is released</td><td>A4 A5 G4</td></tr>
         <tr><td>flash_amber / flash_harden_eta_s / flash_harden_min_m</td><td class="v">off / 12 s / 60 m</td><td>Off by default: cross approaches are held at solid red. When enabled, they flash amber (yield) during a hold and harden to solid red when the unit is this close in time, and always within the minimum distance</td><td>A6</td></tr>
         <tr><td>dispatch_rotation_tolerance</td><td class="v">25%</td><td>Nearest-available-unit rotation window over the fastest response</td><td>C1</td></tr>
         <tr><td>hospital_ready_units / unit_turnaround_s / gate_headway_s</td><td class="v">4 / 180 s / 8 s</td><td>Ready ambulances per hospital; crew restock time; minimum spacing between departures from one gate</td><td>C1</td></tr>
-        <tr><td>demand_factor</td><td class="v">0.6</td><td>Global multiplier on background demand &mdash; calendar shape kept, vehicle count scaled for a fluid presentation (1.0 = full calibrated volume)</td><td>I3</td></tr>
+        <tr><td>demand_factor</td><td class="v">0.6</td><td>Global multiplier on background demand &mdash; calendar shape kept, vehicle count scaled for a fluid presentation (1.0 = full baseline volume). Downtown and Metro only: inert on the default Showcase model, whose demand is baked into the route file at scale 1.000</td><td>I3</td></tr>
         <tr><td>flush_lead_factor</td><td class="v">2&times;</td><td>Extra activation lead for a congested approach ahead on the route (queue flush)</td><td>A7</td></tr>
         <tr><td>arbitration_tie_m</td><td class="v">20 m</td><td>Tie margin for operator referral</td><td>B2 B3</td></tr>
         <tr><td>operator_timeout_s</td><td class="v">8 s</td><td>Default policy applies after this</td><td>B3</td></tr>

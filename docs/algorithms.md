@@ -38,11 +38,18 @@ searches per dispatch. One search answers all of them.
 
 **Time-dependence and its caveat.** The weight is evaluated at
 `horizon = cumulative time so far`, so the route avoids congestion that will
-exist when the unit arrives, not merely congestion that exists now. Strictly,
-Dijkstra requires the FIFO property (leaving later never arrives earlier);
-predicted weights can violate it, so the returned path is not provably
-optimal under its own weights. In practice the deviation is small, and the
-alternative — ignoring the forecast — is worse. This is stated in the code.
+exist when the unit arrives, not merely congestion that exists now. Dijkstra
+requires the FIFO property (leaving later never arrives earlier) for "the
+first pop is final" to hold, and predicted weights do not satisfy it for
+free — so the predicted family is explicitly **closed** under it:
+`Router._fifo_floor` keeps a prefix maximum of `bucket_top + weight` per
+(edge, state), and `Router._weight` returns `max(w, floor − horizon)`. The
+returned path is therefore optimal under the weights actually used. The real
+caveat is the price of that closure: a jam may be predicted to clear at no
+more than 1 s of weight per 1 s of horizon, so an extreme predicted
+improvement is truncated rather than allowed to break the search. What is
+clipped is only the physically impossible claim that dawdling 20 s gets the
+ambulance through 40 s sooner. This is stated in the code.
 
 ---
 
@@ -102,11 +109,14 @@ exactly the bimodal FREE-or-JAMMED forecasts this predictor exists to detect.
 `predicted_traveltime()` is the routing call; `predicted_speed()` survives for
 display only and says so.
 
-**Caching.** Within one 30-second sampling tick the chains and states cannot
-change, so e^(Qt) is a pure function of (chain, state, horizon). Results are
-cached in 15-second horizon buckets and cleared each tick. Without this, a
-single dispatch recomputed thousands of matrix exponentials and blocked the
-server for 2–4 seconds.
+**Caching.** Sampling is spread across 60 slices of the step grid (1/60th of
+the corridors per slice), so chains and states change on every slice — but
+the forecast cache is invalidated only when a full 30-second rotation
+completes. e^(Qt) is therefore keyed on (chain, state, horizon) and cached in
+15-second horizon buckets, and a cached result can be up to one sampling
+period stale: exactly the staleness the older all-at-once tick had. Without
+the cache, a single dispatch recomputed thousands of matrix exponentials and
+blocked the server for 2–4 seconds.
 
 **Graceful degradation.** A corridor needs 40 of its own observations before
 its personal chain is trusted; below that it falls back to a pooled chain for
@@ -152,8 +162,10 @@ The signal's controlled-link map knows only the edges wired to it; ramp stubs
 and service roads feeding the same box are invisible to it. For each junction
 the system therefore precomputes the edges that physically *arrive* at it —
 those ending within 75 m of the junction centre and coming from outside it —
-and an early green is refused while any of them holds a vehicle. This is
-measured from live positions, not from the wiring diagram.
+and an early green is refused while any of them **other than the approach
+being served** holds a vehicle. The served approach is excluded, because a
+vehicle standing there is the very thing that requests the early green. This
+is measured from live positions, not from the wiring diagram.
 
 ---
 

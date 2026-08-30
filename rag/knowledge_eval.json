@@ -4,7 +4,7 @@
   {"q": "What does camera_range_m control?", "expect": ["camera_range_m"], "source": "config:"},
   {"q": "How do I install and run the programme?", "expect": ["run_live.py"], "source": "handbook:"},
   {"q": "What is real data and what is calibrated?", "expect": ["OpenStreetMap", "calibrated"], "source": "handbook:"},
-  {"q": "What were the measured results?", "expect": ["117%", "9.1%"], "source": "handbook:"},
+  {"q": "What were the measured results?", "expect": ["87%", "9.1%"], "source": "handbook:"},
   {"q": "What happens when two ambulances tie at a junction?", "expect": ["20 m", "D-case"], "source": "handbook:"},
   {"q": "How does early green for normal drivers work?", "expect": ["3 s", "30 s"], "source": "handbook:"},
   {"q": "Can ambulances exceed the speed limit?", "expect": ["150%", "140 km/h"], "source": "handbook:"},

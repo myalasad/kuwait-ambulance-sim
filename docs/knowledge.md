@@ -127,13 +127,18 @@ the live map panel and in a table on the Operations page. These are the
 numbers an EMS board asks for first, and the queue mechanism is measured
 by them, not just narrated.
 The incident scene is a map click or a named area. Background demand is
-scaled by demand_factor (0.6 by default): the Kuwaiti calendar SHAPE is
-kept while the vehicle count is reduced for a fluid presentation — set it
-to 1.0 for the full calibrated demand. On the map, a junction under
-emergency control blinks its RED lamp and ring for the entire hold (the
-corridor approach's own fixture shows its green), and a live ticker shows
-each action — detection confirmed, junction enabled, queue flush, call
-queued/served, no-citation, arrival — the moment it happens; every pill is
+scaled by demand_factor (0.6 by default) on the calendar models only: the
+Kuwaiti calendar SHAPE is kept while the vehicle count is reduced for a
+fluid presentation — set it to 1.0 for the full calibrated demand. The
+default showcase does not use it at all: its demand is static, SUMO is
+launched with --scale 1.000 and the densities are baked into
+background_showcase.rou.xml. On the map, a junction under emergency control
+blinks its AMBER lamp and an amber ring for the entire hold — amber is the
+"emergency in progress here" indicator (the corridor approach's own fixture
+shows its green, and it is the cross approaches' fixtures that blink RED,
+the stop indication) — and a live ticker shows each action — detection
+confirmed, junction enabled, queue flush, call queued/served, no-citation,
+arrival — the moment it happens; every pill is
 a real operations event, and periodic status lines are emitted only when
 their numbers actually changed. A mission has three phases: to scene; loading the
 patient at the scene (40 s stop, during which the corridor is paused so cross
@@ -242,8 +247,14 @@ other approach becomes occupied (after a 5 s minimum green, lone_min_green_s),
 when the lone traffic has passed, or at the 30 s cap (lone_max_hold_s); then
 the normal fair timer resumes. A 10 s per-junction cooldown
 (actuation_cooldown_s) prevents flip-flopping. Ambulance preemption always
-outranks early green. Measured at identical peak demand: +9.1% mean network
-speed and −42.5% vehicles sitting halted.
+outranks early green. Network effect: a full-peak same-seed A/B measured
++9.1% mean network speed and −42.5% vehicles sitting halted — but that was
+measured at v2.4, under an early-green rule that has since been materially
+tightened (the 75 m physical-clearance test and junction complexes; v4.0 measured
+188 attempts blocked that previously would have fired, against 178 grants). Roughly half the
+grants that produced the v2.4 result no longer happen, no harness in the
+repo reproduces the network-level A/B, and it has not been re-measured. It
+is the historical figure, not a current one.
 
 ## Speed-limit exemption — no fines
 A dispatched ambulance with active lights may run at up to 150% of the posted
@@ -288,11 +299,15 @@ shows hit rate, Brier score and the Brier skill score (1 = perfect, 0 = no
 better than the baseline, negative = worse) for this session and all-time,
 with a plain verdict. At every dispatch the router also computes the
 live-only route and records whether the predictive route differed and by how
-much — the "predictive routing" evidence line. Results so far: on the
-six-governorate peak the CTMC shows strong skill over persistence (Brier
-skill ≈ 0.46 on 5,440 forecasts) because it knows transient slowdowns
-revert; skill over climatology is only earned when corridors actually change
-state, which requires realistic peak demand on the arterials.
+much — the "predictive routing" evidence line. Results so far, read from the
+persisted all-time record in data/markov_<scenario>.json (it grows with every
+session): on the six-governorate metro model the CTMC shows clear skill over
+persistence — Brier skill 0.32 across 30,212 scored forecasts (CTMC Brier
+0.092 vs persistence 0.136) — because it knows transient slowdowns revert.
+Skill over climatology on the same record is only 0.01: it is earned only
+when corridors actually change state, which requires realistic peak demand on
+the arterials. On the showcase model the dashboard runs, skill over
+persistence is higher, about 0.49.
 
 Self-feeding: observations persist per scenario in data/markov_<scenario>.json
 (with the scores and the routing evidence) and reload on every start, so the
@@ -305,17 +320,29 @@ from the analytics table.
 
 ## Arrival-time comparison (with vs without preemption)
 Each completed run is split into free-flow driving, measured traffic delay and
-measured signal wait. The "without preemption" estimate adds the expected red-
-light wait at every signal on the route from that junction's real programme:
-E[w] = r²/2C (r = red time, C = cycle). Because that term is quadratic in the
-signal timer, the timer is the highest-weight variable; no-traffic bounds
-isolate it. First measured run: 165 s with the wave vs 308 s estimated
-without — 143 s recovered at signal timers across 8 junctions.
+measured signal wait. The expected red-light wait at every signal on the route
+is computed from that junction's real programme: E[w] = r²/2C (r = red time,
+C = cycle). The "without preemption" estimate is then the measured run time
+plus max(0, that expected wait − the signal wait the run actually measured) —
+the SHORTFALL, not the full expected term, because the measured duration
+already contains whatever signal wait the unit really took, and adding the
+full term would double-count it. The comparison is refused outright for a run
+that had no corridor (lights off, no camera confirmation, every arbitration
+lost, or preemption disarmed): that run is logged as a baseline, not as a
+saving. Because the r²/2C term is quadratic in the signal timer, the timer is
+the highest-weight variable; no-traffic bounds isolate it. First measured run:
+165 s with the wave vs 308 s estimated without — 143 s recovered at signal
+timers across 8 junctions.
 
 ## Traffic scenarios: day type, traffic level and time of day
-Demand is one flat peak-rate base scaled live each hour by a calendar and a
-traffic level, both chosen on the Live Map (the simulation restarts at the
-chosen hour):
+On the calendar models (downtown, metro) demand is one flat peak-rate base
+scaled each hour by a calendar and a traffic level. Since v4.6 none of this is
+selectable anywhere in the UI — the Network model selector, Day, Traffic
+level and the Kuwait clock slider were removed, not hidden. The calendar
+lives on in sim/traffic_profile.py and SimConfig, and applies only to
+headless or programmatic runs (SimConfig(scenario=..., day_type=...,
+traffic_level=..., start_hour=...), or the server's /api/command scenario
+field). The Live Map always runs the showcase, whose demand is static.
 - **Day type.** Weekday (Sunday–Thursday): a sharp 06:30–08:30 work/school
   peak, then congested from 13:00 through about 21:00, near-empty
   01:00–05:00. Weekend (Friday–Saturday): quiet from 01:00 until noon, then
@@ -347,9 +374,11 @@ baked into the demand rather than scaled by the clock, the city is already
 full the moment the dashboard loads — measured 3.5 s from launching
 run_live.py to a live frame with 734 vehicles on the streets (SUMO start
 2.5 s + a 0.3 s cached-state load), versus minutes of waiting for a
-clock-scaled rush hour to build up. The calendar models (downtown, metro)
-remain one click away in the Network model selector for "what does a real
-Tuesday at 17:00 look like".
+clock-scaled rush hour to build up. There is no Network model selector on the
+dashboard any more (removed in v4.6). The calendar models (downtown, metro)
+are reachable only from code — SimConfig(scenario=...) for a headless run, or
+the server's /api/command scenario field — for "what does a real Tuesday at
+17:00 look like".
 Three models (the showcase is the DEFAULT): Downtown Kuwait City (detailed; every street; sublane model and
 rescue lanes) and All governorates (metro arterials: motorways, trunks,
 primary and secondary roads across Capital, Hawalli, Farwaniya, Mubarak
@@ -360,13 +389,18 @@ routed downtown trips, a normal ring keeping ~45% and a light waterfront
 keeping ~10%, each trip kept or dropped by a deterministic hash of its
 vehicle id by the district its route starts in — so lone-driver early greens
 and dense-junction fair timers are on screen at once. Its demand is static:
-the clock does not scale it, the warm state always caches, and the Live Map
-hides the day, traffic-level and start-hour controls; the district circles
-are drawn on the map. Real
-MoH hospitals per governorate (Amiri, Al-Sabah, Mubarak Al-Kabeer,
-Farwaniya, Al-Adan, Al-Jahra). 100 named incident areas across the two
-models (21 downtown, 79 metro), grouped by governorate; at startup only
-places that snap to the modelled network are offered.
+the clock does not scale it (SUMO is launched with --scale 1.000) and the
+warm state always caches; the district circles are drawn on the map. There
+are no day, traffic-level or start-hour controls on the Live Map for any
+model — they were removed in v4.6.
+Hospitals differ by model. The metro model carries one real MoH general
+hospital per governorate (Amiri, Al-Sabah, Mubarak Al-Kabeer, Farwaniya,
+Al-Adan, Al-Jahra). The default showcase inherits downtown's three: Amiri
+Hospital, plus Al-Sabah and Dar Al Shifa as explicitly labelled MODELLED
+anchors — their real sites fall outside the downtown extract and do not snap
+to it, and Dar Al Shifa is a private hospital, not MoH. 100 named incident
+areas across the two models (21 downtown, 79 metro), grouped by governorate;
+at startup only places that snap to the modelled network are offered.
 
 ## Names and codes
 Every road is labelled from its real OpenStreetMap name (English name when
@@ -387,9 +421,10 @@ ways. Rescue lanes: the sublane model is active on both network models, so
 cars pull aside and the ambulance filters through queues. Adaptive reroute
 (Protocol C8): an ambulance that advances less than 40 m in 25 s re-plans
 from its current position; a corridor at least 10% + 5 s faster is applied
-immediately and the signal corridor follows; if the alternatives are equally
-congested it holds course and logs "checked for a faster corridor: none
-exists". Preemption itself: the corridor discharges the queue in front of
+immediately and the signal corridor follows; if no faster corridor is applied it holds course and logs which of three
+conditions applied — no alternative route exists, the current route is
+already fastest under live weights, or the best alternative is inside the
+10% + 5 s switching margin. Preemption itself: the corridor discharges the queue in front of
 the ambulance at each signal. In city-wide saturation, physics wins — which
 is the honest argument for staging ambulances forward during peak hours
 (future work), not a simulation defect.
@@ -422,17 +457,34 @@ Markov chains learn from
 simulated traffic here; the identical estimator ingests real detector data.
 
 ## Measured results
-Ambulance runs up to +117% faster through congested corridors (same traffic,
-same route, with vs without preemption); +9.1% mean network speed and −42.5%
-halted vehicles from early green at identical peak demand; Dijkstra ETAs
-within about 3–4% of actual travel times; motion rendering verified uniform
-(zero stalls) at display frame rate; 20 ms per simulation step on the
-six-governorate network. Dispatch latency: a random dispatch used to block
-the server for 2.2–4.4 s (the CTMC forecast was recomputed for every edge
-relaxation of every Dijkstra — thousands of matrix exponentials per
-dispatch); with the per-tick forecast cache (results are exact within one
-30 s sample tick) and the one-pass hospital ranking, the same dispatch
-completes in well under half a second and the map never freezes on the
+Green corridor: the best with-versus-without run in the retained operations
+records is +87% faster — 165 s measured with the wave against 308 s estimated
+without (143 s recovered at signal timers across 8 junctions; AMB_1 / case
+A-001 in data/operations.2026-08-28.jsonl.gz, exported as the first row of
+ANSWERS_DATA_arrival_analysis.csv). Across all 866 with-wave runs still held
+in data/operations.jsonl and its rotated archives the median is +26%. The
+"without" figure is a per-junction counterfactual computed from the same run
+— measured time plus the unrecovered r²/2C signal wait — not a second
+measured run in the same traffic, and it should always be quoted that way.
+Early green: +9.1% mean network speed and −42.5% halted vehicles, measured at
+v2.4 under an early-green rule since materially tightened and not re-measured
+(see "Early green" above). Dijkstra ETAs: the planned mission ETA and the
+actual mission time are both logged on every arrival, and over the 931
+arrivals retained in the operations logs the ETA misses actual by 17% at the
+median (mean 22%, p90 52%); only about 18% of runs land within 4%. The
+estimate is a free-flow-plus-forecast figure and is optimistic under peak
+demand — there is no basis for the "within 3–4%" claim carried by earlier
+versions of this handbook. Motion rendering verified uniform (zero stalls) at
+display frame rate. Simulation cost: about 68 ms per step at 2,519 vehicles on
+the six-governorate network with rescue lanes on (sublane 0.8), which has been
+the shipped metro configuration since v3.4; the older 20 ms/step figure was
+measured before the sublane model was enabled there. Dispatch latency: a
+random dispatch used to block the server for 2.2–4.4 s (the CTMC forecast
+was recomputed for every edge relaxation of every Dijkstra — thousands of
+matrix exponentials per dispatch); with the forecast cache (cleared once per
+full 30 s sampling rotation, so a cached result is at most one sampling
+period stale) and the one-pass hospital ranking, the same dispatch completes
+in well under half a second and the map never freezes on the
 button. At the Extreme load (5,000+ vehicles) SUMO's own physics step is
 90% of the frame cost (~330 ms typical); the server therefore runs the
 step, the snapshot and the JSON serialisation in a worker thread so the
