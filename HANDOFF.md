@@ -1,8 +1,9 @@
 # Session handoff — Kuwait Ambulance Green-Wave Simulation
 
-*Written 2026-08-28, updated at v3.7. This file lets a fresh Claude Code
-session (or a colleague) pick up the project without the original
-conversation. Update it whenever a session ends with open items.*
+*The state record. A fresh session should read THIS FILE FIRST and trust it
+over recollection. Every claim in "Current state" was verified against the
+code on the date shown; per-version history lives in `git tag -n40` and the
+GitHub releases, deliberately not here.*
 
 ## What this project is
 
@@ -13,8 +14,8 @@ Huawei executive board. Everything must be **observable and real — nothing
 governorates, honest measured claims.
 
 - Repo: https://github.com/myalasad/kuwait-ambulance-sim (public; every
-  version tagged and released, v1.0 … v3.8 — release notes carry the measured
-  numbers, cite them instead of re-measuring)
+  version tagged and released through v4.7 — release notes carry the
+  measured numbers; cite them instead of re-measuring)
 - Run: `.venv/bin/python run_live.py --port 8642` (the owner runs this in
   their own terminal with `ANTHROPIC_API_KEY` exported for the copilot)
 - Pages: `/` live map · `/driver` phone view · `/navigation` Dijkstra/nodal ·
@@ -27,7 +28,7 @@ governorates, honest measured claims.
 
 | Module | Role |
 |---|---|
-| `sim/config.py` | SCENARIOS (downtown/metro), SimConfig knobs, hospitals/areas |
+| `sim/config.py` | SCENARIOS (showcase=DEFAULT, downtown, metro), SimConfig knobs, hospitals/areas |
 | `sim/runner.py` | Simulation orchestrator: hourly demand scale, snapshots, step loop |
 | `sim/preemption.py` | Green-wave controller: phase-hold preemption, DMM arbitration, camera/enforcement events |
 | `sim/actuation.py` | Demand-responsive early green with 120 m upstream detection zones + fairness self-audit |
@@ -42,88 +43,41 @@ governorates, honest measured claims.
 | `web/static/` | Leaflet + canvas: A/B snapshot interpolation, 3-lamp fixtures, 3D cars |
 | `scripts/build_network.py` | netconvert + randomTrips + vtypes/sumocfg generation (per scenario) |
 
-## Current state (v3.8, all committed and released)
+## Current state — VERIFIED 2026-08-30
 
-v3.8 — realism + instant starts: call QUEUEING when every crew is committed
-(no phantom reserve convoys; FIFO with preserved wait provenance; livelock-
-proof bounded serve loop), gate headway, queue-flush lookahead (congested
-signals ahead enabled with 2x lead, sticky against state flicker, protocol
-rule A7), flashing-RED hardened cross approaches (junction blinks the whole
-hold), warm-state caching (cached city loads in ~0.4-3.6 s vs 24-90 s cold;
-refused at demand scales >1.0 — SUMO 1.27 cannot serialise scale clones;
-failed loads relaunch cleanly), call-to-scene response percentiles per
-governorate + queued-calls chip, routes drawn via a cached offscreen layer.
-Verified by an 8-check agent fleet (quality/job-function/optimize/
-smooth-transition/first-spawn/car-spawn/improver/infrastructure); 13
-findings fixed pre-ship.
+Verified directly, not recalled:
 
-## Previous state (v3.7)
+- `git HEAD` = **b259932**, tag **v4.7**; working tree clean.
+- `.venv/bin/python tests/test_markov.py` passes.
+- The dashboard runs the **3-district showcase only** (dense core / normal
+  ring / light waterfront). There is no model, day, traffic-level or clock
+  control in the UI; `SimConfig(scenario="downtown"|"metro")` still serves
+  headless runs.
+- `run_live.py` watches `sim/`, `web/`, `rag/` and itself and **re-execs on
+  any source change** (~3 s, cached city). `--no-reload` disables it.
 
-v3.7 — smooth at 5,000+ vehicles: SUMO step/snapshot/serialise run in a
-worker thread (event loop never blocks; mode switches show progress, worst
-frame gap 447 ms through a full rebuild); teleporting vehicles no longer
-poison JSON frames with infinite coordinates (the hidden freeze cause);
-Markov sampling staggered (no 370 ms tick spike); snapshot 55->9 ms
-(batched projection, lean subscriptions); client renders cars from baked
-sprites with world-coordinate interpolation (sub-pixel verified); hospital
-READY-FLEET model (2 units/hospital, 180 s turnaround, live badges) ends
-same-gate convoys. Live proof at Extreme: frames p50 500/p95 551/max 817 ms
-across 3 dispatches.
+Per-version history is NOT kept here - `git tag -n40` and the GitHub
+releases hold it, with the measured numbers each version claimed.
 
-## Previous state (v3.6)
+### Attempted and REVERTED (do not re-attempt blindly)
 
-v3.6 (2026-08-28) — the no-freeze + realism release:
+One-unit-per-physical-junction preemption arbitration (union-find complex
+grouping in preemption + complex-keyed operator referral + deadlock
+backstop). It removed the mutual stall it targeted (459/589/474 s to
+0/2/0.5 per run) but an A/B on identical seeds measured it WORSE overall:
+missions completed 14 vs 20, ambulance red-light wait 1684 s vs 470 s
+(signal-caused - traffic wait was flat), and it steered SUMO into a
+segfault on 1 of 4 seeds. Root cause of the regression: continuity had NO
+LIVENESS TEST, so a stalled incumbent (traced: 24 m from the stop line,
+unmoving for 330+ s) held a whole crossing and starved three other units;
+the deadlock backstop could never fire because it required 2+ holders and
+the rule guaranteed 1. Reverted at b259932, never committed.
 
-1. **Dispatch freeze fixed at the root** — the CTMC forecast was recomputed
-   for every Dijkstra edge relaxation (2.2–4.4 s blocking the frame loop);
-   now cached per 30 s sample tick (unit-tested), hospital ranking is ONE
-   backward Dijkstra (`Router.cost_from_many`), the return leg is one
-   forward multi-target Dijkstra (`route_to_many`), signal programmes are
-   cached. Measured: ~220 ms per dispatch, worst live ws frame gap 736 ms.
-2. **Nearest-AVAILABLE-unit rotation** — hospitals ranked in one pass;
-   within `dispatch_rotation_tolerance` (25%) the least-loaded hospital
-   wins; the ruling is logged on the dispatch event.
-3. **Flashing-amber preemption** — cross approaches carry SUMO's real 'o'
-   yield state during a hold, hardening to red at `flash_harden_eta_s`
-   (12 s) / `flash_harden_min_m` (60 m) with hysteresis. A/B (2 samples ×
-   4 identical seeded missions): corridor parity with hard red, flash
-   visible ~60% of hold time. Protocol rule A6; all viewers blink it.
-
-v3.4/v3.5 anti-freeze stack underneath: warm-up fast-forward (~29 s wall),
-assertive ambulance vType, insertion watchdog (re-place at 60 s; a failed
-re-place now closes the case), progress-based stuck detection with honest
-"no faster corridor exists" events.
-
-## Current state (v4.2, shipped)
-
-DEFAULT SCENARIO IS NOW THE 3-DISTRICT SHOWCASE — the point of the
-districts was to replace clock-scaled build-up, so the programme now opens
-in it: 3.5 s from `run_live.py` to a live frame with 734 vehicles (SUMO
-2.5 s + 0.3 s cached state), dispatch 184 ms. Downtown/metro (with the
-calendar) remain in the Network model selector.
-
-## Previous state (v4.0/v4.1)
-
-v4.0 — early green can never fire at an occupied junction (divided-junction
-complexes + a physical 75 m clearance gate measured from live vehicle
-positions, after instrumenting grants against ground truth exposed edges
-the controlled-links map never listed); Showcase 3-district model (both
-early-green regimes on one screen, static demand, always cacheable); 36
-adversarially-verified fixes from a 50-agent hallucination/organization/
-results/code audit. Regression: 164 grants / 99 proximity blocks / 0
-fairness violations, missions arriving, steps p50 33 ms at 880 vehicles.
-
-## Superseded note (v4.0 is now shipped)
-
-The Showcase 3-district scenario is DONE, verified, committed and pushed
-(untagged WIP commit on main — its message carries the measured numbers).
-Remaining before tagging v4.0: apply the confirmed findings of the
-four-agent audit (hallucination-fixer / code-organizer / result-optimizer
-/ code-optimizer; workflow run `wf_f85c7f01-785` — per-agent results in
-the session's `subagents/workflows/wf_f85c7f01-785/journal.jsonl`,
-resumable via `resumeFromRunId`), re-verify headless + browser, update
-knowledge.md (showcase section) and README, kill any test server on
-port 8643, then tag v4.0 and release.
+Narrower approach proposed, NOT built: (1) give continuity a liveness test
+so a non-moving incumbent forfeits its claim; (2) detect the specific
+mutual block (A stopped at a red held for B while B is stopped at a red
+held for A) and resolve only that pair; (3) leave per-node granting alone,
+since the A/B shows it is not the aggregate problem.
 
 ## Open items
 
