@@ -42,7 +42,12 @@ pages; it opens in VS Code with ready-made launch configurations.
    (again `--scenario metro` for the metro model). Pre-built network files
    ship in the repository, so steps 2–3 can be skipped.
 4. Start the dashboard: `.venv/bin/python run_live.py`, then open
-   http://127.0.0.1:8642 in a browser.
+   http://127.0.0.1:8642 in a browser. The server watches its own source
+   (sim/, web/, rag/, run_live.py) and restarts itself when any of it
+   changes — about three seconds, because the city state is cached, and the
+   page reconnects on its own. Nothing has to be restarted by hand, and the
+   browser can never show a UI newer than the simulation behind it. Pass
+   `--no-reload` to switch the watching off.
 5. Headless comparison runs: `.venv/bin/python run_headless.py --compare`
    prints ambulance travel times with vs without preemption and can export a
    self-contained replay page with `--replay replay.html`.
