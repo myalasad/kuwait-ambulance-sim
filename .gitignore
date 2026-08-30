@@ -10,3 +10,4 @@ data/*.trips.xml
 .tools/
 data/warmstate_*
 data/operations.*.jsonl.gz
+/kuwait_replay.html

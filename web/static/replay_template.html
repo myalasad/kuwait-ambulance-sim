@@ -212,10 +212,29 @@ for (const e of NET.edges) {
   const pts = e.pts.map(([lat, lon]) => [wx(lon), wy(lat)]);
   (e.prio >= 9 || e.lanes >= 3 ? edgesMajor : edgesMinor).push(pts);
 }
+// One head per APPROACH, coloured from the link indices that approach
+// controls — the same contract the live map uses.  (Older recordings
+// carried a flat `heads` array indexed by link; both are accepted.)
 const tlsHeads = NET.tls.map(t => ({
   id: t.id, x: wx(t.lon), y: wy(t.lat),
-  heads: t.heads.map(h => h ? [wx(h[1]), wy(h[0])] : null),
+  appr: t.appr
+    ? t.appr.map(a => ({ x: wx(a.lon), y: wy(a.lat), idx: a.idx || [] }))
+    : (t.heads || []).map((h, i) => h
+        ? { x: wx(h[1]), y: wy(h[0]), idx: [i] } : null).filter(Boolean),
 }));
+
+// green if any controlled link may go, amber while changing, "flash" for
+// the cross-street flasher, else red
+function apprColor(state, idx) {
+  let amber = false, flash = false;
+  for (const i of idx) {
+    const ch = state[i];
+    if (ch === "G" || ch === "g") return "#2fd36b";
+    if (ch === "y" || ch === "Y") amber = true;
+    if (ch === "o" || ch === "O") flash = true;
+  }
+  return amber ? "#f0b429" : flash ? "flash" : "#f04444";
+}
 
 // all events flattened once, sorted by time
 const ALL_EVENTS = [];
@@ -346,14 +365,13 @@ function tick(now) {
         ? "rgba(47,211,107,.9)" : "rgba(240,180,41,.9)";
       ctx.lineWidth = 2.5; ctx.stroke();
     }
-    for (let i = 0; i < t.heads.length; i++) {
-      const h = t.heads[i];
-      if (!h) continue;
-      ctx.beginPath(); ctx.arc(px(h[0]), py(h[1]), rHead, 0, 7);
-      // 'o' = preemption cross-street flasher: blink amber like the live map
-      ctx.fillStyle = (stateStr[i] === "o" || stateStr[i] === "O")
-        ? (Math.floor(now / 500) % 2 === 0 ? "#f0b429" : "#5a4a10")
-        : (SIG[stateStr[i]] || "#6b7280");
+    for (const a of t.appr) {
+      ctx.beginPath(); ctx.arc(px(a.x), py(a.y), rHead, 0, 7);
+      const c = apprColor(stateStr, a.idx);
+      ctx.fillStyle = c === "flash"
+        ? (reduceMotion ? "#f0b429"
+           : (Math.floor(now / 500) % 2 === 0 ? "#f0b429" : "#5a4a10"))
+        : c;
       ctx.fill();
     }
   }
