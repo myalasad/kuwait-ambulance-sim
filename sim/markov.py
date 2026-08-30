@@ -216,6 +216,10 @@ class TrafficMarkov:
         self._fc_cache = {}       # (chain id, state, bucket) -> row
         self._q_cache = {}        # chain id -> generator matrix
         self._slice_i = 0         # rotating sampling slice (see update)
+        # bumped whenever the forecasts above are invalidated, so consumers
+        # that memoise per-edge weights derived from them (Router) know
+        # exactly when to drop their own caches — and only then
+        self.generation = 0
 
         # Monitor where traffic actually CHANGES state: the approaches to
         # signalized junctions (queues form and clear there) first, then the
@@ -249,13 +253,33 @@ class TrafficMarkov:
         try:
             with open(self.path) as f:
                 data = json.load(f)
+            # Refuse history recorded at a different sampling period: C, T
+            # and J are ALL per-interval quantities, so none of them can be
+            # rescaled — the honest move is to drop them and relearn.
+            saved = data.get("period_s")
+            if saved is not None and abs(float(saved) - self.period) > 1e-6:
+                self.sessions = int(data.get("sessions", 0)) + 1
+                if self.ops:
+                    self.ops.emit(0.0, "system",
+                                  f"Markov history in "
+                                  f"{os.path.basename(self.path)} "
+                                  f"was recorded at {float(saved):g} s "
+                                  f"sampling but markov_sample_s is now "
+                                  f"{self.period:g} s — the DTMC counts and "
+                                  f"the CTMC jump/sojourn arrays are both "
+                                  f"per-interval, so the chains were "
+                                  f"discarded and relearn from zero", "warn")
+                return
             for key, d in data.get("chains", {}).items():
                 self.chains[key] = _Chain.from_json(d)
-            # same definition as observations(): count each sample once,
-            # not once per chain it feeds (self.chains is fully populated
-            # from the file at this point)
+            # Count only what the banner claims to count: corridors in the
+            # CURRENT monitored set.  Chains for edges that fell out of the
+            # set (markov_max_edges lowered, different network) stay in
+            # self.chains — they return if the set grows again — but they
+            # are not "loaded observations" for these corridors.
+            mon = set(self.monitored)
             self._loaded_obs = sum(c.n for k, c in self.chains.items()
-                                   if not k.startswith("class:"))
+                                   if k in mon)
             self.sessions = int(data.get("sessions", 0)) + 1
             sc = data.get("scores")
             if sc:
@@ -320,6 +344,7 @@ class TrafficMarkov:
                 # <=period staleness the all-at-once tick had)
                 self._fc_cache.clear()
                 self._q_cache.clear()
+                self.generation += 1
         if self._next_sample <= now:
             self._next_sample = now + dt
 
@@ -435,7 +460,9 @@ class TrafficMarkov:
         pooled road-class chain (see the sampling loop in update()), so
         summing every chain would report exactly 2x the measurements
         actually made."""
-        return sum(c.n for k, c in self.chains.items()
+        # list() first: the web thread reads this while the sim thread
+        # inserts chains (atomic snapshot avoids "dict changed size")
+        return sum(c.n for k, c in list(self.chains.items())
                    if not k.startswith("class:"))
 
     # ---------------------------------------------------------- forecasting
@@ -466,10 +493,30 @@ class TrafficMarkov:
             self._fc_cache[key] = row
         return row
 
+    def predicted_traveltime(self, eid, horizon_s, length):
+        """Expected travel time (s) over `length` m of this edge at the
+        arrival horizon: E[L/v] = L/limit * sum_s p_s / factor_s.
+        NOT L / E[v] — by Jensen's inequality that is always optimistic,
+        by up to 2.7x on exactly the bimodal FREE/JAMMED forecasts this
+        predictor exists to detect.  This is the anticipatory weight the
+        router charges."""
+        dist = self.forecast(eid, horizon_s)
+        if dist is None:
+            return None
+        limit = self._limits.get(eid)
+        if not limit:
+            return None
+        return length / limit * sum(dist[s] / STATE_SPEED_FACTOR[s]
+                                    for s in range(N_STATES))
+
     def predicted_speed(self, eid, horizon_s):
         """Expected mean speed (m/s) of the edge at the arrival horizon,
-        from the CTMC forecast; None when history is insufficient.  The
-        router divides edge length by this for the anticipatory weight."""
+        from the CTMC forecast; None when history is insufficient.
+
+        DISPLAY / AVAILABILITY ONLY — do NOT divide a length by this to
+        price an edge (E[L/v] != L/E[v]; use predicted_traveltime, which
+        is what the router does).  The router calls it only to ask
+        "does this edge have a usable forecast at all?"."""
         dist = self.forecast(eid, horizon_s)
         if dist is None:
             return None
@@ -512,7 +559,7 @@ class TrafficMarkov:
             # the same samples pooled by road class, reported separately so
             # it can never be added into the corridor total again
             "pooled_class_observations": sum(
-                c.n for k, c in self.chains.items()
+                c.n for k, c in list(self.chains.items())
                 if k.startswith("class:")),
             "loaded_from_previous_sessions": self._loaded_obs,
             "sessions": self.sessions,

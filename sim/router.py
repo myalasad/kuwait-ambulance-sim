@@ -9,6 +9,12 @@ estimated travel time of each edge is used (SUMO derives it from the mean
 speed actually being driven), so the route adapts to congestion; without one
 it falls back to free-flow times (length / speed limit).
 
+With a Markov predictor attached the weights are time-dependent: an edge is
+priced by its CTMC-predicted EXPECTED TRAVEL TIME at the horizon the search
+would reach it.  Time-dependent weights only make Dijkstra correct if they
+satisfy FIFO (leaving later can never mean arriving earlier), so the
+predicted family is explicitly closed under that property — see _weight.
+
 The same route object drives both the ambulance (assigned via TraCI) and the
 signal controller (which preempts the junctions along it) — the corridor and
 the navigation are one and the same, by construction.
@@ -28,6 +34,13 @@ class Router:
         # optional TrafficMarkov instance for anticipatory weights
         self.predictor = None
         self.places = None   # real-name registry (set by the runner)
+        # memoised anticipatory weights, keyed (edge, state, horizon
+        # bucket) exactly as the predictor's own forecast cache is, and
+        # dropped only when the predictor says its forecasts changed
+        # (see _sync_predictor)
+        self._wcache = {}    # (edge, state, bucket) -> weight or None
+        self._fcache = {}    # (edge, state, bucket) -> FIFO arrival floor
+        self._pred_gen = None
         self._lengths = {e.getID(): e.getLength() for e in net.getEdges()
                          if e.allows(vclass)}
         # edge id -> list of (successor edge id, successor static cost)
@@ -53,19 +66,16 @@ class Router:
 
     # ------------------------------------------------------------- weights
 
-    def _weight(self, eid, live, horizon=0.0, predictive=True):
-        """Travel-time weight of entering `eid` `horizon` seconds from now.
+    # Anticipatory weights are quantised into horizon buckets.  This MUST
+    # match TrafficMarkov.forecast()'s quantisation: the FIFO closure below
+    # reasons about the steps between buckets, so a finer grid here would
+    # smooth over jumps the predictor still reports.
+    _BUCKET = 15.0
 
-        With a Markov predictor attached and enough history, the weight is
-        the edge length over the CTMC-predicted mean speed AT THE ARRIVAL
-        HORIZON — anticipatory routing: the route avoids where congestion
-        WILL be, not just where it is.  Falls back to live TraCI travel
-        time, then to free flow."""
-        if predictive and self.predictor is not None and horizon > 0:
-            v = self.predictor.predicted_speed(eid, horizon)
-            if v:
-                t = self._lengths.get(eid, 0.0) / max(v, 0.5)
-                return min(max(t, self.static_cost[eid]), 1200.0)
+    def _raw_weight(self, eid, live):
+        """Non-anticipatory weight of `eid`: SUMO's live travel-time
+        estimate, else free flow.  Independent of the horizon, so it is
+        trivially FIFO-consistent."""
         if live:
             try:
                 t = traci.edge.getTraveltime(eid)
@@ -75,6 +85,79 @@ class Router:
             except traci.TraCIException:
                 pass
         return self.static_cost[eid]
+
+    def _sync_predictor(self):
+        """Drop the memoised anticipatory weights when — and only when —
+        the predictor invalidated its own forecasts (once per sampling
+        rotation).  Clearing them at the top of every route() call instead
+        measured 141 ms per route against 30 ms."""
+        gen = (id(self.predictor), getattr(self.predictor, "generation", 0))
+        if gen != self._pred_gen:
+            self._pred_gen = gen
+            self._wcache.clear()
+            self._fcache.clear()
+
+    def _bucket_weight(self, eid, state, k):
+        """Anticipatory weight of entering `eid` in horizon bucket `k`, or
+        None when the predictor has no usable forecast for that edge."""
+        key = (eid, state, k)
+        if key in self._wcache:
+            return self._wcache[key]
+        t = self.predictor.predicted_traveltime(
+            eid, k * self._BUCKET, self._lengths.get(eid, 0.0))
+        w = (None if t is None
+             else min(max(t, self.static_cost[eid]), 1200.0))
+        self._wcache[key] = w
+        return w
+
+    def _fifo_floor(self, eid, state, k):
+        """Earliest arrival at the far end of `eid` already reachable by
+        entering it at an EARLIER horizon: max over j < k of the top of
+        bucket j plus that bucket's weight.  A prefix maximum, memoised
+        and filled forward, so it costs O(1) amortised per lookup."""
+        if k <= 0:
+            return 0.0
+        v = self._fcache.get((eid, state, k))
+        if v is not None:
+            return v
+        j = k                       # walk back to the deepest cached prefix
+        while j > 0 and (eid, state, j) not in self._fcache:
+            j -= 1
+        v = 0.0 if j <= 0 else self._fcache[(eid, state, j)]
+        for m in range(j + 1, k + 1):
+            w = self._bucket_weight(eid, state, m - 1)
+            if w is not None:
+                v = max(v, m * self._BUCKET + w)
+            self._fcache[(eid, state, m)] = v
+        return v
+
+    def _weight(self, eid, live, horizon=0.0, predictive=True):
+        """Travel-time weight of entering `eid` `horizon` seconds from now.
+
+        With a Markov predictor attached and enough history, the weight is
+        the CTMC-predicted EXPECTED TRAVEL TIME at the arrival horizon —
+        E[L/v], not L/E[v], which Jensen makes optimistic by up to 2.7x on
+        the bimodal free/jammed forecasts that matter most.  Anticipatory
+        routing: the route avoids where congestion WILL be, not just where
+        it is.  Falls back to live TraCI travel time, then to free flow.
+
+        The predicted family is closed under FIFO — the property Dijkstra
+        needs for "the first pop is final" to hold: h -> h + w(h) is forced
+        non-decreasing, so entering the edge later can never be reported as
+        arriving earlier.  A jam may still be predicted to clear at up to
+        1 s of weight per 1 s of horizon, so anticipation keeps working;
+        what is clipped is only the physically impossible claim that
+        dawdling 20 s gets the ambulance through 40 s sooner."""
+        if not predictive or self.predictor is None:
+            return self._raw_weight(eid, live)
+        self._sync_predictor()
+        # same key the predictor's own forecast cache uses
+        state = getattr(self.predictor, "state_now", {}).get(eid, 0)
+        k = int(max(0.0, horizon) // self._BUCKET)
+        w = self._bucket_weight(eid, state, k)
+        if w is None:                       # not enough history for this edge
+            return self._raw_weight(eid, live)
+        return max(w, self._fifo_floor(eid, state, k) - horizon)
 
     # ------------------------------------------------------------ dijkstra
 

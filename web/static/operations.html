@@ -284,7 +284,7 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-let seq = 0, filter = "all", search = "";
+let seq = 0, runId = 0, filter = "all", search = "";
 const events = [];
 
 function fmt(t) {
@@ -318,6 +318,20 @@ async function poll() {
     const r = await fetch(`/api/operations?since=${seq}`);
     const d = await r.json();
     if (d.clock) $("clock").firstChild.textContent = d.clock;
+    if (d.run && d.run !== runId) {
+      // a restart builds a fresh OperationsLog whose seq restarts at 1:
+      // keeping the old cursor would silently skip this run's opening
+      // events (model, junction count, clock, warm start), and the new
+      // run's t=0 would run on from the old timeline with no break
+      const first = runId === 0;   // first run this page ever saw is not
+      runId = d.run; seq = 0;      // a restart: say nothing that happened
+      events.length = 0;
+      if (!first)
+        events.push({t: 0, sev: "warn", type: "system", case: null,
+                     msg: "— simulation restarted: new run —"});
+      renderFeed();
+      return;              // next tick refetches this run from since=0
+    }
     for (const e of d.events) events.push(e);
     while (events.length > 1500) events.shift();
     seq = d.seq || seq;

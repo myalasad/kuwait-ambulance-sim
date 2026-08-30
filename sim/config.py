@@ -7,7 +7,8 @@ Three selectable network models (``SimConfig(scenario=...)``):
 * ``metro``    — ALL SIX GOVERNORATES (Capital, Hawalli, Farwaniya,
   Mubarak Al-Kabeer, Ahmadi, Jahra) at arterial level: motorways, trunks,
   primary and secondary roads.  Real hospitals in every governorate,
-  cross-governorate missions.  Sublane off for speed.
+  cross-governorate missions.  Sublane model on (lateral_resolution 0.8)
+  so rescue lanes form.
 * ``showcase`` — the downtown network with three fixed-density districts
   (dense core, normal ring, light waterfront) baked into static demand, so
   both early-green regimes are on screen at once.
@@ -28,10 +29,18 @@ SCENARIOS = {
         "peak_period_s": 0.3,     # ~12,000 veh/h in the core at peak (medium); extreme x1.8
         "lateral_resolution": 0.8,
         "snap_radius_m": 400.0,
+        # The trailing parenthesis is read by the UI as the GOVERNORATE (it
+        # groups the dropdown by it) and is stripped from the option text,
+        # so the modelling note has to live in the name itself or the
+        # disclosure disappears and "west anchor" reads as a governorate.
+        # Al-Sabah and Dar Al Shifa are modelled anchors: their real sites
+        # are outside this downtown extract and do not snap to it.
         "hospitals": {
-            "Amiri Hospital": (29.3857, 47.9931),
-            "Al-Sabah Hospital (west anchor)": (29.3630, 47.9560),
-            "Dar Al Shifa Hospital (east anchor)": (29.3745, 48.0025),
+            "Amiri Hospital (Capital)": (29.3857, 47.9931),
+            "Al-Sabah Hospital — modelled west anchor (Capital)":
+                (29.3630, 47.9560),
+            "Dar Al Shifa Hospital — modelled east anchor (Capital)":
+                (29.3745, 48.0025),
         },
         "areas": {
             "Mirqab (Capital)": (29.3719, 47.9852),
@@ -44,10 +53,10 @@ SCENARIOS = {
             "Grand Mosque / Seif (Capital)": (29.3800, 47.9740),
             "Liberation Tower (Capital)": (29.3787, 47.9902),
             "Ministries area (Capital)": (29.3625, 47.9705),
-            "Jibla waterfront (Capital)": (29.3845, 47.9660),
+            "Jibla waterfront (Capital)": (29.3791, 47.9718),
             "Bneid Al-Qar edge (Capital)": (29.3700, 48.0080),
-            "National Assembly (Capital)": (29.3795, 47.9648),
-            "Seif Palace / Amiri Diwan (Capital)": (29.3855, 47.9715),
+            "National Assembly (Capital)": (29.3764, 47.9684),
+            "Seif Palace / Amiri Diwan (Capital)": (29.3823, 47.9754),
             "Al-Hamra Tower (Capital)": (29.3790, 47.9936),
             "Kuwait Stock Exchange (Capital)": (29.3765, 47.9757),
             "Al-Shaheed Park (Capital)": (29.3725, 47.9930),
@@ -117,7 +126,7 @@ SCENARIOS = {
             "Yarmouk (Capital)": (29.3100, 47.9560),
             "Shuwaikh Industrial (Capital)": (29.3450, 47.9200),
             "Doha (Capital)": (29.3640, 47.8900),
-            "Sulaibikhat (Capital)": (29.3380, 47.8700),
+            "Sulaibikhat (Capital)": (29.3336, 47.9300),
             "Granada (Capital)": (29.3290, 47.9320),
             "Rumaithiya (Hawalli)": (29.3140, 48.0770),
             "Salwa (Hawalli)": (29.2950, 48.0830),
@@ -225,9 +234,16 @@ class SimConfig:
     max_hold_s: float = 90.0             # cap on a single continuous hold
     preempt_cooldown_s: float = 20.0     # cross traffic gets at least this
     #                                      much normal cycling after a long hold
-    flash_amber: bool = True             # while a corridor is held, cross
-    #                                      approaches FLASH AMBER (yield) so
-    #                                      trapped vehicles can clear the box
+    flash_amber: bool = False            # cross approaches show SOLID RED
+    #                                      while a corridor is held: red is
+    #                                      the stop indication for traffic
+    #                                      that is not on the ambulance's
+    #                                      route.  The EMERGENCY indicator
+    #                                      is the junction itself, which
+    #                                      blinks AMBER on the map for the
+    #                                      whole hold (rule A6).  Set True
+    #                                      to make cross approaches flash
+    #                                      amber (yield) instead of stop.
     flash_harden_eta_s: float = 12.0     # the flash hardens to solid red
     #                                      when the unit is this close in
     #                                      TIME — clearance ahead of an
@@ -276,7 +292,7 @@ class SimConfig:
     reroute_to_hospital: bool = True     # on reaching the incident scene the
     #                                      ambulance auto-reroutes to the
     #                                      nearest hospital by travel time
-    hospital_ready_units: int = 2        # ready ambulances stationed per
+    hospital_ready_units: int = 4        # ready ambulances stationed per
     #                                      hospital; a dispatch commits one;
     #                                      with every crew committed a call
     #                                      QUEUES until one returns

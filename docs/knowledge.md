@@ -6,8 +6,7 @@ Kuwait. It simulates, on the real Kuwaiti road network, a system in which
 traffic-light cameras detect an ambulance running its emergency lights and the
 traffic-management centre opens a "green corridor" along the ambulance's
 route: each signal ahead turns green for the ambulance's approach (so the cars
-in front of it clear the way) while cross approaches flash amber (yield),
-hardening to red as the unit closes in, then returns to normal after the
+in front of it clear the way) while every approach not on its route is held at solid red, then returns to normal after the
 ambulance passes. It also gives ordinary drivers an early
 green when they are alone at an empty junction, routes ambulances with
 Dijkstra, predicts congestion with Markov chains, records every decision as an
@@ -91,15 +90,16 @@ pages; it opens in VS Code with ready-made launch configurations.
 
 ## Dispatch and missions
 Ambulances always originate at a hospital, under a READY-FLEET model: each
-hospital stations hospital_ready_units (2) ready ambulances. A dispatch
+hospital stations hospital_ready_units (4) ready ambulances. A dispatch
 commits one; a crew that delivers a patient rejoins the RECEIVING hospital's
 pool only after unit_turnaround_s (180 s) of restocking, logged as "unit
-READY again at X (n/2)". Origin "Auto" dispatches the nearest AVAILABLE
+READY again at X (n/4)". Origin "Auto" dispatches the nearest AVAILABLE
 unit: one backward Dijkstra from the scene ranks every hospital's current
 travel time in a single pass; only hospitals with a ready unit are
 candidates, and among those within the rotation tolerance
-(dispatch_rotation_tolerance, 25%) of the fastest, the one with the fewest
-crews already out responds — real EMS coverage, and never a convoy of
+(dispatch_rotation_tolerance, 25%) of the fastest, a hospital that launched a
+unit within the gate headway yields to an equally-close peer; otherwise the
+fastest wins. The scene decides, not a rota — and never a convoy of
 consecutive units from a single gate. If every fleet is committed or in
 turnaround, the call QUEUES — real EMS never conjures a convoy out of one
 gate — and the next crew to finish turnaround responds automatically
@@ -108,7 +108,7 @@ T s"). A gate-headway rule (gate_headway_s, 8 s) makes a hospital that
 just launched a unit yield to an equally-close peer, so departures never
 stack at one gate. Whenever the responding hospital is not the nearest one, the full
 ruling is written on the dispatch event ("X is nearest but has no ready
-units (0/2 — crews on mission or in turnaround); Y responds in T s with 1/2
+units (0/4 — crews on mission or in turnaround); Y responds in T s with n/4
 ready"). Live ready counts appear under every hospital marker on the map; a
 CALLS-WAITING chip appears in the side panel whenever the queue is
 non-empty, with the oldest call's wait. Response-time accounting starts
@@ -135,6 +135,13 @@ A-case; arrival is logged at the named hospital with travel time, distance,
 average speed and the planned ETA.
 
 ## Detection and the green corridor (preemption)
+Colour convention: RED keeps its literal meaning — every approach that is
+not on the ambulance's route is stopped. The junction itself is the
+emergency indicator: it BLINKS AMBER for the entire hold on the map, so an
+operator sees which junctions are under emergency control without
+confusing that with the stop indication drivers are given. (flash_amber,
+off by default, instead gives cross approaches a flashing-amber yield
+state that hardens to red as the unit closes in.)
 Every signalized junction has a camera whose field of view is the physical
 approach roadway up to 200 m from the stop line (camera_range_m), built by
 walking the real road graph upstream. Detection is junction-side sensing:
@@ -145,30 +152,36 @@ centre, which knows its planned route; a unit no camera has seen receives
 no corridor. Signals along the route are switched when the ambulance's
 ETA drops below 25 s (greenwave_lead_s), never later than 160 m out
 (greenwave_min_m) and never earlier than 800 m out (greenwave_distance_m).
-Switching means: 3 s of amber to conflicting traffic (yellow_time_s), a 2 s
-all-red clearance (allred_time_s), then the ambulance's approach is held on
-protected green while every cross approach shows a FLASHING AMBER yield
-state (flash_amber) — "signal overridden, cross carefully when clear" — so
-vehicles caught inside the box can drain out instead of being sealed in by a
-hard red. The flash hardens to solid red when the ambulance is close in
-TIME (flash_harden_eta_s, 12 s) — clearance ahead of an ambulance is a time
-quantity: at speed it hardens ~180 m out, in crawling traffic the flash
-persists until the unit is genuinely near — and always within
-flash_harden_min_m (60 m) whatever the speed. When hardened, the cross fixtures blink RED (the physical signal state
-is red — flashing red means absolute stop), so a junction under emergency
-control BLINKS for its entire hold and every driver can see it is an
-emergency. The transition is logged with the live distance and
-time-to-junction (e.g. "AMB_8 140 m / 9 s out — cross flash hardened to
-RED"); a hysteresis band keeps the junction from flickering between the
-two if arbitration hands the junction to a farther unit. Queue-flush
+Switching means: 3 s of amber to conflicting traffic (yellow_time_s), then a
+2 s all-red clearance (allred_time_s) — that clearance is what lets vehicles
+caught inside the junction box drain out before the hold begins — and only
+then the hold itself: the ambulance's approach is held on protected green
+and every approach that is NOT on its route is held at SOLID RED. The held
+state is always BUILT EXPLICITLY from the junction's own controlled-links
+table (corridor green — including the drain movements out of the ambulance's
+own approach, so nothing is sealed in — everything else red); it is
+never a phase borrowed from the junction's own programme, and no head is ever
+dark. The cross approaches' fixtures blink red on the map for the duration of
+the hold — flashing red means absolute stop — while the junction itself
+blinks AMBER as the emergency indicator. (With flash_amber enabled instead,
+the cross approaches take a real FLASHING AMBER yield state 'o' — "signal
+overridden, cross carefully when clear" — which hardens to solid red when the
+ambulance is close in TIME (flash_harden_eta_s, 12 s: at speed that is
+~180 m out, in crawling traffic the flash persists until the unit is
+genuinely near) and always within flash_harden_min_m (60 m) whatever the
+speed. Only then is the hardening logged with the live distance and
+time-to-junction, e.g. "AMB_8 140 m / 9 s out — cross flash hardened to RED";
+a hysteresis band keeps the junction from flickering between the two if
+arbitration hands it to a farther unit.) Queue-flush
 lookahead: a CONGESTED approach ahead on the route (live Markov state) is
 enabled with flush_lead_factor (2x) extra activation lead so its standing
 queue drains before the unit arrives — the corridor looks after signals
 ahead, not just the next one, and each early enable is justified in the
-log ("enabled EARLY (queue flush): this approach is congested..."). On the map the cross
-approaches' fixtures and chevrons blink amber at ~1 Hz — the blink is the
-real SUMO signal state ('o'), not a cosmetic effect: background drivers
-genuinely yield on it. Signals are never switched
+log ("enabled EARLY (queue flush): this approach is congested..."). On the map
+the junction housing and its ring blink amber at ~1 Hz for the whole hold —
+that blink is the emergency indicator for the operator, drawn client-side;
+the underlying SUMO signal state for those cross approaches is a genuine
+solid red, and background drivers stop on it. Signals are never switched
 dark. After the ambulance passes (plus 2 s clearance, and only once it is
 physically out of the junction box) the junction returns to its normal
 programme through amber. A single hold is capped at 90 s (max_hold_s); after

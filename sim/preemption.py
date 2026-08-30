@@ -19,16 +19,28 @@ Control model (mirrors real emergency-vehicle-preemption deployments):
     junctions far ahead for minutes, starving cross streets and gridlocking
     the very grid it is trying to cross.
 4.  Preempting a junction means: conflicting greens get ``yellow_time_s`` of
-    amber, then an all-red clearance interval, then the ambulance's approach
-    is held on protected green with every cross approach on flashing amber
-    ('o', yield) — hardening to solid red once the ambulance is within
+    amber, then an all-red clearance interval, then the held state.  The
+    held state is ALWAYS built explicitly (never inherited from a phase of
+    the junction's own programme, which could leave a compatible cross flow
+    green): the ambulance's approach — and every approach feeding the same
+    movement, so the traffic ahead of it can drain — on protected green,
+    and every approach NOT on its route on SOLID RED.  Setting
+    ``flash_amber`` shows those cross approaches flashing amber ('o',
+    yield) instead, hardening to solid red once the ambulance is within
     ``flash_harden_eta_s`` seconds ETA or ``flash_harden_min_m`` metres.
-    With ``flash_amber`` off, the controller instead jumps to and holds the
-    real programme phase serving the approach (classic preemption).
     Signals are never switched dark — dark signals cause crashes.
-5.  A single hold is capped at ``max_hold_s``; beyond it the junction cycles
-    normally for at least ``preempt_cooldown_s`` (unless the ambulance is
-    already at the stop line, within camera range).
+    Solid red seals the junction box, so the all-red clearance interval
+    always runs before the held state goes on: the box is emptied first,
+    and nothing can then enter it except the corridor itself.
+5.  A single continuous hold is capped at ``max_hold_s``; beyond it the
+    junction cycles normally for at least ``preempt_cooldown_s``, which is
+    also what drains a junction box the hold's own solid red has sealed.
+    Distance is never an exemption — a unit stalled short of the stop line
+    would otherwise hold cross traffic without limit.  The one exemption is
+    an ambulance PHYSICALLY INSIDE the junction box, which may not be shown
+    a red it is already committed past, and it is bounded: once that unit
+    has been at a standstill for ``BOX_STALL_RELEASE_S`` it is no longer
+    crossing but stuck, and the cap applies.
 6.  Once the ambulance has passed (plus a small clearance time, and only
     after it is physically clear of the junction box) the junction is
     stepped back to its normal programme, again via an amber transition.
@@ -57,6 +69,15 @@ TO_PREEMPT = "transition"    # amber / all-red shown before the corridor
 PREEMPTED = "preempted"      # corridor green active (purposely enabled)
 CLEARING = "clearing"        # ambulance just passed; corridor held briefly
 TO_NORMAL = "restoring"      # amber before normal programme resumes
+
+# How long a unit may sit at a DEAD STOP on a corridor it already holds
+# before the controller stops treating it as "crossing".  Past this it is
+# not crossing, it is stuck — typically behind traffic that this very hold
+# is keeping on solid red — so the box-occupancy exemption from the
+# ``max_hold_s`` cap lapses and the ordinary release + cooldown path runs,
+# cycling the cross streets so the box can drain.  Overridable as
+# cfg.box_stall_release_s.
+BOX_STALL_RELEASE_S = 10.0
 
 
 class _TlsState:
@@ -94,6 +115,11 @@ class GreenWaveController:
         self.enabled = enabled
         self.active = {}          # tls_id -> _TlsState
         self.cooldown = {}        # tls_id -> sim time until re-arm is allowed
+        self.faulted = {}         # tls_id -> stand-off after a signal-command
+        #                           error.  Separate from cooldown, which is
+        #                           deliberately bypassed while a unit is in
+        #                           the box: a junction whose controller just
+        #                           rejected a command must NOT be hammered.
         self.confirmed = set()    # ambulance ids confirmed by a camera
         # ambulance id -> the junctions a corridor was actually OPENED at
         # for it.  A set, so "N junctions preempted for this unit" is exact
@@ -110,6 +136,14 @@ class GreenWaveController:
         self._links_cache = {}    # tls_id -> controlled links (static)
         self._flush_sticky = set()  # (amb, tls) flush requests held until
         #                             passed — no flap if the state flickers
+        self._grant_sticky = set()  # (amb, tls) ordinary requests already
+        #                             granted — released only when passed
+        self._inside = set()      # junctions physically occupied by a unit
+        #                           this tick (the ONLY hold-cap exemption)
+        self._crossing = set()    # ...of those, the ones whose occupant is
+        #                           still making progress through the box
+        self._box_stall = {}      # (tls, amb) -> time an in-box unit went to
+        #                           a standstill; bounds the exemption
 
     # ------------------------------------------------------------------ API
 
@@ -164,6 +198,14 @@ class GreenWaveController:
         self._now = now
         # tls_id -> {amb_id: [set of link indices, min dist]}
         requests = {}
+        # junctions a unit is physically inside THIS tick.  Rebuilt every
+        # step: it is the single exemption from the hold cap and the
+        # cooldown, and a stale entry would re-open the unbounded hold.
+        self._inside = set()
+        self._crossing = set()
+        inside_units = {}       # tls -> {amb ids inside its box this tick}
+        stall_release_s = getattr(cfg, "box_stall_release_s",
+                                  BOX_STALL_RELEASE_S)
         amb_speed = {}
         # (amb, tls) pairs whose request window came from the flush lead on
         # THIS tick — per-pair, so the "congested approach" justification is
@@ -221,8 +263,21 @@ class GreenWaveController:
                         within = True
                         flush_pairs.add((amb_id, tls_id))
                         self._flush_sticky.add((amb_id, tls_id))
+                    # RELEASE HYSTERESIS: the speed-scaled window is an
+                    # ACTIVATION test.  Re-testing it every tick to decide
+                    # RELEASE makes a stop-and-go approach chatter across
+                    # dist == reach, cycling the junction — and the unit's
+                    # own approach — through amber every few seconds.  A
+                    # granted corridor is held while the unit is still
+                    # closing; max_hold_s + preempt_cooldown_s stay the
+                    # protection for cross traffic.
+                    if (not within
+                            and (amb_id, tls_id) in self._grant_sticky
+                            and dist <= cfg.greenwave_distance_m):
+                        within = True
                     if within:
                         seen_pairs.add((amb_id, tls_id))
+                        self._grant_sticky.add((amb_id, tls_id))
                         rec = requests.setdefault(tls_id, {}).setdefault(
                             amb_id, [set(), dist])
                         rec[0].add(link_index)
@@ -232,18 +287,47 @@ class GreenWaveController:
                 # goes green and boxes the ambulance in mid-junction.
                 tls_inside = self._tls_containing(amb_id)
                 if tls_inside is not None:
+                    # the ONE exemption from the hold cap and the cooldown:
+                    # a vehicle in the box may not be sealed in by a red
+                    self._inside.add(tls_inside)
+                    inside_units.setdefault(tls_inside, set()).add(amb_id)
+                    # ...but only while it is actually CROSSING.  A unit at
+                    # a standstill in the box is not crossing, it is stuck —
+                    # typically behind traffic this very hold is keeping on
+                    # solid red — so its exemption lapses (see the cap in
+                    # the advance loop) and the release + cooldown cycles
+                    # the cross streets, which is what drains the box.
+                    if speed < 0.1:
+                        self._box_stall.setdefault((tls_inside, amb_id), now)
+                    else:
+                        self._box_stall.pop((tls_inside, amb_id), None)
                     st = self.active.get(tls_inside)
                     if st is not None:
                         requests.setdefault(tls_inside, {}).setdefault(
                             amb_id, [set(st.link_indices), 0.0])
 
         self._flush_sticky &= seen_pairs   # passed / diverged: released
+        self._grant_sticky &= seen_pairs   # passed / diverged: released
+        # left the box: release the standstill clock for that pair
+        self._box_stall = {
+            k: v for k, v in self._box_stall.items()
+            if k[1] in inside_units.get(k[0], ())}
+        self._crossing = {
+            tls for tls, ambs in inside_units.items()
+            if any((tls, a) not in self._box_stall
+                   or now - self._box_stall[(tls, a)] < stall_release_s
+                   for a in ambs)}
         wanted = self._arbitrate(requests, now)
 
         # Start or refresh preemption on wanted junctions.
         for tls_id, (idxs, dist, amb) in wanted.items():
+            # The cooldown is served in full, with ONE exemption: a unit
+            # physically inside the junction box may not be sealed in.
+            # Distance is NOT an exemption — a unit stalled a few metres
+            # short of the stop line would otherwise hold cross traffic
+            # indefinitely (rule A4 is a cap, not a guideline).
             in_cooldown = (self.cooldown.get(tls_id, 0.0) > now
-                           and dist > cfg.camera_range_m)
+                           and tls_id not in self._inside)
             st = self.active.get(tls_id)
             # Flashing amber for cross traffic hardens to solid red once
             # the unit is close in TIME (clearance ahead of an ambulance is
@@ -259,7 +343,9 @@ class GreenWaveController:
                                and (dist <= cfg.flash_harden_min_m * 1.3
                                     or eta <= cfg.flash_harden_eta_s * 1.3))))
             if st is None:
-                if not in_cooldown:
+                # a junction whose controller just rejected a command is
+                # stood off, not re-armed every few seconds
+                if not in_cooldown and self.faulted.get(tls_id, 0.0) <= now:
                     # the justification is the WINNER's own: was this unit's
                     # window a flush window, and is its approach congested
                     # right now (read fresh, at the moment of the emit)?
@@ -274,25 +360,31 @@ class GreenWaveController:
             else:
                 st.amb = amb
                 if st.mode == CLEARING and not in_cooldown:
-                    # Re-armed (same or another ambulance).  Re-issue the
-                    # corridor state: CLEARING may have been entered from
-                    # TO_PREEMPT, in which case the display still shows the
-                    # amber/all-red transition and the target was never
-                    # applied — without this the junction freezes.
-                    st.mode = PREEMPTED
-                    st.started_at = now
-                    self._set_state(tls_id, st, st.target)
-                elif st.mode == TO_NORMAL and not in_cooldown:
-                    # Re-armed while ambering down: conflicts are already amber
-                    # or red, so the corridor green can be applied directly.
-                    _yellow, target = self._build_states(tls_id, idxs, harden)
+                    # Re-armed (same or another ambulance).  CLEARING may
+                    # have been entered from TO_PREEMPT, in which case the
+                    # amber/all-red transition never completed and the
+                    # target was never applied — without this the junction
+                    # freezes.  _arm_target re-runs the clearance interval
+                    # unless the corridor state is already on display.
+                    _yellow, target = self._build_states(tls_id, idxs,
+                                                         harden)
                     if target:
                         st.link_indices = frozenset(idxs)
-                        st.target = target
                         st.hardened = harden
-                        self._set_state(tls_id, st, target)
-                        st.mode = PREEMPTED
                         st.started_at = now
+                        self._arm_target(tls_id, st, target, now)
+                elif st.mode == TO_NORMAL and not in_cooldown:
+                    # Re-armed while ambering down: conflicts are already
+                    # amber, so no fresh amber is needed — but the box is
+                    # NOT empty, and the corridor state seals it, so the
+                    # all-red clearance still runs first (_arm_target).
+                    _yellow, target = self._build_states(tls_id, idxs,
+                                                         harden)
+                    if target:
+                        st.link_indices = frozenset(idxs)
+                        st.hardened = harden
+                        st.started_at = now
+                        self._arm_target(tls_id, st, target, now)
                 elif st.mode == TO_PREEMPT and (
                         frozenset(idxs) != st.link_indices
                         or harden != st.hardened):
@@ -352,6 +444,10 @@ class GreenWaveController:
                             st.did_allred = False
                             st.until = now + cfg.yellow_time_s
                         else:
+                            # nothing green is being taken away (a flash
+                            # tightened mid-hold): no clearance interval —
+                            # it would put the unit's own corridor green
+                            # back to red for no gain
                             self._set_state(tls_id, st, target)
                     elif target:
                         st.link_indices = frozenset(idxs)
@@ -369,14 +465,18 @@ class GreenWaveController:
                     except traci.TraCIException:
                         self._fail_safe(tls_id, st, "state read failed", now)
                         continue
-                    self._set_state(tls_id, st, "r" * n)
+                    # do not narrate a phase whose command failed into a
+                    # case _fail_safe has just closed
+                    if not self._set_state(tls_id, st, "r" * n):
+                        continue
                     st.until = now + cfg.allred_time_s
                     self.ops.emit(now, "preempt_phase",
                                   f"Junction {self.ops.jn(tls_id)}: all-red clearance "
                                   f"({cfg.allred_time_s:.0f} s)", "info",
                                   case=st.case)
                 else:
-                    self._set_state(tls_id, st, st.target)
+                    if not self._set_state(tls_id, st, st.target):
+                        continue
                     st.mode = PREEMPTED
                     self.ops.emit(now, "preempt_phase",
                                   f"Junction {self.ops.jn(tls_id)}: corridor green ACTIVE "
@@ -386,14 +486,34 @@ class GreenWaveController:
                     self._finish_restore(tls_id, st, now)
                 continue
             if tls_id in wanted:
+                # Rule A4 is a HARD cap on one continuous hold.  Distance is
+                # NOT an exemption: a unit stalled short of the stop line
+                # stays inside camera range indefinitely, and the cap has to
+                # bite.  The one exemption is a unit physically inside the
+                # junction box — releasing then would put a red in front of
+                # a vehicle already committed to the crossing — and it is
+                # BOUNDED: a unit that has been at a standstill in there for
+                # BOX_STALL_RELEASE_S is not crossing, it is stuck behind
+                # traffic this very hold is holding on solid red.  Then the
+                # cap applies, and the release + cooldown cycles the cross
+                # streets, which is what actually drains the box.
                 if (st.mode == PREEMPTED
                         and now - st.started_at > cfg.max_hold_s
-                        and wanted[tls_id][1] > cfg.camera_range_m):
+                        and tls_id not in self._crossing):
+                    held = now - st.started_at
+                    why = (" — the unit in its junction box has been at a "
+                           "standstill, which the corridor's own solid red "
+                           "cannot drain"
+                           if tls_id in self._inside else "")
                     self.cooldown[tls_id] = now + cfg.preempt_cooldown_s
                     self.ops.emit(now, "hold_limit",
-                                  f"Junction {self.ops.jn(tls_id)} held {cfg.max_hold_s:.0f} s"
-                                  f" — cycling cross traffic before re-arming",
-                                  "warn", case=st.case)
+                                  f"Junction {self.ops.jn(tls_id)} held "
+                                  f"{held:.0f} s, over the "
+                                  f"{cfg.max_hold_s:.0f} s cap — releasing "
+                                  f"{st.amb}'s corridor{why} and cycling "
+                                  f"cross traffic for "
+                                  f"{cfg.preempt_cooldown_s:.0f} s before "
+                                  f"re-arming", "warn", case=st.case)
                     self._begin_restore(tls_id, st, now)
                 continue
             if st.mode in (TO_PREEMPT, PREEMPTED):
@@ -414,11 +534,21 @@ class GreenWaveController:
         cfg = self.cfg
         wanted = {}
 
-        # dissolve referred conflicts whose contention has passed
+        # Dissolve referred conflicts whose contention has passed, and drop
+        # a decision whose SUBJECT has passed or diverged: the entry only
+        # ever grants its own choice, so leaving it in place would block
+        # every later ruling at this junction while the others still
+        # contend — no corridor, no new referral, and the demand-responsive
+        # controller locked out too.  This loop runs BEFORE the main
+        # arbitration loop, so dropping the entry here lets the ordinary
+        # tie / clear-margin logic re-run on the SAME tick: nothing is lost.
         for tls_id in list(self.pending):
             by_amb = requests.get(tls_id, {})
-            if len(by_amb) < 2:
-                pend = self.pending.pop(tls_id)
+            pend = self.pending[tls_id]
+            stale = (pend["choice"] is not None
+                     and pend["choice"] not in by_amb)
+            if len(by_amb) < 2 or stale:
+                self.pending.pop(tls_id)
                 if pend["choice"] is None:
                     self.ops.emit(now, "decision_moot",
                                   f"Junction {self.ops.jn(tls_id)}: conflict dissolved "
@@ -426,6 +556,12 @@ class GreenWaveController:
                                   case=pend["case"])
                     self.ops.close_case(pend["case"], now,
                                         "conflict dissolved before decision")
+                elif stale and len(by_amb) >= 2:
+                    self.ops.emit(now, "decision_moot",
+                                  f"Junction {self.ops.jn(tls_id)}: "
+                                  f"{pend['choice']} has passed or diverged — "
+                                  f"the remaining conflict is re-arbitrated",
+                                  "info", case=pend["case"])
 
         for tls_id, by_amb in requests.items():
             st = self.active.get(tls_id)
@@ -516,10 +652,66 @@ class GreenWaveController:
     # ------------------------------------------------------------- internals
 
     def _set_state(self, tls_id, st, state):
+        """Apply a signal state.  Returns False if the command FAILED — the
+        junction has then been failed safe and dropped from self.active,
+        and the caller must not go on to narrate or record the phase."""
         try:
             traci.trafficlight.setRedYellowGreenState(tls_id, state)
         except traci.TraCIException as exc:
             self._fail_safe(tls_id, st, str(exc), self._now)
+            return False
+        return True
+
+    def _arm_target(self, tls_id, st, target, now):
+        """Put ``target`` on the junction as the held corridor state, always
+        behind the all-red clearance interval (rule A2).
+
+        The held state puts every approach that is not on the ambulance's
+        route on SOLID RED, so once it is applied nothing can drain the
+        junction box.  The box must therefore be emptied first: any
+        conflicting green gets its amber, then every link is held red for
+        ``allred_time_s``, and only then does the corridor green go on.
+        The one case with nothing to clear is a junction already showing
+        exactly this state.  Returns False if a signal command failed."""
+        try:
+            current = traci.trafficlight.getRedYellowGreenState(tls_id)
+        except traci.TraCIException:
+            self._fail_safe(tls_id, st, "state read failed", now)
+            return False
+        st.target = target
+        if current == target:
+            # The junction already SHOWS this state — but showing is not
+            # holding: until a state is commanded, the junction is still
+            # running its own programme and will cycle straight out of it
+            # (measured: a corridor "held" this way went green -> amber ->
+            # red under the approaching ambulance).  Nothing is being newly
+            # restricted, so no clearance interval is needed, but the state
+            # must still be commanded to seize control of the signal.
+            if not self._set_state(tls_id, st, target):
+                return False
+            st.mode = PREEMPTED
+            st.did_allred = True
+            return True
+        st.mode = TO_PREEMPT
+        st.did_allred = False
+        yellow = "".join(
+            "y" if (current[i] in "Gg" and i < len(target)
+                    and target[i] in "ro") else current[i]
+            for i in range(len(current)))
+        if yellow != current:
+            if not self._set_state(tls_id, st, yellow):
+                return False
+            st.until = now + self.cfg.yellow_time_s
+            self.ops.emit(now, "preempt_phase",
+                          f"Junction {self.ops.jn(tls_id)}: amber to "
+                          f"conflicting traffic "
+                          f"({self.cfg.yellow_time_s:.0f} s)", "info",
+                          case=st.case)
+        else:
+            # no conflicting green left to drop — straight to the all-red
+            # clearance, which the advance loop applies on this same tick
+            st.until = now
+        return True
 
     def _fail_safe(self, tls_id, st, reason, now):
         """On any signal-command error: revert the junction to its normal
@@ -537,6 +729,11 @@ class GreenWaveController:
             self.ops.close_case(st.case, now, f"error: {reason}",
                                 status="error")
         self.active.pop(tls_id, None)
+        # Stand off this junction.  NOT self.cooldown: that is deliberately
+        # bypassed while a unit is in the box, so a faulty controller would
+        # be re-armed every few seconds for ever, filling the log and the
+        # Cases table with errored P-cases for one junction.
+        self.faulted[tls_id] = now + self.cfg.preempt_cooldown_s
 
     def _tls_containing(self, veh_id):
         """The tls id whose junction the vehicle is currently inside, if any
@@ -671,19 +868,25 @@ class GreenWaveController:
     def _build_states(self, tls_id, link_indices, harden=False):
         """Return (amber_transition_state, preempt_target_state).
 
-        With ``flash_amber`` on (the default), the held state is: corridor
-        approach protected green, every cross approach FLASHING AMBER
-        ('o' — drivers yield, and vehicles caught in the box can clear it)
-        until the ambulance is within ``flash_harden_eta_s`` seconds ETA
-        (or ``flash_harden_min_m`` metres), when the
-        flash hardens to solid red for final clearance.  With it off, the
-        target is a *real phase* of the junction's own signal programme
-        that serves every ambulance link green — what classic preemption
-        controllers do (jump to and hold a phase); real phases are
-        internally consistent, which matters at multi-node junctions where
-        a hand-crafted "corridor green, everything else red" state can
-        seal vehicles inside the box and deadlock the corridor itself —
-        the flashing-amber yield state avoids that trap by construction.
+        The held state is ALWAYS built explicitly here — never inherited
+        from a phase of the junction's own programme.  It is: the corridor
+        approach and every other approach feeding the same movement on
+        PROTECTED GREEN (so the traffic in front of the ambulance can
+        drain), and every approach that is not on the ambulance's route on
+        SOLID RED — the stop indication for traffic that must not enter.
+        With ``flash_amber`` set, those cross approaches show FLASHING
+        AMBER ('o', yield) instead, hardening to solid red once the unit is
+        within ``flash_harden_eta_s`` seconds ETA or ``flash_harden_min_m``
+        metres.
+
+        Solid red seals the junction box: nothing on a red link can leave
+        it.  Two things keep that from trapping the corridor itself — the
+        all-red clearance interval that always precedes the hold (see
+        ``_arm_target``), which empties the box before the corridor green
+        goes on; and the ``max_hold_s`` cap, whose box-occupancy exemption
+        lapses once the unit has been at a standstill for
+        ``BOX_STALL_RELEASE_S``, so a hold that has stopped serving anyone
+        is released and the cross streets cycle and drain the box.
         """
         try:
             current = traci.trafficlight.getRedYellowGreenState(tls_id)
@@ -693,13 +896,14 @@ class GreenWaveController:
         if n == 0:
             return "", ""
 
-        if self.cfg.flash_amber:
-            target = self._custom_target(tls_id, link_indices, n,
-                                         flash=not harden)
-        else:
-            target = self._phase_target(tls_id, link_indices, n)
-            if target is None:
-                target = self._custom_target(tls_id, link_indices, n)
+        # The held state is built explicitly, never inherited from a
+        # programme phase: a real phase can leave a compatible cross flow
+        # GREEN, and while an ambulance is coming through, everything that
+        # is not on its route must read STOP.  Corridor approach protected
+        # green, every other approach solid red — flashing amber only if
+        # cfg.flash_amber is turned on.
+        target = self._custom_target(tls_id, link_indices, n,
+                                     flash=self.cfg.flash_amber and not harden)
         if not target:
             return "", ""
 
@@ -709,42 +913,6 @@ class GreenWaveController:
             for i in range(n)
         )
         return yellow, target
-
-    def _phase_target(self, tls_id, link_indices, n):
-        """Best programme phase serving all ambulance links green, if any."""
-        try:
-            logics = traci.trafficlight.getAllProgramLogics(tls_id)
-        except traci.TraCIException:
-            return None
-        if not logics:
-            return None
-        st = self.active.get(tls_id)
-        try:
-            prog = st.orig_program if st else traci.trafficlight.getProgram(tls_id)
-        except traci.TraCIException:
-            prog = None
-        logic = next((lg for lg in logics if lg.programID == prog), logics[0])
-
-        best, best_score = None, -1
-        for phase in logic.phases:
-            state = phase.state
-            if len(state) != n or "y" in state:   # skip transition phases
-                continue
-            score = 0
-            for idx in link_indices:
-                if idx >= n:
-                    score = -1
-                    break
-                if state[idx] == "G":
-                    score += 2
-                elif state[idx] in "gs":
-                    score += 1
-                else:
-                    score = -1
-                    break
-            if score > best_score:
-                best, best_score = state, score
-        return best
 
     def _custom_target(self, tls_id, link_indices, n, flash=False):
         """Corridor approach protected green; everything else flashing
@@ -794,9 +962,8 @@ class GreenWaveController:
         try:
             orig_program = traci.trafficlight.getProgram(tls_id)
             orig_phase = traci.trafficlight.getPhase(tls_id)
-            yellow, target = self._build_states(tls_id, link_indices,
-                                                harden)
-            current = traci.trafficlight.getRedYellowGreenState(tls_id)
+            _yellow, target = self._build_states(tls_id, link_indices,
+                                                 harden)
         except traci.TraCIException:
             return None
         if not target:
@@ -808,7 +975,7 @@ class GreenWaveController:
         st.hardened = harden
         cross_txt = ("cross approaches to FLASHING AMBER (yield) until the "
                      "unit closes in" if self.cfg.flash_amber and not harden
-                     else "conflicts to red")
+                     else "every approach not on its route to SOLID RED")
         if not flush:
             flush_txt = ""
         elif congested:
@@ -827,23 +994,18 @@ class GreenWaveController:
                       f"Junction {self.ops.jn(tls_id)} PURPOSELY ENABLED for {amb}: "
                       f"approach green, {cross_txt}{flush_txt}", "warn",
                       actor=amb, case=st.case)
+        # Amber to any conflicting green, then the all-red clearance, then
+        # the corridor green — never the corridor green straight away: the
+        # held state seals the box, so the box has to be empty first.
+        if not self._arm_target(tls_id, st, target, now):
+            # the signal command FAILED; _fail_safe has already reverted
+            # the junction and closed the case as errored.  Returning None
+            # keeps it out of self.active, so nothing is re-inserted and
+            # nothing is credited for a corridor that never opened.
+            return None
         # a corridor was genuinely opened here for this unit: the arrival
         # analysis reads this to know whether its run had a green wave
         self.preempted_for.setdefault(amb, set()).add(tls_id)
-        if yellow != current:
-            self._set_state(tls_id, st, yellow)
-            st.mode = TO_PREEMPT
-            st.until = now + self.cfg.yellow_time_s
-            self.ops.emit(now, "preempt_phase",
-                          f"Junction {self.ops.jn(tls_id)}: amber to conflicting traffic "
-                          f"({self.cfg.yellow_time_s:.0f} s)", "info",
-                          case=st.case)
-        else:
-            self._set_state(tls_id, st, target)
-            st.mode = PREEMPTED
-            self.ops.emit(now, "preempt_phase",
-                          f"Junction {self.ops.jn(tls_id)}: corridor green ACTIVE for "
-                          f"{amb}", "info", case=st.case)
         return st
 
     def _begin_restore(self, tls_id, st, now):

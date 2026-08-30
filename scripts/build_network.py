@@ -20,8 +20,17 @@ from sim.config import SimConfig, SCENARIOS  # noqa: E402
 from _templates import SUMOCFG_XML  # noqa: E402
 
 import argparse
-_ap = argparse.ArgumentParser()
-_ap.add_argument("--scenario", default="downtown", choices=sorted(SCENARIOS))
+_ap = argparse.ArgumentParser(
+    epilog="Derived scenarios (e.g. showcase) are built by "
+           "scripts/build_showcase.py from the downtown demand — they are "
+           "not netconvert/randomTrips targets.")
+# Only scenarios that own an OSM extract and a demand build may be named
+# here.  A derived scenario (static_demand) points at another scenario's
+# network and at a route file this script would OVERWRITE with random
+# trips, so argparse refuses it before any path is even resolved.
+_ap.add_argument("--scenario", default="downtown",
+                 choices=sorted(k for k, v in SCENARIOS.items()
+                                if not v.get("static_demand")))
 _SC = SCENARIOS[_ap.parse_args().scenario]
 
 DATA = os.path.join(ROOT, "data")

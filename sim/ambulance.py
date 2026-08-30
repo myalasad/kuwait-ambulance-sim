@@ -100,7 +100,17 @@ class Dispatcher:
         destination None picks a random named incident area.  Returns the
         new ambulance id, or None when the call queued."""
         if destination is None:
-            area = self._rng.choice(sorted(self.areas))
+            # Incidents do not repeat on top of each other: the last few
+            # scenes are excluded so calls spread across the city.  Without
+            # this a uniform draw clusters, and because dispatch answers
+            # from the NEAREST hospital, clustered scenes make the origins
+            # look like a rota when they are really just geography.
+            names = sorted(self.areas)
+            recent = getattr(self, "_recent_scenes", [])
+            fresh = [n for n in names if n not in recent] or names
+            area = self._rng.choice(fresh)
+            keep = max(1, min(8, len(names) // 2))
+            self._recent_scenes = (recent + [area])[-keep:]
             lat, lon = self.areas[area]
             to_edges = self.nearest_edges(lat, lon)
             to_desc = f"{area} (random area)"
@@ -133,21 +143,39 @@ class Dispatcher:
                     per_h = {}
                     for cid, cost in costs.items():
                         h = cand_of[cid]
-                        if h not in per_h or cost < per_h[h][0]:
-                            per_h[h] = (cost, cid)
+                        # cost_from_many() excludes the SOURCE edge's own
+                        # weight, but the unit is inserted at the base of
+                        # that edge (departPos defaults to "base") and
+                        # drives its full length.  That term differs per
+                        # hospital, so leaving it out both biases the
+                        # ranking and understates every quoted response
+                        # time.  Same weight convention as the backward
+                        # search: live, non-predictive.  The per-hospital
+                        # minimum must be taken over the TOTAL, not over
+                        # `cost` — otherwise a hospital is charged the
+                        # access edge of a candidate it does not use.
+                        total = cost + self.router._weight(
+                            cid, live, horizon=0.0, predictive=False)
+                        if h not in per_h or total < per_h[h][0]:
+                            per_h[h] = (total, cid)
                     ranked = sorted((cost, h, cid)
                                     for h, (cost, cid) in per_h.items())
                     break
             if not ranked:
                 raise ValueError(f"No hospital can reach {to_desc}")
-            # Nearest AVAILABLE unit under the ready-fleet model: only
-            # hospitals with a READY unit are candidates (a dispatch
-            # commits one; delivered crews rejoin after turnaround), and
-            # among those within the rotation tolerance of the fastest,
-            # the one with the fewest units already out responds — real
-            # EMS coverage, and never a convoy from a single gate.
+            # NEAREST READY UNIT — the scene decides, not a quota.
+            # Hospitals are ranked by travel time to THIS scene; those
+            # with no ready crew are dropped outright.  Among the rest,
+            # only a near-tie (dispatch_rotation_tolerance of the
+            # fastest candidate) may be re-ordered, and the sole rule
+            # that re-orders it is gate headway: a hospital that
+            # launched a unit within gate_headway_s yields to an
+            # equally-close peer, so departures never stack at one gate.
+            # Ties are otherwise broken by travel time.  Mission load is
+            # deliberately NOT a factor: sorting the candidate band by
+            # load turns dispatch into a round-robin, so the origin
+            # follows a rota rather than the incident.
             self.process_returns(now)
-            load = self._hospital_load()
             cap = self.cfg.hospital_ready_units
             candidates = [r for r in ranked if self._fleet.get(r[1], 0) > 0]
             if not candidates:
@@ -167,18 +195,21 @@ class Dispatcher:
                                   f"reach the scene); the next READY crew "
                                   f"responds automatically", "warn")
                 return None
+            # only a near-tie may be re-ordered: hospitals whose response
+            # times are within the tolerance of EACH OTHER, not of the
+            # whole field
             tol = 1.0 + self.cfg.dispatch_rotation_tolerance
-            cut = candidates[0][0] * tol
-            pool = [r for r in candidates if r[0] <= cut]
+            tie = [r for r in candidates
+                   if r[0] <= candidates[0][0] * tol]
             # gate headway: a hospital that just launched a unit yields to
             # an equally-close peer, so departures never stack at one gate
             gh = self.cfg.gate_headway_s
-            pool.sort(key=lambda r: (
+            tie.sort(key=lambda r: (
                 1 if now - self._last_gate_t.get(r[1], -1e9) < gh else 0,
-                load.get(r[1], 0), r[0]))
+                r[0]))
             chosen = None
-            for eta_est, name, cid in pool + [r for r in candidates
-                                              if r[0] > cut]:
+            for eta_est, name, cid in tie + [r for r in candidates
+                                             if r not in tie]:
                 r = self.router.route(cid, to_id, live=live)
                 if r:
                     route = r
@@ -200,14 +231,26 @@ class Dispatcher:
                     f"{eta_est:.0f} s with "
                     f"{self._fleet.get(origin_hospital, 0)}/{cap} ready")
             else:
+                # the nearest hospital HAD a ready crew and was still not
+                # chosen — the only rule that can do that is gate headway,
+                # so say so rather than blaming a load it does not have
+                since = now - self._last_gate_t.get(nearest_name, -1e9)
                 from_desc = f"{origin_hospital} (nearest AVAILABLE unit)"
-                rotation_note = (
-                    f"; dispatch rotated for coverage: {nearest_name} is "
-                    f"nearest ({nearest_eta:.0f} s) but already has "
-                    f"{load.get(nearest_name, 0)} unit(s) on mission — "
-                    f"{origin_hospital} responds in {eta_est:.0f} s, within "
-                    f"the {self.cfg.dispatch_rotation_tolerance:.0%} "
-                    f"rotation tolerance")
+                if since < self.cfg.gate_headway_s:
+                    rotation_note = (
+                        f"; {nearest_name} is nearest ({nearest_eta:.0f} s) "
+                        f"but launched a unit {since:.0f} s ago — gate "
+                        f"headway ({self.cfg.gate_headway_s:.0f} s) keeps "
+                        f"departures from stacking at one gate, so "
+                        f"{origin_hospital} responds in {eta_est:.0f} s "
+                        f"(+{eta_est - nearest_eta:.0f} s, within the "
+                        f"{self.cfg.dispatch_rotation_tolerance:.0%} "
+                        f"tie margin)")
+                else:
+                    rotation_note = (
+                        f"; {nearest_name} is nearest ({nearest_eta:.0f} s) "
+                        f"but its route could not be built; "
+                        f"{origin_hospital} responds in {eta_est:.0f} s")
             algorithm = self._algorithm_name()
         else:
             from_edges, from_desc = self._resolve(origin, "origin")
@@ -243,17 +286,41 @@ class Dispatcher:
             alt = self.router.route(route[0], route[-1], live=live,
                                     predictive=False)
             if alt:
-                t_pred = self.router.route_time(route, live=live)
-                t_alt = self.router.route_time(alt, live=live)
+                # Score the choice under BOTH objectives and keep both
+                # signed.  Scoring only under the predictor's own weights
+                # (and clamping at zero) can never produce a negative
+                # number, so it is not evidence — each metric favours the
+                # route optimised for it, and the difference is a model
+                # disagreement, not a measured saving.
+                t_pred_m = self.router.route_time(route, live=live,
+                                                  predictive=True)
+                t_alt_m = self.router.route_time(alt, live=live,
+                                                 predictive=True)
+                t_pred_l = self.router.route_time(route, live=live,
+                                                  predictive=False)
+                t_alt_l = self.router.route_time(alt, live=live,
+                                                 predictive=False)
                 ev = pred.routing_evidence
                 ev["compared"] += 1
                 if alt != route:
                     ev["differed"] += 1
-                    ev["predicted_saving_s"] += max(0.0, t_alt - t_pred)
+                    ev["model_delta_s"] = (ev.get("model_delta_s", 0.0)
+                                           + (t_alt_m - t_pred_m))
+                    ev["live_delta_s"] = (ev.get("live_delta_s", 0.0)
+                                          + (t_alt_l - t_pred_l))
+                    # legacy key, kept in step with the model-scored
+                    # ledger so the copilot page cannot display a number
+                    # that is not the one accumulated here; it is signed
+                    # now, never clamped up to zero
+                    ev["predicted_saving_s"] = round(ev["model_delta_s"], 1)
                     routing_note = (f"; predictive routing chose a different "
                                     f"corridor than live-only routing "
-                                    f"(predicted {t_alt - t_pred:+.0f} s vs "
-                                    f"the live-only route)")
+                                    f"(its own model scores that "
+                                    f"{t_alt_m - t_pred_m:+.0f} s; live-only "
+                                    f"weights score it "
+                                    f"{t_alt_l - t_pred_l:+.0f} s — each "
+                                    f"metric favours the route optimised "
+                                    f"for it)")
                 else:
                     routing_note = ("; predictive routing agrees with "
                                     "live-only routing for this trip")
@@ -318,7 +385,8 @@ class Dispatcher:
             # response-time accounting: the clock starts when the CALL was
             # made (a queued call's wait counts), ends at scene arrival
             "call_t": _call_t if _call_t is not None else now,
-            "queue_wait_s": round(now - _call_t, 1) if _call_t else 0.0,
+            "queue_wait_s": (round(now - _call_t, 1)
+                             if _call_t is not None else 0.0),
             "gov": self._governorate_of(to_desc),
             "loading_started": False,
             "created": now,
@@ -336,25 +404,30 @@ class Dispatcher:
                       "info", actor=amb_id, case=case)
         return amb_id
 
-    def _hospital_load(self):
-        """Units currently on a mission, per origin hospital — the
-        availability signal behind nearest-AVAILABLE-unit dispatch."""
-        load = {}
-        for rec in self.info.values():
-            if rec["arrived"] is None:
-                h = rec.get("origin_hospital")
-                if h:
-                    load[h] = load.get(h, 0) + 1
-        return load
-
     # ------------------------------------------------------------ fleet
+
+    def units_on_mission(self):
+        """Crews currently committed to a mission — the ones a hospital
+        pool paid for (origin_hospital truthy) whose mission has not yet
+        closed, so their crew has not yet been handed to _returning."""
+        return sum(1 for rec in self.info.values()
+                   if rec.get("origin_hospital") and rec["arrived"] is None)
+
+    def fleet_conservation(self):
+        """(expected, actual) crew count.  Crews are conserved: every one
+        is either ready in a pool, out on a mission, or in turnaround.
+        Reserve dispatches leave a negative pool (a debt) which the
+        returning crew repays, so the identity holds through those too."""
+        actual = (sum(self._fleet.values()) + self.units_on_mission()
+                  + len(self._returning))
+        return len(self.hospitals) * self.cfg.hospital_ready_units, actual
 
     def process_returns(self, now):
         """Crews finishing turnaround rejoin a ready pool.  Units are
         conserved: preferably the receiving hospital's pool, else the
-        origin's (which may be repaying a reserve-dispatch debt); only if
-        both are at stationed strength does the crew stand down to
-        reserve."""
+        origin's (which may be repaying a reserve-dispatch debt), else the
+        neediest pool below stationed strength.  A crew is never dropped:
+        with one in hand the pools cannot all be at strength."""
         if not self._returning and not self.call_queue:
             return
         due = [r for r in self._returning if r[0] <= now]
@@ -366,32 +439,52 @@ class Dispatcher:
                     and origin in self._fleet
                     and self._fleet.get(origin, cap) < cap):
                 target = origin
-            if target is None:
-                continue
-            if self._fleet[target] < cap:
+            if target is None or self._fleet[target] >= cap:
+                # Conservation: a crew in hand means the pools cannot all
+                # be at strength (sum(_fleet) <= N*cap - 1), so there is
+                # always somewhere to send it.  Redeploy to the NEEDIEST
+                # pool — sorted by shortfall, not by name — instead of
+                # letting the unit fall out of circulation.
+                short = sorted(((v, n) for n, v in self._fleet.items()
+                                if v < cap))
+                if not short:
+                    self.ops.emit(now, "error",
+                                  f"{amb_id} crew turnaround: fleet "
+                                  f"accounting broken — every pool at "
+                                  f"strength with a crew in hand", "error",
+                                  actor=amb_id)
+                    continue
+                dest = short[0][1]
+                self._fleet[dest] += 1
+                at = (f"{target} already at stationed strength "
+                      f"({self._fleet[target]}/{cap})" if target is not None
+                      else f"its receiving hospital is not a stationed pool")
+                self.ops.emit(now, "lifecycle",
+                              f"{amb_id} crew turnaround complete — {at}; "
+                              f"crew REDEPLOYED to {dest} "
+                              f"({self._fleet[dest]}/{cap})", "info",
+                              actor=amb_id)
+            else:
                 self._fleet[target] += 1
                 self.ops.emit(now, "lifecycle",
                               f"{amb_id} crew turnaround complete — unit "
                               f"READY again at {target} "
                               f"({self._fleet[target]}/{cap})",
                               "info", actor=amb_id)
-            else:
-                # nothing leaves circulation silently, not even to reserve.
-                # Claim only what was tested: `target` is at strength and
-                # the origin had no debt to repay.  The pools that ARE
-                # short are then named from a real read of every pool.
-                short = sorted((n, v) for n, v in self._fleet.items()
-                               if v < cap)
-                short_note = ("; still below stationed strength: "
-                              + ", ".join(f"{n} {v}/{cap}" for n, v in short)
-                              ) if short else ""
-                self.ops.emit(now, "lifecycle",
-                              f"{amb_id} crew turnaround complete — {target} "
-                              f"already at stationed strength "
-                              f"({self._fleet[target]}/{cap}) "
-                              f"and no pool debt to repay; unit stands down "
-                              f"to reserve there{short_note}", "info",
-                              actor=amb_id)
+        if due:
+            # crews are conserved: say so LOUDLY if they ever are not,
+            # rather than letting the ready badges decay silently
+            expected, actual = self.fleet_conservation()
+            if actual != expected:
+                self.ops.emit(now, "error",
+                              f"FLEET ACCOUNTING: {actual} crews accounted "
+                              f"for ({sum(self._fleet.values())} ready, "
+                              f"{self.units_on_mission()} on mission, "
+                              f"{len(self._returning)} in turnaround) but "
+                              f"{expected} are stationed "
+                              f"({len(self.hospitals)} hospitals x {cap}) — "
+                              f"investigate: dispatch capacity is drifting",
+                              "error")
         # Freed crews serve waiting calls, oldest first.  Guarded against
         # re-entry (dispatch calls process_returns), and BOUNDED to one
         # attempt per queued call per invocation: a call whose reachable
@@ -400,6 +493,7 @@ class Dispatcher:
         if getattr(self, "_serving_queue", False):
             return
         self._serving_queue = True
+        deferred = []
         try:
             attempts = len(self.call_queue)
             while (attempts > 0 and self.call_queue
@@ -411,9 +505,26 @@ class Dispatcher:
                                         _desc_override=call["desc"],
                                         _call_t=call["t"])
                 except ValueError as exc:
-                    self.ops.emit(now, "error",
-                                  f"Queued call to {call['desc']} could "
-                                  f"not be served: {exc}", "error")
+                    # A queued call is COMMITTED: a failed attempt must not
+                    # delete it.  It keeps its original timestamp and goes
+                    # back to the FRONT after this pass.  Bounded, so a call
+                    # nothing can serve is escalated once instead of erroring
+                    # for ever.
+                    call["fails"] = call.get("fails", 0) + 1
+                    if call["fails"] >= 5:
+                        self.ops.emit(now, "error",
+                                      f"Queued call to {call['desc']} "
+                                      f"ABANDONED after 5 failed dispatch "
+                                      f"attempts (last: {exc}) — no unit "
+                                      f"could be sent; escalate manually",
+                                      "error")
+                    else:
+                        deferred.append(call)
+                        self.ops.emit(now, "error",
+                                      f"Queued call to {call['desc']} could "
+                                      f"not be served: {exc} — it KEEPS its "
+                                      f"place in the queue (attempt "
+                                      f"{call['fails']}/5)", "error")
                     continue
                 if amb:
                     self.ops.emit(now, "dispatch",
@@ -423,12 +534,20 @@ class Dispatcher:
                                   f"again", "info", actor=amb)
                 elif (self.call_queue
                       and self.call_queue[-1]["dest"] is call["dest"]):
-                    # dispatch re-queued it at the back: restore its
-                    # ORIGINAL place and timestamp — an unservable call
-                    # keeps its position and its true waiting time
+                    # dispatch re-queued it at the back: hold it aside with
+                    # its ORIGINAL place and timestamp.  It must NOT go back
+                    # to index 0 — that makes the next iteration pop the same
+                    # call, so one unservable call burns the whole per-
+                    # invocation budget (a full backward Dijkstra each time)
+                    # and the calls behind it, which the ready crew may well
+                    # be able to reach, are never attempted.
                     self.call_queue.pop()
-                    self.call_queue.insert(0, call)
+                    deferred.append(call)
         finally:
+            # oldest-first, at the front: FIFO order and true waiting times
+            # survive even an unexpected exception
+            if deferred:
+                self.call_queue[:0] = deferred
             self._serving_queue = False
 
     def _schedule_return(self, rec, amb_id, now):
@@ -610,21 +729,24 @@ class Dispatcher:
         for amb_id, rec in self.info.items():
             if rec["departed"] is None or rec["arrived"] is not None:
                 continue
+            # the response clock stops where the unit physically reaches
+            # the scene, which is later than the moment the return leg is
+            # planned — so it is tested every step, in every mission state
+            self._stamp_scene_arrival(amb_id, rec, now)
             mission = rec.get("mission")
             if mission == "to_scene":
                 try:
                     idx = traci.vehicle.getRouteIndex(amb_id)
+                    route = traci.vehicle.getRoute(amb_id)
                 except traci.TraCIException:
                     continue
-                if 0 <= idx >= len(rec["route_edges"]) - 2:
-                    # board metric: call-to-scene response time, with the
-                    # queue wait included — the clock starts at the CALL
-                    resp = now - rec.get("call_t", now)
-                    rec["response_s"] = round(resp, 1)
-                    self.response_log.append(
-                        {"amb": amb_id, "gov": rec.get("gov", "Other"),
-                         "response_s": round(resp, 1),
-                         "queue_wait_s": rec.get("queue_wait_s", 0.0)})
+                # getRouteIndex counts from DEPARTURE and setRoute prepends
+                # the edges already driven, so the end-of-route test must be
+                # against SUMO's own route — rec["route_edges"] can hold a
+                # tail-only plan.  ONE edge of lead so the loading stop can
+                # still be placed: this PLANS the return leg, it is not
+                # arrival, and nothing is stamped here.
+                if 0 <= idx >= len(route) - 2:
                     try:
                         self._begin_return_leg(amb_id, rec, idx, now)
                     except traci.TraCIException as exc:
@@ -640,6 +762,7 @@ class Dispatcher:
                     continue
                 if stopped:
                     rec["loading_started"] = True
+                    rec.pop("halt_since", None)
                 elif rec.get("loading_started"):
                     rec["mission"] = "to_hospital"
                     self.ops.emit(now, "reroute",
@@ -647,9 +770,107 @@ class Dispatcher:
                                   f"{rec['hospital']}, lights ON, corridor "
                                   f"resumes along the new route", "warn",
                                   actor=amb_id, case=rec["case"])
+                else:
+                    # The loading stop was never taken.  Bound the state:
+                    # a unit pinned in "loading" runs the whole hospital
+                    # leg with no corridor, no adaptive reroute and no
+                    # delay attribution, unlogged.  The deadline is armed
+                    # only while the unit is HALTED, so a long drive to a
+                    # far stop point is never mistaken for a failure.
+                    try:
+                        speed = traci.vehicle.getSpeed(amb_id)
+                        pending = traci.vehicle.getStops(amb_id, 1)
+                    except traci.TraCIException:
+                        continue
+                    if speed > 0.1:
+                        rec.pop("halt_since", None)
+                    else:
+                        rec.setdefault("halt_since", now)
+                    if (not pending or now - rec.get("halt_since", now)
+                            > self.cfg.patient_load_s + 20.0):
+                        if pending:
+                            try:
+                                traci.vehicle.replaceStop(amb_id, 0, "")
+                            except traci.TraCIException:
+                                pass
+                        rec["mission"] = "to_hospital"
+                        rec["load_stop_missed"] = True
+                        self.ops.emit(now, "error",
+                                      f"{amb_id}: the patient-loading stop at "
+                                      f"the scene could not be taken (unit "
+                                      f"never observed stopped) — stop "
+                                      f"cancelled, hospital leg to "
+                                      f"{rec['hospital']} resumed, corridor "
+                                      f"back on; this run is EXCLUDED from "
+                                      f"the with/without comparison", "error",
+                                      actor=amb_id, case=rec["case"])
+
+    def _stamp_scene_arrival(self, amb_id, rec, now, at_close=False):
+        """Board metric: the call-to-scene clock stops when the unit is
+        ACTUALLY at the patient-loading point, not when it enters the
+        second-to-last edge of its route (up to 1.7 km / 63 s earlier).
+
+        `at_close` is the last resort used when the mission ends without
+        the unit ever being observed there (SUMO removed it at the end of
+        the scene edge, or the hospital reroute failed): the entry is
+        still made, flagged, so no mission drops out of p50/p90."""
+        if rec.get("response_s") is not None or "scene_stop" not in rec:
+            return
+        edge, pos = rec["scene_stop"]
+        at = at_close
+        if not at:
+            try:
+                if traci.vehicle.isStopped(amb_id):
+                    at = True
+                elif traci.vehicle.getRoadID(amb_id) == edge:
+                    at = traci.vehicle.getLanePosition(amb_id) >= pos - 2.0
+                else:
+                    # already past the scene edge: the stop was skipped or
+                    # could not be placed, but the unit did drive through
+                    route = traci.vehicle.getRoute(amb_id)
+                    if edge in route:
+                        at = (traci.vehicle.getRouteIndex(amb_id)
+                              > route.index(edge))
+            except traci.TraCIException:
+                return
+        if not at:
+            return
+        resp = now - rec.get("call_t", now)
+        rec["response_s"] = round(resp, 1)
+        entry = {"amb": amb_id, "gov": rec.get("gov", "Other"),
+                 "response_s": rec["response_s"],
+                 "queue_wait_s": rec.get("queue_wait_s", 0.0)}
+        if at_close:
+            entry["at_mission_close"] = True
+        self.response_log.append(entry)
+        if at_close:
+            # do NOT claim an arrival nobody observed: say what was measured
+            self.ops.emit(now, "arrival",
+                          f"{amb_id}: call-to-scene time recorded at mission "
+                          f"close ({resp:.0f} s) — the unit was never "
+                          f"observed at its scene stop point (it left the map "
+                          f"there, or no stop could be placed), so this is "
+                          f"the time to the end of its run at the scene, not "
+                          f"a confirmed on-scene arrival; it is kept in the "
+                          f"response statistics rather than dropped", "warn",
+                          actor=amb_id, case=rec["case"])
+        else:
+            self.ops.emit(now, "arrival",
+                          f"{amb_id} reached the incident scene — "
+                          f"{resp:.0f} s from the call", "warn",
+                          actor=amb_id, case=rec["case"])
 
     def _begin_return_leg(self, amb_id, rec, idx, now):
         scene_edge = rec["route_edges"][-1]
+        # The physical scene point, recorded BEFORE anything can fail: the
+        # response clock is measured against it, and the "no reachable
+        # hospital" path below takes no stop at all yet still owes a
+        # response time.
+        try:
+            scene_len = self.net.getEdge(scene_edge).getLength()
+            rec["scene_stop"] = (scene_edge, max(2.0, scene_len - 3.0))
+        except Exception:
+            rec["scene_stop"] = (scene_edge, 2.0)
         # nearest hospital by actual routed travel time (one-ways
         # respected): ONE forward Dijkstra from the scene reaches every
         # hospital's candidate edges in a single pass
@@ -659,12 +880,8 @@ class Dispatcher:
                                           live=self.cfg.route_live_weights)
         best = None
         for cid, (leg, t) in found.items():
-            if len(leg) >= 2 and (best is None or t < best[3]):
-                best = (cand_of[cid], leg, None, t)
-        if best is not None:
-            rows = self.router.nodal_analysis(
-                best[1], live=self.cfg.route_live_weights)
-            best = (best[0], best[1], rows, rows[-1]["eta_s"])
+            if len(leg) >= 2 and (best is None or t < best[2]):
+                best = (cand_of[cid], leg, t)
         if best is None:
             rec["mission"] = "to_hospital"
             self.ops.emit(now, "error",
@@ -672,13 +889,28 @@ class Dispatcher:
                           f"mission ends at the scene", "error",
                           actor=amb_id, case=rec["case"])
             return
-        name, leg, rows, eta2 = best
+        name, leg, _rank_t = best
 
         cur = traci.vehicle.getRoadID(amb_id)
         if cur.startswith(":"):
-            cur = rec["route_edges"][idx]
+            # `idx` is a whole-route index (setRoute prepends the driven
+            # prefix), so the internal-edge lookup must use the whole route
+            full = traci.vehicle.getRoute(amb_id)
+            cur = full[min(idx, len(full) - 1)]
         new_route = leg if cur == leg[0] else [cur] + leg
         traci.vehicle.setRoute(amb_id, new_route)
+
+        # Analyse the route actually assigned, and add only the part that is
+        # genuinely NEW: both `cur` and `scene_edge` are edges of the
+        # to-scene route, so they are already inside planned_length, eta_s,
+        # free_flow_s and signals_on_route.  Counting them again is what
+        # made the runs table quote kilometres nobody drove.
+        rows = self.router.nodal_analysis(new_route,
+                                          live=self.cfg.route_live_weights)
+        k = new_route.index(scene_edge)     # 0, or 1 when cur was prepended
+        tail = rows[k + 1:]                 # the only genuinely new edges
+        add_m = rows[-1]["dist_m"] - rows[k]["dist_m"]
+        eta2 = rows[-1]["eta_s"] - rows[k]["eta_s"]
 
         # patient-loading stop at the scene
         stopped = False
@@ -690,39 +922,68 @@ class Dispatcher:
                 pos = min(length - 1.0, max(pos, lane_pos + 12.0))
                 if pos <= lane_pos + 3.0:
                     raise traci.TraCIException("already past the stop point")
-            traci.vehicle.setStop(amb_id, scene_edge, pos=pos, laneIndex=0,
+            # Stop on a lane the unit can actually REACH.  Forcing lane 0 on
+            # a multi-lane scene edge strands the unit beside its own stop
+            # until the congestion resolver teleports it, and the stop is
+            # then skipped for the rest of the run.
+            lane_i = 0
+            try:
+                if cur == scene_edge:
+                    lane_i = traci.vehicle.getLaneIndex(amb_id)
+                else:
+                    for ln in self.net.getEdge(cur).getLanes():
+                        hit = next((c.getToLane() for c in ln.getOutgoing()
+                                    if c.getToLane() is not None
+                                    and c.getToLane().getEdge().getID()
+                                    == scene_edge), None)
+                        if hit is not None:
+                            lane_i = hit.getIndex()
+                            break
+                lane_i = max(0, min(
+                    lane_i, len(self.net.getEdge(scene_edge).getLanes()) - 1))
+            except Exception:
+                lane_i = 0
+            traci.vehicle.setStop(amb_id, scene_edge, pos=pos,
+                                  laneIndex=lane_i,
                                   duration=self.cfg.patient_load_s)
+            rec["scene_stop"] = (scene_edge, pos)
             stopped = True
         except traci.TraCIException:
             pass
 
-        exp2, per2 = self._expected_signal_wait(rows)
-        ff2 = self._free_flow_exempt(new_route)
+        exp2, per2 = self._expected_signal_wait(tail)
+        ff2 = self._free_flow_exempt(new_route[k + 1:])
         load = self.cfg.patient_load_s if stopped else 0.0
         rec.update({
             "mission": "loading" if stopped else "to_hospital",
             "loading_started": False,
+            "loading_since": now,
             "hospital": name,
             "route_edges": new_route,
+            # nav_rows now covers new_route, so it matches route_edges and
+            # geometry — the driver page no longer drops the first turn
             "nav_rows": rows,
             "geometry": self.router.route_geometry(new_route),
-            "planned_length": rec["planned_length"] + rows[-1]["dist_m"],
+            "planned_length": rec["planned_length"] + add_m,
             "eta_s": rec["eta_s"] + eta2 + load,
             "exp_signal_wait_s": round(rec["exp_signal_wait_s"] + exp2, 1),
             "free_flow_s": round(rec["free_flow_s"] + ff2 + load, 1),
             "signals_on_route": rec["signals_on_route"]
-                                + sum(1 for r in rows if r["signal"]),
+                                + sum(1 for r in tail if r["signal"]),
             "per_signal": rec["per_signal"] + per2,
             "desc": rec["desc"] + f" -> {name}",
         })
         loading_txt = (f"loading patient ({load:.0f} s, corridor paused); "
                        if stopped else "")
+        # NOT "reached the scene": this fires one edge out, and the arrival
+        # is stamped by _stamp_scene_arrival when the unit is really there
         self.ops.emit(now, "reroute",
-                      f"{amb_id} reached the incident scene — {loading_txt}"
+                      f"{amb_id} on final approach to the incident scene — "
+                      f"{loading_txt}"
                       f"REROUTED to the nearest hospital by travel time: "
-                      f"{name} (Dijkstra, {rows[-1]['dist_m'] / 1000:.1f} km, "
+                      f"{name} (Dijkstra, {add_m / 1000:.1f} km, "
                       f"ETA {eta2:.0f} s, "
-                      f"{sum(1 for r in rows if r['signal'])} signals) — "
+                      f"{sum(1 for r in tail if r['signal'])} signals) — "
                       f"the signal corridor follows the new route", "warn",
                       actor=amb_id, case=rec["case"])
 
@@ -839,8 +1100,9 @@ class Dispatcher:
         for amb_id, rec in self.info.items():
             if rec["departed"] is None or rec["arrived"] is not None:
                 continue
-            if rec.get("mission") == "loading":
-                continue
+            if (rec.get("mission") == "loading"
+                    and rec.get("loading_started")):
+                continue      # genuinely halted at the scene, not stuck
             try:
                 odo = results.get(amb_id, {}).get(tc.VAR_DISTANCE)
                 if odo is None:
@@ -868,7 +1130,12 @@ class Dispatcher:
                 cur_edge = traci.vehicle.getRoadID(amb_id)
                 if cur_edge.startswith(":") or cur_edge not in cur_route:
                     cur_edge = cur_route[min(idx, len(cur_route) - 1)]
-                remaining = cur_route[cur_route.index(cur_edge):]
+                # cut at the ROUTE INDEX: .index() picks the first
+                # occurrence and is wrong on a route that revisits an edge
+                cut = idx if (idx < len(cur_route)
+                              and cur_route[idx] == cur_edge) \
+                    else cur_route.index(cur_edge)
+                remaining = cur_route[cut:]
             except (traci.TraCIException, ValueError):
                 continue
             if len(remaining) < 3:
@@ -910,31 +1177,49 @@ class Dispatcher:
             except traci.TraCIException:
                 continue
             rows = self.router.nodal_analysis(alt, live=True)
-            rec["route_edges"] = alt
+            # SUMO's setRoute KEEPS the already-driven prefix, so
+            # getRouteIndex stays in the FULL route's frame.  The record
+            # must hold that same list, or every later test that compares an
+            # index against it (the scene-arrival test above) compares an
+            # index into one list with the length of another.
+            try:
+                full = list(traci.vehicle.getRoute(amb_id))
+            except traci.TraCIException:
+                full = alt
+            rec["route_edges"] = full
+            # nav_rows / geometry stay on `alt`: they legitimately describe
+            # the REMAINING leg the driver is shown
             rec["nav_rows"] = rows
             rec["geometry"] = self.router.route_geometry(alt)
-            rec["signals_on_route"] = sum(1 for r in rows if r["signal"])
             rec["stuck_mark"] = None
-            # The plan CHANGED: the distance and ETA now on record must be
-            # the plan the unit is actually driving.  Keeping the abandoned
-            # figures would make the runs table quote kilometres nobody
-            # drove and the driver's phone count down to the wrong place.
-            # Distance already covered on the old plan is preserved, so the
-            # total stays a real end-to-end distance.
-            try:
-                idx = traci.vehicle.getRouteIndex(amb_id)
-            except traci.TraCIException:
-                idx = 0
-            done_m = 0.0
-            for eid in rec.get("route_edges_done", []):
+            # The plan CHANGED: the signal model and the free-flow bound
+            # must follow it, or the arrival analysis credits the green wave
+            # with red-light time on a route nobody drove.  Drop the
+            # abandoned tail, add the new one; the already-driven leg's
+            # contributions (including _begin_return_leg's) stay untouched.
+            _, per_drop = self._expected_signal_wait(
+                self.router.nodal_analysis(remaining, live=True))
+            _, per_add = self._expected_signal_wait(rows)
+            keep = max(0, len(rec["per_signal"]) - len(per_drop))
+            rec["per_signal"] = rec["per_signal"][:keep] + per_add
+            rec["exp_signal_wait_s"] = round(
+                sum(p["exp_wait_s"] or 0.0 for p in rec["per_signal"]), 1)
+            rec["signals_on_route"] = len(rec["per_signal"])
+            rec["free_flow_s"] = round(rec["free_flow_s"]
+                                       - self._free_flow_exempt(remaining)
+                                       + self._free_flow_exempt(alt), 1)
+            # The distance on record must be the plan the unit is actually
+            # driving, END TO END.  The route SUMO now holds already is
+            # driven prefix + remaining, so read it back rather than trying
+            # to re-derive the driven part: re-slicing `alt` credited edges
+            # still AHEAD of the unit and dropped every metre already driven.
+            total_m = 0.0
+            for eid in full:
                 try:
-                    done_m += self.net.getEdge(eid).getLength()
+                    total_m += self.net.getEdge(eid).getLength()
                 except Exception:
                     pass
-            rec["route_edges_done"] = (rec.get("route_edges_done", [])
-                                       + alt[:max(0, idx)])
-            rec["planned_length"] = round(done_m + (rows[-1]["dist_m"]
-                                                    if rows else 0), 0)
+            rec["planned_length"] = round(total_m, 0)
             rec["eta_s"] = round(now - (rec.get("departed") or now)
                                  + (rows[-1]["eta_s"] if rows else 0), 0)
             rec["replans"] = rec.get("replans", 0) + 1
@@ -1028,6 +1313,10 @@ class Dispatcher:
         rec = self.info.get(veh_id)
         if rec is None or rec["arrived"] is not None:
             return
+        # a unit that reached the scene must not leave the map without its
+        # response time: try the real test first, then the last resort
+        self._stamp_scene_arrival(veh_id, rec, now)
+        self._stamp_scene_arrival(veh_id, rec, now, at_close=True)
         rec["arrived"] = now
         if rec["departed"] is not None:
             duration = now - rec["departed"]
@@ -1044,7 +1333,11 @@ class Dispatcher:
             # camera confirmed, that lost every arbitration, or that ran
             # while preemption was disarmed got no corridor at all: its run
             # is a baseline, and claiming a saving for it would invent one.
-            had_wave = junctions_preempted > 0
+            # A run whose scene stop was never taken spent its hospital leg
+            # outside the corridor system and outside delay attribution, so
+            # its measured signal wait is not comparable either.
+            had_wave = (junctions_preempted > 0
+                        and not rec.get("load_stop_missed"))
             recovered = max(0.0, exp - msig) if had_wave else 0.0
             est_without = duration + recovered
             metrics.analysis.append({
@@ -1108,6 +1401,8 @@ class Dispatcher:
         for amb_id, rec in self.info.items():
             if (rec["departed"] is not None and rec["arrived"] is None
                     and amb_id not in current_ids):
+                # a scene it did reach still owes a response time
+                self._stamp_scene_arrival(amb_id, rec, now, at_close=True)
                 rec["arrived"] = now
                 self.ops.emit(now, "error",
                               f"{amb_id} LEFT THE SIMULATION UNEXPECTEDLY "
@@ -1123,16 +1418,35 @@ class Dispatcher:
 
     def active_ambulances(self, lights_only=True):
         """lights_only=True yields the corridor consumers: lights on and not
-        paused at the scene loading a patient."""
+        PAUSED at the scene loading a patient.  A unit still driving its
+        final approach to the stop point is in mission "loading" but has not
+        started loading — it is moving, with lights on, and must keep its
+        corridor."""
         return [amb_id for amb_id, rec in self.info.items()
                 if rec["departed"] is not None and rec["arrived"] is None
                 and (not lights_only
-                     or (rec["lights"] and rec.get("mission") != "loading"))]
+                     or (rec["lights"]
+                         and not (rec.get("mission") == "loading"
+                                  and rec.get("loading_started"))))]
 
-    def navigation(self):
-        """Payload for the navigation page and route overlays."""
-        out = []
-        for amb_id, rec in list(self.info.items()):
+    NAV_HISTORY = 12   # completed missions kept in the navigation payload
+
+    def navigation(self, detail=None):
+        """Payload for the navigation page and route overlays.
+
+        Every mission still in flight plus the most recent NAV_HISTORY
+        closed ones, in full.  Older closed missions are dropped: the page
+        draws rows/geometry for whatever it lists, so an entry is complete
+        or absent — and uncapped this payload grows by ~9 kB per mission
+        for ever and is re-sent every 2 s to two pollers.  `detail` keeps
+        one named mission whatever its age.
+        """
+        out, done = [], 0
+        for amb_id, rec in reversed(list(self.info.items())):
+            if rec["arrived"] is not None and amb_id != detail:
+                if done >= self.NAV_HISTORY:
+                    continue
+                done += 1
             out.append({
                 "id": amb_id,
                 "desc": rec["desc"],
@@ -1148,4 +1462,6 @@ class Dispatcher:
                 "rows": rec["nav_rows"],
                 "geometry": rec["geometry"],
             })
+        out.reverse()   # insertion order: navigation.html defaults the
+                        # selector to ids[ids.length - 1], the newest unit
         return out

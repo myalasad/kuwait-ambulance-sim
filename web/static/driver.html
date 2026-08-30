@@ -165,13 +165,19 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let network = null, nav = null, frame = null, selected = null;
+// the network model can be switched from another screen; this page's road
+// geometry is fetched once, so a frame from a different city must never be
+// drawn over it (see index.html)
+let NET_SCENARIO = null, reloading = false;
 let edgesM = null, minLat, maxLat, minLon, maxLon, KX;
 const KY = 110540;
 
 function toM(lat, lon) { return [(lon - minLon) * KX, (lat - minLat) * KY]; }
 
 fetch("/api/network").then(r => r.json()).then(n => {
+  if (n.error) return;
   network = n;
+  NET_SCENARIO = n.scenario;
   const [[a, b], [c, d]] = n.bounds;
   minLat = Math.min(a, c); maxLat = Math.max(a, c);
   minLon = Math.min(b, d); maxLon = Math.max(b, d);
@@ -222,6 +228,10 @@ let ws = null;
   ws = new WebSocket(`${scheme}://${location.host}/ws`);
   ws.onmessage = ev => {
     const f = JSON.parse(ev.data);
+    if (f.scenario && NET_SCENARIO && f.scenario !== NET_SCENARIO) {
+      if (!reloading) { reloading = true; location.reload(); }
+      return;
+    }
     if (!f.cars) return;
     frame = f;
     if (!KX) return;

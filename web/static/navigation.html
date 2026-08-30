@@ -108,6 +108,10 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let network = null, nav = null, selected = null;
+// this page polls /api/navigation and draws it over roads fetched once; if
+// another screen switched the network model, reload rather than draw the
+// new city's routes on the old city's streets
+let NET_SCENARIO = null, reloading = false;
 
 // The routing basis is a per-run fact (Markov weights can be off, and a
 // failed Dijkstra falls back to SUMO's own router), so the box states the
@@ -119,12 +123,19 @@ const ALGO_IDLE = `The driver's navigation and the signal corridor are the
   ambulance reaches next. Dispatch an ambulance to see which router and
   weights produced its corridor.`;
 
-fetch("/api/network").then(r => r.json()).then(n => { network = n; draw(); });
+fetch("/api/network").then(r => r.json()).then(n => {
+  if (n.error) return;
+  network = n; NET_SCENARIO = n.scenario; draw();
+});
 
 async function poll() {
   try {
     const r = await fetch("/api/navigation");
     nav = await r.json();
+    if (nav.scenario && NET_SCENARIO && nav.scenario !== NET_SCENARIO) {
+      if (!reloading) { reloading = true; location.reload(); }
+      return;
+    }
     if (nav.clock) $("clock").textContent = nav.clock;
     const sel = $("amb");
     const ids = nav.ambulances.map(a => a.id);

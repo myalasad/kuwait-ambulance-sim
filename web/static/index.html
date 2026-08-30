@@ -116,6 +116,8 @@
   #ticker .tick.fade { opacity: 0; transition: opacity .6s; }
   @keyframes tickin { from { opacity: 0; transform: translateY(-8px); } }
   @keyframes legendflashred { 50% { background: #3a1414; } }
+  /* the ring swatch is transparent: blink its border, not its background */
+  @keyframes legendflashring { 50% { border-color: #3a2f10; } }
 
   #map { flex: 1; height: 100vh; background: #0b0e14; }
   #overlay { position: absolute; inset: 0; pointer-events: none; z-index: 500; }
@@ -159,8 +161,7 @@
   <div>
     <h1><span class="flag"></span>Kuwait City — Ambulance Green Wave</h1>
     <div class="sub">SUMO microsimulation · real Kuwait road networks (OSM) ·
-      camera detection → Dijkstra corridor → flashing-amber green-wave
-      preemption</div>
+      camera detection → Dijkstra corridor → green-wave preemption</div>
   </div>
 
   <nav style="flex-wrap:wrap">
@@ -276,9 +277,9 @@
       <span><i style="background:#22c55e"></i>approach green</span>
       <span><i style="background:#ef4444"></i>approach red</span>
       <span><i style="background:#f0b429"></i>amber transition</span>
-      <span><i style="background:#f0b429;animation:legendflash 1s steps(2) infinite"></i>flashing amber (hold — cross street yields)</span>
+      <span><i style="background:#f0b429;animation:legendflash 1s steps(2) infinite"></i>junction blinking amber — EMERGENCY hold in progress</span>
       <span><i style="background:#ef4444;animation:legendflashred 1s steps(2) infinite"></i>flashing red (cross approach — full stop)</span>
-      <span><i style="background:#ef4444;box-shadow:0 0 6px #ef4444;animation:legendflashred 1s steps(2) infinite"></i>purposely enabled (junction blinks red + red ring)</span>
+      <span><i class="ring" style="border-color:#f0b429;box-shadow:0 0 6px #f0b429;animation:legendflashring 1s steps(2) infinite"></i>purposely enabled (junction blinks amber + amber ring + 🚨 label)</span>
       <span><i class="ring" style="border-color:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>early green (lone traffic) — cyan ring + label</span>
       <span><i class="ring" style="border-color:#f0b429;box-shadow:0 0 6px #f0b429"></i>enabling / restoring — amber ring + label</span>
       <span><i style="background:#22d3ee;box-shadow:0 0 6px #22d3ee"></i>incident area (click to dispatch)</span>
@@ -331,6 +332,12 @@ fitCanvas();
 new ResizeObserver(fitCanvas).observe(map.getContainer());
 
 // ------------------------------------------------------------ network layer
+// The network model can be switched from ANY screen ("Apply network model").
+// The static layer below (roads, junction names, approach indices) is fetched
+// once, so a screen that missed the restart would draw the new city's traffic
+// on the old city's geometry and still report "live".  Every live frame
+// carries its scenario; a mismatch means this page is stale — reload it.
+let NET_SCENARIO = null, reloading = false;
 let tlsStatic = [];
 const tlsName = new Map();   // tls id -> "J-014 · Street × Street"
 const jname = id => tlsName.get(id) || "junction";
@@ -338,6 +345,7 @@ const govOf = name => { const m = name.match(/\(([^)]+)\)\s*$/); return m ? m[1]
 const plain = name => name.replace(/\s*\([^)]*\)\s*$/, "");
 fetch("/api/network").then(r => r.json()).then(net => {
   if (net.error) return;
+  NET_SCENARIO = net.scenario;
   const major = [], minor = [];
   for (const e of net.edges)
     (e.prio >= 9 || e.lanes >= 3 ? major : minor).push(e.pts);
@@ -508,7 +516,7 @@ connect();
 // live scenario ticker: every pill is a REAL action from the operations
 // log, shown the moment it happens — never a canned statement
 const TICKER_RULES = [
-  [/PURPOSELY ENABLED/, "#ef4444"],
+  [/PURPOSELY ENABLED/, "#f0b429"],
   [/hardened to RED/, "#ef4444"],
   [/confirmed .* green corridor|Control centre confirmed/, "#4ea0ff"],
   [/CALL QUEUED|QUEUED CALL served/, "#f0b429"],
@@ -554,6 +562,18 @@ function advanceTrack(p, wx, wy, ang, tNow) {
 
 function onFrame(ev) {
   const f = JSON.parse(ev.data);
+  // a different city than the one this page's static layer was built for:
+  // someone applied a new network model elsewhere.  Never render it over
+  // the old roads and names — reload and re-fetch instead.  (Warm-up and
+  // progress frames carry no scenario and pass straight through.)
+  if (f.scenario && NET_SCENARIO && f.scenario !== NET_SCENARIO) {
+    if (!reloading) {
+      reloading = true;
+      setStatus(false, "network model changed — reloading…");
+      location.reload();
+    }
+    return;
+  }
   syncControls(f);                  // pause/resume + speed sync on EVERY frame
   if (f.error) setStatus(false, f.error);
   // an idle heartbeat is a replay of the last live frame with its event
@@ -873,14 +893,20 @@ function drawMiniCar(x, y, angDeg, color, mode, zoom) {
 // (preemption holds the corridor; cross approaches blink amber = yield),
 // else red
 function apprColor(state, idx) {
-  let amber = false, flash = false;
+  let amber = false, flash = false, known = false;
   for (const i of idx) {
     const ch = state[i];
+    // a stale approach index can point past the end of the state string;
+    // this page knows nothing about that link, so it must not vote
+    if (ch === undefined) continue;
+    known = true;
     if (ch === "G" || ch === "g") return "#22c55e";
     if (ch === "y" || ch === "Y") amber = true;
     if (ch === "o" || ch === "O") flash = true;
   }
-  return amber ? "#f0b429" : flash ? "flash" : "#ef4444";
+  // "unknown" is NOT red: a stale approach index must never assert a stop
+  // that the controller never ordered
+  return amber ? "#f0b429" : flash ? "flash" : known ? "#ef4444" : "unknown";
 }
 
 // per-approach signal: the SAME 3-lamp fixture as the junction housing,
@@ -952,7 +978,10 @@ function drawApproachSignal(x, y, color, zoom, blinkOn) {
   // "flash": cross-street flasher during a corridor hold — the amber lamp
   // blinks (~1 Hz); "flashred": hardened cross approach, the red lamp
   // blinks (emergency stop).  No other lamp is lit while blinking.
-  const lit = color === "flash" ? (blinkOn ? 1 : -1)
+  // "unknown": nothing is known about this approach (stale index) — light
+  // no lamp rather than claim a red
+  const lit = color === "unknown" ? -1
+            : color === "flash" ? (blinkOn ? 1 : -1)
             : color === "flashred" ? (blinkOn ? 0 : -1)
             : color === "#22c55e" ? 2 : color === "#f0b429" ? 1 : 0;
   const spr = fixtureSprite(lit, s);
@@ -970,13 +999,15 @@ function roundRect(c, x, y, w, h, r) {
 }
 
 // pseudo-3D traffic light: dark housing on a pole shadow, three lamps.
-// A junction under EMERGENCY control blinks its red lamp for the entire
-// hold — it must read as an emergency, never as a calm green (the
-// corridor's own approach fixture still shows its green).
+// A junction under EMERGENCY control blinks its AMBER lamp for the whole
+// hold: amber is the "emergency in progress here" indicator, while RED is
+// reserved for its literal meaning — every approach that is not on the
+// ambulance's route is stopped.  The corridor's own approach fixture
+// keeps showing its green.
 function drawSignalHousing(cx, cy, mode, aggState, label, now, s = 1) {
   const emergency = mode === "preempted" || mode === "clearing";
   const blinkOn = Math.floor(now / 500) % 2 === 0;
-  const lit = emergency ? (blinkOn ? 0 : -1)
+  const lit = emergency ? (blinkOn ? 1 : -1)
             : mode === "demand" ? 2
             : mode === "transition" || mode === "restoring" ? 1
             : /[Gg]/.test(aggState) ? 2 : 0;
@@ -986,7 +1017,7 @@ function drawSignalHousing(cx, cy, mode, aggState, label, now, s = 1) {
     const pulse = (15 + 4 * Math.sin(now / 170)) * s;
     ctx.beginPath(); ctx.arc(cx, cy, pulse, 0, 7);
     ctx.strokeStyle = emergency
-      ? (blinkOn ? "rgba(239,68,68,.95)" : "rgba(239,68,68,.35)")
+      ? (blinkOn ? "rgba(240,180,41,.98)" : "rgba(240,180,41,.32)")
       : mode === "demand"
       ? "rgba(34,211,238,.9)" : "rgba(240,180,41,.9)";
     ctx.lineWidth = 2.5; ctx.stroke();
@@ -1174,6 +1205,7 @@ function render(now) {
           ck = "flashred";
         const color = ck === "flash" ? (blinkOn ? "#f0b429" : "#3a2f10")
                     : ck === "flashred" ? (blinkOn ? "#ef4444" : "#3a1414")
+                    : ck === "unknown" ? "#5b6473"   // grey: state unknown
                     : ck;
         const bx = px0 - tx * 13, by = py0 - ty * 13;    // behind the bar
         ctx.beginPath();
@@ -1254,7 +1286,7 @@ function render(now) {
       if (zoom >= 14.5) {
         const who = `${t.code} ${t.name}`;
         if (st.m === "preempted" || st.m === "clearing")
-          label = { text: `🚨 PURPOSELY ENABLED · ${who} · ${st.amb}`, color: "#ff6b6b" };
+          label = { text: `🚨 PURPOSELY ENABLED · ${who} · ${st.amb}`, color: "#f0b429" };
         else if (st.m === "transition")
           label = { text: `ENABLING · ${who}`, color: "#f0b429" };
         else if (st.m === "restoring")

@@ -59,6 +59,7 @@ def main():
     m.period = 30.0
     m._pending = []
     m._slice_i = 0
+    m.generation = 0   # bumped per sample rotation; keys the forecast cache
     # cached forecast equals the uncached expm at the bucket-aligned horizon
     row = m.forecast("e1", 73.0)
     want = expm(c2.Q(), 60.0)[0]                 # 73 s -> 60 s bucket

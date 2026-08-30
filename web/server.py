@@ -29,12 +29,16 @@ class Hub:
     def __init__(self):
         self.sim = None
         self.clients = set()
+        self._closing = set()      # strong refs: close tasks must not be GC'd
         self.commands = asyncio.Queue()
         self.speed = 1.0
         self.paused = False
         self.network_cache = None
         self.error = None          # fatal sim error message, shown to clients
         self.last_snap = None
+        self.run_id = 0            # bumped on every (re)start: lets the
+                                   # operations console notice a new run and
+                                   # drop its stale `since` cursor
 
     def start_sim(self, preemption=True):
         cfg = SimConfig()
@@ -49,8 +53,20 @@ class Hub:
         if getattr(self, "traffic_level", None) in ("easy", "medium", "extreme"):
             cfg.traffic_level = self.traffic_level
         sim = Simulation(ROOT, cfg, preemption=preemption)
-        sim.start()                # raises on failure; self.sim stays valid
+        try:
+            sim.start()
+        except Exception:
+            # a start that fails AFTER traci.start() leaves a live TraCI
+            # connection + SUMO child with no owner; the label stays claimed
+            # and every later Reset dies with "Connection 'default' is
+            # already active."
+            try:
+                sim.close()
+            except Exception:
+                pass
+            raise
         self.sim = sim
+        self.run_id += 1
         self.network_cache = self.sim.network_payload()
         # which models bake their demand into the route file: the Apply
         # confirmation must not claim day/traffic level scale a scenario
@@ -127,6 +143,13 @@ class Hub:
         snap["speed"] = self.speed
         snap["paused"] = self.paused
         snap["error"] = None
+        # every live frame carries the city it came from: a screen that
+        # missed an "Apply network model" restart would otherwise draw the
+        # new city's traffic on the old city's roads and still read "live".
+        # Heartbeats inherit it via dict(self.last_snap); warm-up/progress
+        # frames are built fresh without it, and the client guard skips
+        # frames that carry no scenario.
+        snap["scenario"] = self.sim.cfg.scenario
         self.last_snap = snap
         return json.dumps(snap)
 
@@ -157,13 +180,33 @@ class Hub:
         try:
             while sim.time < target:
                 await loop.run_in_executor(None, burst)
-                frame = {"t": sim.time, "paused": False, "speed": self.speed,
-                         "error": None,
+                # the controls are LIVE while the city warms: without this
+                # drain, Pause / Reset / Dispatch sit in the queue for the
+                # whole warm-up and every button on the page looks dead
+                await self._drain_commands()
+                if self.sim is not sim:
+                    return      # a reset closed and replaced this sim; the
+                                # TraCI connection now belongs to the new
+                                # one, so stepping `sim` would silently
+                                # drive it.  Must be `return`, not `break`:
+                                # falling through would save the wrong warm
+                                # state and mark the dead sim warmed.
+                frame = {"t": sim.time, "paused": self.paused,
+                         "speed": self.speed, "error": self.error,
                          "warmup": {"done": round(sim.time),
                                     "total": round(target)}}
                 await self._broadcast(frame)
-            if target > 0:
+                if self.paused or self.error:
+                    return      # _warmed stays False: run() heartbeats the
+                                # pause, and Resume re-enters _warmup here
+                                # to finish the remaining seconds
+            if target > 0 and not getattr(sim, "_warm_dirty", False):
                 await loop.run_in_executor(None, sim.save_warm_state)
+            # (a mission dispatched DURING the warm-up must not be frozen
+            #  into the cached city: every later start at this
+            #  scenario/hour would load a phantom ambulance that no
+            #  dispatcher record owns.  The controls being live during the
+            #  warm-up is what makes that reachable at all.)
         except Exception as exc:
             self.error = f"Warm-up failed: {exc} — use Reset"
             print(self.error, file=sys.stderr)
@@ -206,6 +249,13 @@ class Hub:
                                      # hospitals and districts
         self.last_snap = None
         self.error = None
+        # a restart is a fresh run: the old pause state must not survive it.
+        # run() checks `self.paused` before it checks `_warmed`, so leaving
+        # it set means the rebuilt sim is never warmed and never stepped —
+        # the dashboard heartbeats on "Warming up … 0%" (green dot) forever.
+        # Clearing it here also makes the "paused": False the progress
+        # frames below already claim actually true.
+        self.paused = False
         await self._broadcast({"t": 0, "paused": False, "speed": self.speed,
                                "error": None,
                                "warmup": {"done": 0, "total": 1}})
@@ -242,6 +292,11 @@ class Hub:
             if isinstance(dest, list):
                 dest = tuple(dest)
             self.sim.dispatch(origin, dest)
+            if not getattr(self.sim, "_warmed", False):
+                # dispatched while the city was still warming: this run's
+                # state is no longer a clean baseline, so it must not be
+                # written to the warm-state cache (see _warmup)
+                self.sim._warm_dirty = True
         elif kind == "preemption":
             self.sim.set_preemption(bool(cmd.get("on", True)))
         elif kind == "decide":
@@ -274,6 +329,20 @@ class Hub:
                 dead.append(ws)
         for ws in dead:
             self.clients.discard(ws)
+            # A dropped client MUST be told, or the browser never fires
+            # ws.onclose, never reconnects, and sits on a frozen city with
+            # the chip still reading "live".  Fire-and-forget: awaiting
+            # close() on a wedged socket would stall the sim loop for
+            # everyone.
+            task = asyncio.get_event_loop().create_task(self._close_quietly(ws))
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
+
+    async def _close_quietly(self, ws):
+        try:
+            await ws.close(code=1011)
+        except Exception:
+            pass        # already gone, or the socket is wedged: nothing to do
 
 
 hub = Hub()
@@ -327,14 +396,18 @@ async def how_page():
 @app.get("/api/operations")
 async def api_operations(since: int = 0):
     if hub.sim is None or hub.sim.ops is None:
-        return JSONResponse({"events": [], "seq": 0})
+        return JSONResponse({"events": [], "seq": 0, "run": 0})
     events = hub.sim.ops.since(since)
-    seq = hub.sim.ops.seq
+    # cursor from the delivered delta, never from the live counter: the
+    # frame worker emits on another thread and can bump ops.seq between
+    # these two reads, which would advance the client past an event it
+    # never received
+    seq = events[-1]["seq"] if events else since
     pending = []
     for pd in hub.sim.controller.pending_decisions():
         pd = dict(pd); pd["tls_name"] = hub.sim.places.jn(pd["tls"])
         pending.append(pd)
-    return JSONResponse({"events": events, "seq": seq,
+    return JSONResponse({"events": events, "seq": seq, "run": hub.run_id,
                          "pending": pending,
                          "clock": hub.sim.clock()})
 
@@ -364,6 +437,7 @@ async def api_navigation():
         "ambulances": hub.sim.dispatcher.navigation(),
         "tls_status": hub.sim.controller.status(),
         "clock": hub.sim.clock(),
+        "scenario": hub.sim.cfg.scenario,
     })
 
 

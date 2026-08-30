@@ -66,10 +66,12 @@ python scripts/download_map.py       # fetch downtown Kuwait City from OSM
 python scripts/build_network.py      # netconvert + 3 h background traffic (cfg.demand_hours)
 ```
 
-The build targets the **downtown** scenario by default; **metro** (all six
-governorates) and **showcase** (3-district demo) are selected via
-`SimConfig(scenario=...)` or the live UI's scenario command — there is no
-`--scenario` CLI flag.
+The build targets the **downtown** scenario by default; `--scenario metro`
+builds the all-six-governorates network the same way. **showcase** (the
+3-district demo) is *derived* from the downtown demand and is built by
+`python scripts/build_showcase.py` — `build_network.py` refuses it.  Which
+scenario the simulation then *runs* is chosen with `SimConfig(scenario=...)`
+or the live UI's scenario command.
 
 ## Run
 

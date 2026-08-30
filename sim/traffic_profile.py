@@ -59,20 +59,32 @@ def hourly_profile(root, day_type="weekday"):
         with open(path) as f:
             for row in csv.reader(f):
                 if len(row) >= 2 and row[0].strip().isdigit():
-                    profile[int(row[0]) % 24] = max(0.02, float(row[1]))
+                    try:
+                        profile[int(row[0]) % 24] = max(0.02, float(row[1]))
+                    except ValueError:
+                        raise ValueError(f"{path}: bad multiplier "
+                                         f"{row[1]!r} for hour {row[0]!r}")
         print(f"Demand profile overridden by {path}")
     return profile
 
 
-def describe(day_type, level, hour, factor=1.0):
+def describe(day_type, level, hour, factor=1.0, profile=None):
     """Plain words for the UI: 'Weekday 15:00 — heavy'.
 
     ``factor`` is the global demand factor actually applied to the
     simulation (``SimConfig.demand_factor``).  It MUST be passed by every
     caller: the multiplier and the word printed on screen have to be the
     demand the model is really running, not the calendar figure before
-    scaling."""
-    m = (PROFILES.get(day_type, WEEKDAY).get(hour % 24, 0.3)
+    scaling.
+
+    ``profile`` is the hourly shape ACTUALLY in use — i.e. the result of
+    ``hourly_profile()``, which data/real_counts.csv may have overridden.
+    It MUST be passed by every caller for the same reason: with measured
+    counts dropped in, the calendar shape below is not what SUMO is
+    running.  It defaults to the calendar shape only so that callers with
+    no simulation in hand (docs, tests) still work."""
+    shape = PROFILES.get(day_type, WEEKDAY) if profile is None else profile
+    m = (shape.get(hour % 24, 0.3)
          * LEVELS.get(level, 1.0) * factor)
     word = ("near-empty" if m < 0.15 else "light" if m < 0.45
             else "moderate" if m < 0.8 else "heavy" if m < 1.3 else "saturated")

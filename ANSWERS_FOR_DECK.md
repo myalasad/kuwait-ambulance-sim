@@ -338,12 +338,17 @@ purpose — a ministry has to be able to audit why a light went green."
     the transit-signal-priority sense (green extension / red truncation within
     the cycle). Use **preemption** and define it in the same breath: *"the
     junction's normal programme is interrupted, then handed straight back."*
-91. ✅ **Phase-hold preemption** = the controller jumps to, and holds, **the
-    junction's own real programme phase** that serves the ambulance's approach —
-    rather than writing a hand-crafted "everything red" state. This is what real
-    preemption controllers do, and it keeps compatible movements and drain paths
-    alive so the intersection cannot deadlock itself. (Implementation note:
-    `setPhase`, never `setRedYellowGreenState`, so save/restore survives.)
+91. ✅ **Corridor-hold preemption** = the controller builds and holds a
+    purpose-made state for that one ambulance: **its approach on protected
+    green, every approach not on its route on solid red**. The state is derived
+    from the junction's own controlled-links table (`getControlledLinks`), so
+    only movements the junction really has are ever commanded, and the
+    same-approach drain links stay green so nothing is sealed in. Whenever the hold turns a
+    conflicting green to red, the **3 s amber + 2 s all-red clearance runs
+    first**, which is what empties the junction box — the hold itself never
+    has to. (Implementation note: the hold is written with
+    `setRedYellowGreenState`; the original `setProgram` / `setPhase` are saved
+    on entry and restored on release, so save/restore survives.)
     **Signals are never switched dark — dark signals cause collisions.**
 92. ✅ Yes — if the serving phase is already green it is simply held, with no
     amber transition needed.
@@ -504,10 +509,13 @@ harness is the answer to "prove it with two real runs".
 
 141. ✅ You have a real safety story and it is one of the deck's strongest
      slides — the whole Protocol page (sections 1–9) exists for this.
-142. ✅ By never writing a signal state by hand. The controller **holds one of
-     the junction's own real programme phases**, whose conflict matrix
-     `netconvert` already guarantees. Conflicting approaches are not
-     representable in a real phase.
+142. ✅ By construction, not by luck. The held state is built from the
+     junction's own controlled-links table, and **every link that is not on the
+     ambulance's route is set to red** — so no conflicting movement can be
+     green at the same time as the corridor, whatever the junction's geometry.
+     Whenever a conflicting movement is green, the **3 s amber + 2 s all-red
+     clearance runs before the hold is applied**, so the box is empty when the
+     corridor opens.
 143–144. ✅ Both preserved unconditionally: **3 s amber, 2 s all-red**, before
    every corridor green, and amber again on the way back to normal.
 145. ✅ Nothing leaves silently. Every ambulance carries an **A-case from

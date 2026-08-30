@@ -93,6 +93,25 @@ class DemandResponsiveController:
                 "arbitrated_junctions": len(self.tls_info),
                 "nonconflict_excluded": self.skipped_nonconflict}
 
+    def resubscribe(self):
+        """Re-arm every lane detector this module depends on.
+
+        loadState wipes ALL TraCI subscriptions, so after a warm start the
+        occupancy readings come back empty and early green silently dies:
+        every junction reads as unoccupied, no grant can ever fire, and the
+        fairness numbers report a city with no traffic in it.  The runner
+        calls this after loading a cached state."""
+        for info in self.tls_info.values():
+            for lanes in info["approach"].values():
+                for lane in lanes:
+                    traci.lane.subscribe(lane, [tc.LAST_STEP_VEHICLE_NUMBER])
+            for lanes in info.get("near", {}).values():
+                for lane in lanes:
+                    traci.lane.subscribe(lane, [tc.LAST_STEP_VEHICLE_NUMBER])
+        for lanes in self._all_complex_edges.values():
+            for lane in lanes:
+                traci.lane.subscribe(lane, [tc.LAST_STEP_VEHICLE_NUMBER])
+
     # ------------------------------------------------------------- topology
 
     def _build(self):
@@ -362,7 +381,14 @@ class DemandResponsiveController:
             if tls_id in excluded:
                 # preemption outranks us; drop any claim without touching
                 # the signal (the preemption controller owns it now)
-                self.claims.pop(tls_id, None)
+                claim = self.claims.pop(tls_id, None)
+                if claim is not None:
+                    self.ops.emit(now, "actuation",
+                                  f"Junction {self.ops.jn(tls_id)}: early green "
+                                  f"ended — an ambulance corridor takes priority "
+                                  f"at this junction", "info")
+                    # rule D3: cooldown also applies when a corridor takes the box
+                    self.cooldown[tls_id] = now + self.cfg.actuation_cooldown_s
                 self.pending.pop(tls_id, None)
                 # the preemption controller now drives the phases: our
                 # tripwire could no longer attribute what it sees to us

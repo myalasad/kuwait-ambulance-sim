@@ -24,9 +24,9 @@ from sim.runner import Simulation  # noqa: E402
 # from Amiri Hospital across downtown (2.1 / 3.4 / 2.7 km routed);
 # identical in every compared run.
 SCENARIO = [
-    (60.0, "Amiri Hospital", (29.3700, 47.9930)),   # central, Mubarak Al-Kabeer St side
-    (240.0, "Amiri Hospital", (29.3665, 47.9765)),  # western grid
-    (420.0, "Amiri Hospital", (29.3735, 48.0035)),  # east, Sharq side
+    (60.0, "Amiri Hospital (Capital)", (29.3700, 47.9930)),   # central, Mubarak Al-Kabeer St side
+    (240.0, "Amiri Hospital (Capital)", (29.3665, 47.9765)),  # western grid
+    (420.0, "Amiri Hospital (Capital)", (29.3735, 48.0035)),  # east, Sharq side
 ]
 
 

@@ -1,5 +1,7 @@
 """Core simulation wrapper: owns the TraCI connection, the preemption
 controller, the dispatcher, the operations log and per-step snapshots."""
+import dataclasses
+import hashlib
 import json
 import math
 import os
@@ -65,7 +67,14 @@ class Simulation:
             cmd += ["--lateral-resolution", str(self.cfg.lateral_resolution)]
         # time-of-day realism: the flat peak-rate demand base is scaled to
         # the chosen clock hour (01:00-05:00 -> near-empty Kuwaiti streets)
-        self._profile = hourly_profile(self.root, self.cfg.day_type)
+        # Load BOTH day shapes once (real_counts.csv is read here and only
+        # here, so network_payload() cannot re-read it — and re-print its
+        # notice — on every call).  `self._profile` is the shape actually
+        # driving --scale, and every reported demand number is derived from
+        # it, not from the calendar constant it may have overridden.
+        self._profiles = {k: hourly_profile(self.root, k) for k in PROFILES}
+        self._profile = self._profiles.get(self.cfg.day_type,
+                                           self._profiles["weekday"])
         self._level = LEVELS.get(self.cfg.traffic_level, 1.0)
         self._scale_hour = self.cfg.start_hour % 24
         # showcase-style scenarios bake their densities into the route file:
@@ -140,7 +149,8 @@ class Simulation:
                           "info")
         else:
             d0 = describe(self.cfg.day_type, self.cfg.traffic_level,
-                          self.cfg.start_hour, self.cfg.demand_factor)
+                          self.cfg.start_hour, self.cfg.demand_factor,
+                          self._profile)
             self.ops.emit(0.0, "system",
                           f"Simulation started: {self.cfg.label()}, "
                           f"{len(self._tls_static)} signalized junctions, "
@@ -153,7 +163,7 @@ class Simulation:
 
     # ------------------------------------------------- warm-state caching
 
-    WARM_STATE_VERSION = 1
+    WARM_STATE_VERSION = 2      # was 1 — invalidates every existing cache
 
     def _warm_state_path(self):
         key = (f"{self.cfg.scenario}_{self.cfg.day_type}_"
@@ -161,23 +171,43 @@ class Simulation:
         return os.path.join(self.root, "data", f"warmstate_{key}.xml.gz")
 
     def _warm_state_stamp(self):
+        """Everything that can change the city this cache holds.
+
+        The warm-up is a full step loop — DemandResponsiveController drives
+        every signal for its whole duration — so ANY config knob can change
+        the state that gets saved.  The whole config is therefore HASHED
+        rather than a hand-listed subset: the subset silently went stale
+        once already (actuation_*, sumocfg, real_counts.csv), and a stale
+        city loading after a config edit is a correctness failure, whereas
+        one extra cold warm-up is only a delay."""
         mtimes = {}
         sc = SCENARIOS.get(self.cfg.scenario, {})
-        for label, rel in (("routes", os.path.join("data",
-                                                   sc.get("routes", ""))),
-                           ("net", self.cfg.net_file),
-                           ("vtypes", os.path.join("data",
-                                                   "vtypes.add.xml"))):
+        for label, rel in (
+                ("routes", os.path.join("data", sc.get("routes", ""))),
+                ("net", self.cfg.net_file),
+                ("vtypes", self.cfg.vtype_file),
+                ("sumocfg", self.cfg.sumocfg),
+                ("counts", os.path.join("data", "real_counts.csv"))):
             try:
                 mtimes[label] = round(os.path.getmtime(
                     os.path.join(self.root, rel)))
             except OSError:
                 mtimes[label] = 0
+        # The profile is HASHED, never embedded: its int keys would come
+        # back as strings through json.load and the stamp would then never
+        # compare equal again.
+        blob = json.dumps(
+            {"cfg": dataclasses.asdict(self.cfg),
+             "profile": sorted((int(h), float(m)) for h, m in
+                               getattr(self, "_profile", {}).items()),
+             "static": bool(getattr(self, "_static_demand", False))},
+            sort_keys=True, default=str)
+        # seed stays OUTSIDE the hash: Simulation.__init__ lets the
+        # constructor seed override cfg.seed, so the asdict value alone is
+        # not authoritative.
         return {"v": self.WARM_STATE_VERSION, "mtimes": mtimes,
-                "warmup_s": self.cfg.warmup_s, "seed": self.seed,
-                "step": self.cfg.step_length,
-                "demand": self.cfg.demand_factor,
-                "latres": self.cfg.lateral_resolution}
+                "seed": self.seed,
+                "cfg": hashlib.sha256(blob.encode()).hexdigest()[:16]}
 
     def _drop_warm_state(self):
         for p in (self._warm_state_path(), self._warm_state_path() + ".json"):
@@ -221,6 +251,10 @@ class Simulation:
         for tls_id in traci.trafficlight.getIDList():
             traci.trafficlight.subscribe(tls_id,
                                          [tc.TL_RED_YELLOW_GREEN_STATE])
+        # ...and the early-green lane detectors, or every approach reads
+        # empty after a warm start and no early green can ever fire
+        if getattr(self, "actuation", None) is not None:
+            self.actuation.resubscribe()
         self.time = traci.simulation.getTime()
         if self.markov is not None:
             # restart the sampling grid at the loaded clock — otherwise
@@ -283,7 +317,7 @@ class Simulation:
             mult = (self._level * self.cfg.demand_factor
                     * self._profile.get(hour, 0.3))
             d = describe(self.cfg.day_type, self.cfg.traffic_level, hour,
-                         self.cfg.demand_factor)
+                         self.cfg.demand_factor, self._profile)
             try:
                 traci.simulation.setScale(mult)
                 self.ops.emit(self.time, "system",
@@ -517,7 +551,8 @@ class Simulation:
                               **describe(self.cfg.day_type,
                                          self.cfg.traffic_level,
                                          self._scale_hour,
-                                         self.cfg.demand_factor)}
+                                         self.cfg.demand_factor,
+                                         self._profile)}
 
         return {
             "t": self.time,
@@ -559,8 +594,11 @@ class Simulation:
             "start_hour": self.cfg.start_hour,
             "day_type": self.cfg.day_type,
             "traffic_level": self.cfg.traffic_level,
-            "profiles": {k: [round(LEVELS["medium"] * v[h], 2) for h in range(24)]
-                         for k, v in PROFILES.items()},
+            # the shapes ACTUALLY loaded (real_counts.csv included), not the
+            # calendar constants it may have overridden
+            "profiles": {k: [round(LEVELS["medium"] * p[h], 2)
+                             for h in range(24)]
+                         for k, p in self._profiles.items()},
             "levels": LEVELS,
             "demand_factor": self.cfg.demand_factor,
             "scenario": self.cfg.scenario,
