@@ -102,6 +102,14 @@
   .legend .districtctl { display: none; }
   @keyframes legendflash { 50% { background: #3a2f10; } }
 
+  /* the three fixed-density districts the simulation always runs */
+  #zones { display: grid; gap: 5px; }
+  #zones .zlabel { font-size: 11px; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--muted); margin-bottom: 1px; }
+  #zones .zone { font-size: 11.5px; color: #c6d0e0; line-height: 1.45; }
+  #zones .zone i { display: inline-block; width: 9px; height: 9px;
+    border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
   /* the server is running older code than the files on disk */
   #stalebar { position: absolute; top: 0; left: 0; right: 0; z-index: 2000;
     background: #7f1d1d; color: #fff; font: 700 13px/1.45 -apple-system,
@@ -226,37 +234,14 @@
       <button id="btn-pause">Pause</button>
       <button id="btn-reset">Reset</button>
     </div>
-    <div>
-      <label for="model">Network model</label>
-      <select id="model"></select>
-    </div>
-    <div id="clockctl-note" style="display:none;font-size:12px;color:var(--muted)">
-      Showcase: three fixed-density districts (dense core · normal ring ·
-      light waterfront) — the clock does not scale this demand.
-    </div>
-    <div class="clockctl">
-      <label for="daytype">Day</label>
-      <select id="daytype">
-        <option value="weekday">Weekday (Sun–Thu)</option>
-        <option value="weekend">Weekend (Fri–Sat)</option>
-      </select>
-    </div>
-    <div class="clockctl">
-      <label>Traffic level</label>
-      <div class="row" id="levels">
-        <button data-l="easy">Easy</button>
-        <button data-l="medium" class="on">Medium</button>
-        <button data-l="extreme">Extreme</button>
-      </div>
-    </div>
-    <div class="clockctl">
-      <label>Kuwait clock start: <span id="hourval">07:00</span>
-        <span id="hourword" style="float:right;color:var(--muted)"></span></label>
-      <input type="range" id="hour" min="0" max="23" step="1" value="7">
-      <div id="profbar" style="display:flex;gap:1px;height:16px;margin:4px 0 8px"></div>
-    </div>
-    <div>
-      <button id="btn-applytime">Apply day, traffic, time &amp; model (restarts)</button>
+    <div id="zones">
+      <div class="zlabel">Traffic zones</div>
+      <div class="zone"><i style="background:#ef4444"></i>Dense core — several
+        approaches busy, so signals stay on fair timers</div>
+      <div class="zone"><i style="background:#f0b429"></i>Normal ring — the
+        mixture: some junctions fair, some free</div>
+      <div class="zone"><i style="background:#22c55e"></i>Light waterfront —
+        a lone driver gets an early green instead of a timer</div>
     </div>
   </div>
 
@@ -432,25 +417,15 @@ fetch("/api/network").then(r => r.json()).then(net => {
     o.value = "A:" + a.name; o.textContent = plain(a.name);
     agroups.get(g).appendChild(o);
   }
-  if (net.start_hour !== undefined) {
-    $("hour").value = net.start_hour;
-    $("hourval").textContent = String(net.start_hour).padStart(2, "0") + ":00";
-  }
-  if (net.day_type) $("daytype").value = net.day_type;
-  if (net.traffic_level) setLevel(net.traffic_level);
-  PROFILES = net.profiles || {};
-  LEVELS = net.levels || { easy: 0.45, medium: 1, extreme: 1.8 };
-  DEMAND_FACTOR = net.demand_factor === undefined ? 1 : net.demand_factor;
-  STATIC_SCENARIOS = new Set(net.static_scenarios || []);
-  drawProfile();
-  const msel = $("model");
-  for (const [key, lbl] of Object.entries(net.scenarios || {})) {
-    const o = document.createElement("option");
-    o.value = key; o.textContent = lbl;
-    if (key === net.scenario) o.selected = true;
-    msel.appendChild(o);
-  }
-  if (net.code && net.code.stale) {
+  if (!net.code) {
+    // this page is read from disk on every load; a server without the code
+    // report predates the report itself, so it cannot be running this code
+    $("stalebar").style.display = "block";
+    $("stalebar").innerHTML =
+      `⚠ The simulation behind this page is running OLD code — it predates` +
+      ` this dashboard, so what you see here is not what it is running.` +
+      ` <b>Stop it and run <code>.venv/bin/python run_live.py</code> again.</b>`;
+  } else if (net.code.stale) {
     const mins = Math.round(net.code.age_s / 60);
     $("stalebar").style.display = "block";
     $("stalebar").innerHTML =
@@ -459,20 +434,6 @@ fetch("/api/network").then(r => r.json()).then(net => {
       `${mins >= 1 ? mins + " min" : "seconds"} after the simulation started.` +
       ` The pages reload from disk, the simulation does not:` +
       ` <b>restart run_live.py</b> to run what you are reading.`;
-  }
-  if (net.static_demand) {
-    for (const el of document.querySelectorAll(".clockctl"))
-      el.style.display = "none";
-    $("clockctl-note").style.display = "block";
-    // day/traffic/time are hidden here: the button's only job is the
-    // model switch, so say exactly that
-    $("btn-applytime").textContent = "Apply network model (restarts)";
-  } else {
-    for (const el of document.querySelectorAll(".clockctl"))
-      el.style.display = "";
-    $("clockctl-note").style.display = "none";
-    $("btn-applytime").textContent =
-      "Apply day, traffic, time & model (restarts)";
   }
   // The district legend row only tells the truth on a model that HAS
   // districts, so gate it exactly where the districts are drawn — both
@@ -1460,79 +1421,6 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && picking) { picking = null; setPickHint(null); }
 });
 
-let PROFILES = {}, LEVELS = { easy: 0.45, medium: 1, extreme: 1.8 };
-// the global demand factor the simulation actually applies: the bar and
-// the word must show the demand being run, not the calendar figure
-let DEMAND_FACTOR = 1;
-// models whose demand is baked into the route file: day type and traffic
-// level do not scale them, so the Apply prompt must not say they do
-let STATIC_SCENARIOS = new Set();
-let level = "medium";
-function setLevel(l) {
-  level = l;
-  for (const b of document.querySelectorAll("#levels button"))
-    b.classList.toggle("on", b.dataset.l === l);
-  drawProfile();
-}
-for (const b of document.querySelectorAll("#levels button"))
-  b.onclick = () => setLevel(b.dataset.l);
-$("daytype").onchange = drawProfile;
-function demandWord(m) {
-  return m < 0.15 ? "near-empty" : m < 0.45 ? "light" : m < 0.8 ? "moderate"
-       : m < 1.3 ? "heavy" : "saturated";
-}
-function drawProfile() {
-  const prof = PROFILES[$("daytype").value] || [];
-  const h = +$("hour").value;
-  const mult = (LEVELS[level] || 1) * DEMAND_FACTOR;
-  const bar = $("profbar");
-  bar.innerHTML = prof.map((v, i) =>
-    `<i class="${i === h ? "now" : ""}" title="${String(i).padStart(2,"0")}:00 · ${demandWord(v * mult)}" style="height:${Math.max(8, Math.min(100, v * mult * 55))}%"></i>`
-  ).join("");
-  const m = (prof[h] || 0) * mult;
-  $("hourword").textContent = prof.length ? `${demandWord(m)} · ${m.toFixed(2)} × peak` : "";
-}
-$("hour").oninput = e => {
-  $("hourval").textContent = String(e.target.value).padStart(2, "0") + ":00";
-  drawProfile();
-};
-$("btn-applytime").onclick = () => {
-  const h = +$("hour").value;
-  const m = $("model").value;
-  const day = $("daytype").value;
-  const label = $("model").selectedOptions[0].textContent;
-  const hh = String(h).padStart(2, "0");
-  // the SELECTED model decides what the restart will honour, not the running
-  // one: a static model bakes its demand into the route file, so promising
-  // that day and traffic level apply to it would be a claim the sim ignores
-  const q = STATIC_SCENARIOS.has(m)
-    ? `Restart on "${label}", Kuwait clock ${hh}:00? Fixed 3-district demand — day and traffic level do not scale it.`
-    : `Restart: ${day === "weekend" ? "Weekend" : "Weekday"} ${hh}:00, ${level} traffic, on "${label}"?`;
-  if (!confirm(q)) return;
-  send({ cmd: "reset", hour: h, scenario: m, day_type: day, traffic_level: level });
-  // the map on screen belongs to the OLD model until the server can hand us
-  // the new one: reload on identity, never on a timer.  A poll fired before
-  // the server has drained the reset command still sees the old payload, so
-  // "a 200 response" is not enough — the payload must BE the new scenario.
-  const want = { scenario: m, start_hour: h, day_type: day, traffic_level: level };
-  const t0 = Date.now();
-  const poll = () => {
-    if (Date.now() - t0 > 90000) {
-      $("btn-applytime").textContent = "Restart timed out — reload the page";
-      return;
-    }
-    fetch("/api/network", { cache: "no-store" }).then(r => r.json()).then(n => {
-      if (n.error) {                   // restart failed: say so, don't reload
-        $("btn-applytime").textContent = "Restart failed — use Reset";
-        return;
-      }
-      const ready = Object.keys(want).every(k => String(n[k]) === String(want[k]));
-      if (ready) location.reload(); else setTimeout(poll, 500);
-    }).catch(() => setTimeout(poll, 500));
-  };
-  $("btn-applytime").textContent = "Rebuilding network…";
-  setTimeout(poll, 500);
-};
 $("preemption").onchange = e => send({ cmd: "preemption", on: e.target.checked });
 $("speed").oninput = e => {
   const v = SPEEDS[+e.target.value];

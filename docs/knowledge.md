@@ -61,8 +61,12 @@ pages; it opens in VS Code with ready-made launch configurations.
   PURPOSELY ENABLED, EARLY GREEN, BACK TO NORMAL. Controls: dispatch
   (origin hospital or auto-nearest, incident scene from a map click or a
   named area), preemption on/off, follow ambulance, simulation speed
-  0.5×–16×, pause/reset, network model (downtown, all governorates, or the
-  3-district showcase), and the Kuwait clock start hour. KPIs, active ambulances with lights toggles,
+  0.5×–16×, and pause/reset. The dashboard always runs the 3-district
+  showcase — dense core, normal ring, light waterfront — with a key
+  explaining what each zone demonstrates; there is no model, day, traffic
+  level or clock control to set, because the districts replace them. The
+  calendar models (downtown, metro) remain available to headless runs via
+  SimConfig(scenario=...). KPIs, active ambulances with lights toggles,
   the operations feed and a legend are in the side panel.
 - **Driver (/driver)** — the phone mounted in the ambulance: heading-up
   navigation with the corridor drawn ahead, the next signal's state ("will
