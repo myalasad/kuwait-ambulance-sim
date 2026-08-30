@@ -102,6 +102,26 @@
   .legend .districtctl { display: none; }
   @keyframes legendflash { 50% { background: #3a2f10; } }
 
+  /* the server is running older code than the files on disk */
+  #stalebar { position: absolute; top: 0; left: 0; right: 0; z-index: 2000;
+    background: #7f1d1d; color: #fff; font: 700 13px/1.45 -apple-system,
+    "Segoe UI", sans-serif; padding: 9px 16px; display: none;
+    box-shadow: 0 2px 12px rgba(0,0,0,.5); }
+  #stalebar code { background: rgba(0,0,0,.35); border-radius: 4px;
+    padding: 1px 6px; color: #ffd7d7; }
+  /* the city is being built — never let the map look idle */
+  #booting { position: absolute; inset: 0; z-index: 1400; display: none;
+    place-items: center; background: rgba(11,14,20,.72);
+    backdrop-filter: blur(2px); text-align: center; }
+  #booting .box { background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 14px; padding: 20px 26px; max-width: 380px; }
+  #booting .t { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  #booting .s { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  #booting .bar { height: 6px; background: #0d1119; border-radius: 3px;
+    margin-top: 12px; overflow: hidden; }
+  #booting .bar i { display: block; height: 100%; width: 0%;
+    background: var(--kw-green); transition: width .3s; }
+
   /* live scenario ticker: one pill per ACTION, straight from the ops log */
   #ticker { position: absolute; top: 12px; left: 50%;
     transform: translateX(-50%); z-index: 1200; display: flex;
@@ -296,6 +316,13 @@
   <div id="map"></div>
   <canvas id="overlay"></canvas>
   <div id="ticker"></div>
+  <div id="stalebar"></div>
+  <div id="booting"><div class="box">
+    <div class="t" id="boot-t">Starting the simulation…</div>
+    <div class="s" id="boot-s">Building Kuwait traffic. Nothing to click —
+      the city appears on its own.</div>
+    <div class="bar"><i id="boot-bar"></i></div>
+  </div></div>
   <div id="clockchip"><span id="clock2">--:--:--</span><small id="trafficchip">Kuwait time (sim)</small></div>
   <div id="status"><span class="dot"></span><span id="status-text">connecting…</span></div>
   <div id="pickhint"></div>
@@ -422,6 +449,16 @@ fetch("/api/network").then(r => r.json()).then(net => {
     o.value = key; o.textContent = lbl;
     if (key === net.scenario) o.selected = true;
     msel.appendChild(o);
+  }
+  if (net.code && net.code.stale) {
+    const mins = Math.round(net.code.age_s / 60);
+    $("stalebar").style.display = "block";
+    $("stalebar").innerHTML =
+      `⚠ This server is running OLDER code than the files on disk` +
+      ` — <code>${net.code.newest_file}</code> changed ` +
+      `${mins >= 1 ? mins + " min" : "seconds"} after the simulation started.` +
+      ` The pages reload from disk, the simulation does not:` +
+      ` <b>restart run_live.py</b> to run what you are reading.`;
   }
   if (net.static_demand) {
     for (const el of document.querySelectorAll(".clockctl"))
@@ -581,10 +618,18 @@ function onFrame(ev) {
   // still sync, but nothing here may consume it as if it were new — the map
   // simply holds the frozen picture
   if (f.heartbeat) return;
+  if (f.cars) $("booting").style.display = "none";
   if (f.warmup || !f.cars) {
+    // never let the map look like it is waiting for the operator to click
+    // something: say plainly that the city is being built, and show it
+    const pct = f.warmup
+      ? Math.round(100 * f.warmup.done / Math.max(f.warmup.total, 1)) : 0;
+    $("booting").style.display = "grid";
+    $("boot-t").textContent = f.warmup
+      ? `Building Kuwait traffic — ${pct}%` : "Starting the simulation…";
+    $("boot-bar").style.width = pct + "%";
     if (f.warmup)
-      setStatus(true,
-        `Warming up Kuwait traffic — ${Math.round(100 * f.warmup.done / Math.max(f.warmup.total, 1))}%`);
+      setStatus(true, `Warming up Kuwait traffic — ${pct}%`);
     // a restart destroyed the simulation this screen is showing: drop the
     // picture once, not on every 0.4 s progress frame
     if (live) { live = false; clearLivePicture(); }

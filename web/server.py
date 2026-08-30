@@ -25,6 +25,37 @@ from sim.runner import Simulation  # noqa: E402
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 
+PROCESS_START = time.time()
+
+
+def code_status():
+    """Is the RUNNING python older than the code on disk?
+
+    The static pages are read from disk on every request, so a browser can
+    show a brand-new UI while the simulation behind it runs code from days
+    ago — the source of a whole class of "I fixed that already" confusion.
+    Comparing the newest source file against this process's start time
+    detects it exactly."""
+    newest, newest_f = 0.0, ""
+    for sub in ("sim", "web", "rag"):
+        d = os.path.join(ROOT, sub)
+        for dirpath, _dirs, files in os.walk(d):
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                try:
+                    m = os.path.getmtime(os.path.join(dirpath, f))
+                except OSError:
+                    continue
+                if m > newest:
+                    newest, newest_f = m, os.path.join(sub, f)
+    return {"started": PROCESS_START,
+            "newest_source": newest,
+            "newest_file": newest_f,
+            "stale": newest > PROCESS_START + 1.0,
+            "age_s": round(newest - PROCESS_START) if newest > PROCESS_START else 0}
+
+
 class Hub:
     def __init__(self):
         self.sim = None
@@ -73,6 +104,9 @@ class Hub:
         # that ignores both
         self.network_cache["static_scenarios"] = [
             k for k, v in SCENARIOS.items() if v.get("static_demand")]
+        # so the page can tell the operator when the SERVER is older than
+        # the code on disk (the pages reload from disk, the process does not)
+        self.network_cache["code"] = code_status()
         self.error = None
 
     # ------------------------------------------------------------- sim loop
@@ -564,7 +598,10 @@ async def api_command(cmd: dict):
 async def network():
     for _ in range(150):                  # sim still booting: wait up to 30 s
         if hub.network_cache is not None:
-            return JSONResponse(hub.network_cache)
+            # code status is computed PER REQUEST, never cached: a source
+            # file edited after this process started must be visible to the
+            # very next page load, which is the whole point of the check
+            return JSONResponse({**hub.network_cache, "code": code_status()})
         if hub.error:
             break
         await asyncio.sleep(0.2)
