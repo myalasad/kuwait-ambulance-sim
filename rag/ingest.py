@@ -222,6 +222,8 @@ def _version_history(root):
 def programme_docs(root):
     docs = []
     docs += _md_sections(os.path.join(root, "docs", "knowledge.md"), "handbook")
+    docs += _md_sections(os.path.join(root, "docs", "algorithms.md"),
+                         "algorithms")
     docs += _md_sections(os.path.join(root, "README.md"), "readme")
     docs += _config_reference(root)
     docs += _module_docs(root)
