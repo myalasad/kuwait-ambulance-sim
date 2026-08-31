@@ -131,10 +131,13 @@
     background: var(--kw-green); transition: width .3s; }
 
   /* live scenario ticker: one pill per ACTION, straight from the ops log */
-  #ticker { position: absolute; top: 12px; left: 50%;
-    transform: translateX(-50%); z-index: 1200; display: flex;
-    flex-direction: column; gap: 6px; align-items: center;
-    pointer-events: none; max-width: min(680px, 92%); }
+  /* Routine narration NEVER shares the decision card's column, and never
+     outranks it: the operator's ruling window is 8 s and must not be
+     covered by events that are already in the log panel and /operations. */
+  #ticker { position: absolute; bottom: 44px; left: 12px;
+    z-index: 1000; display: flex;
+    flex-direction: column-reverse; gap: 6px; align-items: flex-start;
+    pointer-events: none; max-width: min(460px, 46%); }
   #ticker .tick { font: 600 12px/1.4 -apple-system, "Segoe UI", sans-serif;
     background: rgba(10, 14, 22, .92); border: 1px solid var(--line);
     border-left: 4px solid var(--muted); border-radius: 8px;
@@ -161,7 +164,8 @@
     border-radius: 8px; padding: 5px 12px; font-size: 14px; font-weight: 700;
     font-variant-numeric: tabular-nums; }
   #clockchip small { color: var(--muted); font-weight: 400; margin-left: 6px; }
-  #pickhint { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  /* clears the decision card, which owns top-centre */
+  #pickhint { position: absolute; top: 56px; left: 50%; transform: translateX(-50%);
     z-index: 1000; background: var(--kw-green); color: #fff; font-weight: 600;
     padding: 6px 14px; border-radius: 999px; font-size: 13px; display: none; }
   #zoomhint { position: absolute; bottom: 14px; left: 50%;
@@ -169,8 +173,8 @@
     background: rgba(13,17,25,.85); border: 1px solid var(--line);
     color: var(--muted); padding: 5px 14px; border-radius: 999px;
     font-size: 12px; }
-  #decisions { position: absolute; top: 48px; left: 50%;
-    transform: translateX(-50%); z-index: 1100; display: flex;
+  #decisions { position: absolute; top: 12px; left: 50%;
+    transform: translateX(-50%); z-index: 1300; display: flex;
     flex-direction: column; gap: 8px; width: min(560px, 90%); }
   .decision-card { background: #2a2113; border: 2px solid var(--amber);
     border-radius: 12px; padding: 10px 14px; box-shadow: 0 4px 24px rgba(0,0,0,.5); }
@@ -513,17 +517,14 @@ connect();
 
 // live scenario ticker: every pill is a REAL action from the operations
 // log, shown the moment it happens — never a canned statement
+// Only events that ask something of a human reach the map.  Routine
+// narration — corridors opening, cameras, arrivals, crews going ready —
+// is already in the log panel, on /operations and in the persisted JSONL,
+// so repeating it over the map buys nothing and costs the operator the
+// centre of his screen during an emergency.
 const TICKER_RULES = [
-  [/PURPOSELY ENABLED/, "#f0b429"],
-  [/hardened to RED/, "#ef4444"],
-  [/confirmed .* green corridor|Control centre confirmed/, "#4ea0ff"],
-  [/CALL QUEUED|QUEUED CALL served/, "#f0b429"],
-  [/ADAPTIVE REROUTE|holding course/, "#f0b429"],
-  [/NO CITATION/, "#22c55e"],
-  [/ARRIVED at/, "#22c55e"],
-  [/READY again|stands down to reserve/, "#22c55e"],
-  [/granted priority|UNABLE TO DECIDE|default policy applied|corridors requested/, "#a78bfa"],
-  [/BACK TO NORMAL/, "#8be9b6"],
+  [/UNABLE TO DECIDE|granted priority|default policy applied/, "#a78bfa"],
+  [/FAIL-SAFE|fail-safe|FAULT|command FAILED|stood down/, "#ef4444"],
 ];
 function maybeTicker(e) {
   for (const [re, color] of TICKER_RULES) {
@@ -1293,14 +1294,12 @@ function render(now) {
         const who = `${t.code} ${t.name}`;
         if (st.m === "preempted" || st.m === "clearing")
           label = { text: `🚨 PURPOSELY ENABLED · ${who} · ${st.amb}`, color: "#f0b429" };
-        else if (st.m === "transition")
-          label = { text: `ENABLING · ${who}`, color: "#f0b429" };
-        else if (st.m === "restoring")
-          label = { text: `RESTORING · ${who}`, color: "#f0b429" };
         else if (st.m === "demand")
           label = { text: `EARLY GREEN · ${who}`, color: "#22d3ee" };
-        else if (restoredBadges.get(t.id) > wallNow)
-          label = { text: `BACK TO NORMAL ✓ · ${who}`, color: "#8be9b6" };
+        // ENABLING / RESTORING / BACK TO NORMAL are transient bookkeeping:
+        // the housing already shows each state by colour and blink, and the
+        // wording is in the log.  Drawing it here stacked three text labels
+        // across the same streets as the ambulance tags.
       }
       drawSignalHousing(c.x, c.y, st.m, st.s, label, now, hs);
     }
