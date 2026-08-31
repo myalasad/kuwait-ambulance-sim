@@ -27,6 +27,10 @@ pages; it opens in VS Code with ready-made launch configurations.
   controlled live through the TraCI API from Python 3.9.
 - Road networks from OpenStreetMap via the Overpass API, converted with
   netconvert; background traffic generated with randomTrips and scaled live.
+  Background cars use a stated driver model, not SUMO's defaults: finite
+  patience at give-way links, early lane selection for turns, and a 35%
+  share carrying a navigation app that re-plans around jams. Ambulances
+  are excluded from that app — their routing is the project's own Dijkstra.
 - FastAPI + WebSocket server (run_live.py) streaming simulation snapshots to
   Leaflet/canvas web pages; no build step, no Node.
 - Pure-Python algorithms: Dijkstra router, Markov predictor (DTMC + CTMC),
@@ -428,6 +432,43 @@ already fastest under live weights, or the best alternative is inside the
 the ambulance at each signal. In city-wide saturation, physics wins — which
 is the honest argument for staging ambulances forward during peak hours
 (future work), not a simulation defect.
+
+## Why the city itself used to gridlock (fixed 31 Aug 2026)
+Until 31 August 2026 the showcase collapsed on its own, and that — not the
+preemption logic — was what stranded ambulances. Three causes, all in the
+background traffic. First, the generated cars carried a bare vehicle type,
+so they took SUMO's defaults: zero impatience, meaning a driver waiting to
+cross a give-way link yields for ever rather than eventually accepting a
+tight gap; and late lane selection, so on the very short link edges left
+where OSM ways were joined a car could not reach the lane its turn needed
+and stopped dead at the lane end, blocking it permanently. Second, SUMO was
+left at its default of never overtaking a vehicle stalled inside a junction
+box, so one stopped car could hold a whole crossing until the 180-second
+teleport released it. Third, every background trip followed a route fixed
+before the run, so nothing could learn a street was jammed and traffic kept
+queueing into the same corridor. Measured over 40 minutes of city time,
+three seeds: 61% of vehicles standing, 12.2 km/h mean speed, ~408 teleports,
+and two of eight ambulance missions never finishing. After the fix: 48%
+standing, 21.4 km/h, 192 teleports, and all eight finishing, with mean
+mission time down from 557 s to 389 s and the worst from 1165 s to 600 s.
+The navigation-app share is a deliberate trade-off: at 100% the city is
+fastest (27.9 km/h) but ambulances are slower, because uniform congestion
+removes the quiet corridors the ambulance router exploits.
+
+The deeper cause was capacity, not behaviour. The showcase demand file
+offers 2.39 vehicles per second while the downtown network only discharges
+about 1.85 per second. Arrivals above departures is an oversaturated queue,
+so the number of cars on the map grows without limit and the city jams solid
+however well the drivers behave; the insertion rate is now scaled to a level
+the roads can carry. Measured over two hours and ten minutes of city time,
+with every ambulance call placed deliberately into the congested second
+half: at the old full rate the map went from 1087 to 4246 vehicles, only
+three of eight missions finished, and the worst-affected ambulance spent 88%
+of its time stopped. At the rate now used the vehicle count is flat, 435 to
+481, all eight missions finish, the worst unit is stopped 23% of the time,
+and the city holds 34.5 km/h. Density is a tunable, and the reason for the
+setting is stability rather than taste: the dashboard is meant to be left
+running for hours without degrading.
 
 ## Why an ambulance disappears or loses its lights
 Nothing leaves the map silently. The close reason on the A-case is always one

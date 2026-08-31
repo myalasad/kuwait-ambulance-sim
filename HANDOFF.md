@@ -58,6 +58,75 @@ Verified directly, not recalled:
   headless runs.
 - `run_live.py` watches `sim/`, `web/`, `rag/` and itself and **re-execs on
   any source change** (~3 s, cached city). `--no-reload` disables it.
+- **Background gridlock fixed 2026-08-31.** The showcase used to collapse:
+  after ~40 min of city time 61% of vehicles were standing, mean speed
+  12.2 km/h, ~408 teleports, and ambulances with a live green corridor
+  crawled at 0.2-3 km/h for 200-760 s at a stretch. Three causes, all in
+  the *background* traffic, none in the preemption code:
+  1. `background_*.rou.xml` declared a **bare** `<vType id="bg_passenger"
+     vClass="passenger"/>` - every SUMO default, including `impatience="0"`
+     (yield at a minor link for ever) and `lcStrategic="1"` (starts moving
+     towards a connecting lane too late to finish on the 3-9 m stub edges
+     netconvert leaves at joined junctions, so the car emergency-stops at
+     the lane end and blocks it permanently).
+  2. No `--ignore-junction-blocker`: SUMO's default -1 means a car stopped
+     **inside** a junction box holds the cross approach until the 180 s
+     teleport fires. That is what the 47,000 teleports were.
+  3. Fixed-route demand with no feedback: nothing told a driver a street
+     was jammed, so traffic queued into the same corridor for ever
+     (شارع القاهرة / Cairo Street ran solid for ~1.5 km).
+  Fixes: tuned `bg_passenger` in all three route files, and
+  `SimConfig.ignore_junction_blocker_s` (20 s) +
+  `SimConfig.nav_adoption` (0.35) passed by `runner.start()`.
+  `scripts/build_network.py::patch_bg_vtype` reapplies the vType on a
+  rebuild, so a regenerated scenario is not born gridlocked.
+  Measured, 3 seeds x 8 missions, 40 min of city time each:
+
+  | | missions done | mean mission | worst mission | vehicles standing | mean speed | teleports |
+  |---|---|---|---|---|---|---|
+  | before | 6/8 | 557 s | 1165 s | 61% | 12.2 km/h | 408 |
+  | after | 8/8 | 389 s | 600 s | 48% | 21.4 km/h | 192 |
+
+  `nav_adoption` is a genuine trade-off and was set by measurement: 1.0
+  gives the fastest city (27.9 km/h) but SLOWER ambulances (431 s mean) and
+  lost a mission on one seed, because uniform congestion removes the quiet
+  corridors `sim/router.py` exploits. 0.35 keeps the ambulance numbers of
+  0.0 with most of the city gain of 1.0. Ambulances are excluded from the
+  device outright (`vtypes.add.xml`), verified live: the unit reports
+  `has.rerouting.device=false` while ~37% of background traffic carries it.
+- Raising the **ambulance's** own `lcStrategic` (1.0 -> 6.0) was measured
+  and **rejected**: no mission-time gain, and it cost a completion on one
+  of three seeds. The ambulance vType is unchanged apart from opting out
+  of the rerouting device.
+- **The showcase was also oversaturated, and that was the deeper cause.**
+  Even with the traffic model fixed, the route file offers **2.39
+  vehicles/s** while this network only discharges **~1.85/s**. An
+  oversaturated queue grows without bound, so the city jammed solid however
+  well the drivers behaved. `SimConfig.static_demand_scale` (was an
+  unlabelled hard-coded `--scale 1.000`) now carries the fix at **0.50**.
+  Measured to 2 h 10 min of city time with all 12 calls dispatched INTO the
+  congested second half — this is the test that reproduces the reported bug:
+
+  | scale | vehicles over the run | missions | worst unit stopped | city speed |
+  |---|---|---|---|---|
+  | 1.00 | 1087 -> 4246 | 3 of 8 | 88% | 6.3 km/h |
+  | 0.70 | 621 -> 1194 | 7 of 8 | 73% | 19.3 km/h |
+  | 0.60 | 546 -> 760 | 8 of 8 | 43% | 28.2 km/h |
+  | **0.50** | **435 -> 481** | **8 of 8** | **23%** | **34.5 km/h** |
+
+  0.50 is the only value whose vehicle count is FLAT, which is what lets the
+  dashboard be left running for hours. Raise to 0.60 for ~50% more visible
+  traffic at the cost of slow drift; do not exceed 0.70.
+- Related, and NOT changed because it is a design call, not a defect: the
+  showcase's demand filter is a **Voronoi** split on the three district
+  anchors (`scripts/build_showcase.py`, as its docstring says), but the map
+  draws each district as a circle of `radius_m`. So `/` shows an 850 m
+  "dense core" while **2,835 edges / 404 lane-km — 80% of them outside that
+  circle — also keep 100% of peak demand**. That mismatch is why the
+  scenario is oversaturated in the first place. Honouring `radius_m` in the
+  filter would be the alternative to `static_demand_scale`; it needs a
+  showcase rebuild and changes what the districts mean, so it is the
+  owner's call.
 
 Per-version history is NOT kept here - `git tag -n40` and the GitHub
 releases hold it, with the measured numbers each version claimed.
@@ -132,3 +201,21 @@ since the A/B shows it is not the aggregate problem.
   unsignalized merges.
 - Overpass: use a named set (`->.roads`) or later statements overwrite the
   default set and drop turn restrictions.
+- A **bare** `<vType vClass="passenger"/>` is not a neutral default, it is a
+  gridlock generator: `impatience="0"` yields at a minor link for ever and
+  `lcStrategic="1"` misses short connecting lanes. Always state the junction
+  and lane-change model for background traffic.
+- SUMO's `--ignore-junction-blocker` defaults to -1 = "wait for ever". In a
+  dense grid that turns one car stalled in a junction box into a deadlock
+  ring that only `--time-to-teleport` can break. Check the teleport counter:
+  a five-figure number means deadlock, not traffic.
+- An explicit `has.<name>.device` param on a vType **outranks**
+  `--device.<name>.probability`. That is the only way to give background
+  traffic a device while keeping it off ambulances.
+- XML comments may not contain `--`, so a comment that names a SUMO option
+  (`--device.rerouting.probability`) makes the route file unparseable. SUMO
+  reports `'--' sequence is illegal in comment` and the hub shows only
+  "Simulation failed to start: Connection closed by SUMO."
+- The showcase route file carries demand for 0-10800 s only. Past ~3 h of
+  city time nothing new is inserted and the map is whatever is left; a long
+  demo should be reset rather than left running overnight.

@@ -220,6 +220,52 @@ class SimConfig:
     seed: int = 42
     snap_radius_m: float = 400.0      # geocoding snap radius (per scenario)
 
+    # --- background traffic realism (keeps the city from gridlocking) -----
+    # Measured on the showcase, 3 seeds x 8 missions, 40 min of city time
+    # each.  Without these the downtown grid collapses: 61% of vehicles
+    # standing, 12.2 km/h mean, ~408 teleports per 40 min, and 2 of 8
+    # ambulance missions never finished.  With them: 48% standing,
+    # 21.4 km/h, 192 teleports, 8 of 8 finished.
+    ignore_junction_blocker_s: float = 20.0
+    #   A car that has been blocked by a vehicle STANDING IN THE JUNCTION
+    #   this long drives around it.  SUMO's default (-1) is "wait for ever",
+    #   which turns any blocked box into a permanent deadlock ring that only
+    #   the 180 s teleport can break.  This is the single biggest teleport
+    #   reduction measured (408 -> ~200 per 40 min).  0 disables.
+    nav_adoption: float = 0.35
+    #   Share of background drivers carrying a navigation app (SUMO's
+    #   rerouting device): they re-plan around a jam instead of queueing
+    #   into it, which is the negative feedback the fixed-route demand
+    #   otherwise lacks.  AMBULANCES ARE EXCLUDED (vtypes.add.xml opts them
+    #   out) — sim/router.py owns their routing and the corridor follows it.
+    #   0.35 was chosen by measurement, not taste: 0 leaves the city at
+    #   15.6 km/h, 1.0 gives the fastest city (27.9 km/h) but SLOWER
+    #   ambulances (431 s vs 389 s mean mission) because uniform congestion
+    #   removes the quiet corridors the ambulance router exploits, and it
+    #   lost a mission on one seed.  0.35 keeps the ambulance numbers of 0
+    #   with most of the city gain of 1.0.  0 disables.
+    nav_reroute_period_s: float = 300.0   # how often a nav driver re-plans
+    static_demand_scale: float = 0.50
+    #   Insertion scale for scenarios whose demand is baked into the route
+    #   file (the showcase).  It used to be an unlabelled hard-coded 1.000,
+    #   and 1.000 is OVERSATURATED: the route file offers 2.39 vehicles/s
+    #   while this network only discharges ~1.85/s, so the vehicle count
+    #   grows without bound and the city jams solid however well the drivers
+    #   behave.  That is a queueing fact, not a behaviour bug — the only
+    #   fixes are less demand or more road.
+    #
+    #   Measured to 2 h 10 min of city time, with all 12 calls dispatched
+    #   INTO the congested second half (vehicles in network over the run /
+    #   missions completed / worst unit's share of time stopped):
+    #       1.00   1087 -> 4246   3 of 8   88%   <- the reported bug
+    #       0.70    621 -> 1194   7 of 8   73%
+    #       0.60    546 ->  760   8 of 8   43%
+    #       0.50    435 ->  481   8 of 8   23%   <- bounded queue
+    #   0.50 is the only value whose vehicle count is FLAT, so the dashboard
+    #   can be left running for hours without degrading; it holds the city
+    #   at 34.5 km/h.  Raise to 0.60 for ~50% more visible traffic at the
+    #   cost of slow drift (still 8 of 8).  Do not exceed 0.70.
+
     # --- detection & green-wave preemption ---
     preemption_enabled: bool = True
     camera_range_m: float = 200.0        # a junction camera "sees" the flashing

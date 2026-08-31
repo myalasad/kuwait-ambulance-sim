@@ -46,7 +46,21 @@
 -->
 
 <routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
-    <vType id="bg_passenger" vClass="passenger"/>
+    <!-- Kuwaiti city traffic.  A bare <vType vClass="passenger"/> takes
+         SUMO's defaults, and two of those deadlock a dense grid:
+         impatience="0" makes a driver yield at a minor link for ever, and
+         lcStrategic="1" starts the move towards a connecting lane too late
+         to finish it on the 3-9 m stub edges netconvert leaves behind at
+         joined junctions - the car then emergency-stops at the lane end and
+         blocks that lane for good.  These values keep drivers polite but
+         finite.  Whether a car also carries a navigation app (the rerouting
+         device) is decided by SimConfig.nav_adoption in sim/runner.py, NOT
+         here, so the adoption rate stays one tunable number; ambulances opt
+         out of that device explicitly in vtypes.add.xml. -->
+    <vType id="bg_passenger" vClass="passenger"
+           impatience="0.6" jmTimegapMinor="0.8" tau="0.9" sigma="0.4"
+           lcStrategic="5.0" lcCooperative="1.0" lcAssertive="1.2"
+           lcSpeedGain="1.5" lcLookaheadLeft="4.0" lcSublane="1.5"/>
     <vehicle id="bg0" type="bg_passenger" depart="0.00" departLane="best" departSpeed="max">
         <route edges="295598234 295598233#2 -295598235#1 295598228 110820316#5 110820316#1 110820316#2 295598232 295598235#0 295598238#0 295598238#1 452549559#0 452549559#1 1137319573 1137319573-AddedOffRampEdge 24905063 47329518#1 47329518#2 1046211703 1138491600 1046211704 1138491598 1289626834#1-AddedOnRampEdge 1289626834#1 1289626834#1-AddedOffRampEdge 1289626834#2 1193923692#0 1193923692#1-AddedOnRampEdge 1193923692#1 1368069860#0 1368069860#0-AddedOffRampEdge 1368069856 1307677398#0 1307677398#1-AddedOnRampEdge 1307677398#1 -1344075281"/>
     </vehicle>

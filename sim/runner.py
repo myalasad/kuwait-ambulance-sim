@@ -65,6 +65,25 @@ class Simulation:
         ]
         if self.cfg.lateral_resolution > 0:
             cmd += ["--lateral-resolution", str(self.cfg.lateral_resolution)]
+        # Gridlock relief.  A dense grid deadlocks two ways that SUMO's
+        # defaults never resolve: a car stopped INSIDE a junction box blocks
+        # a cross approach for ever (default --ignore-junction-blocker -1),
+        # and fixed-route demand has no way to learn a street is jammed, so
+        # it keeps queueing into it.  See SimConfig for the measured effect.
+        if self.cfg.ignore_junction_blocker_s > 0:
+            cmd += ["--ignore-junction-blocker",
+                    str(self.cfg.ignore_junction_blocker_s)]
+        if self.cfg.nav_adoption > 0:
+            # background traffic only: data/vtypes.add.xml sets
+            # has.rerouting.device="false" on the ambulance, and an explicit
+            # vType param outranks this probability in SUMO's device
+            # assignment — so no ambulance is ever re-routed behind
+            # sim/router.py's back.
+            cmd += ["--device.rerouting.probability", f"{self.cfg.nav_adoption:.3f}",
+                    "--device.rerouting.period", f"{self.cfg.nav_reroute_period_s:.0f}",
+                    "--device.rerouting.pre-period", "0",
+                    "--device.rerouting.adaptation-interval", "10",
+                    "--device.rerouting.adaptation-weight", "0.5"]
         # time-of-day realism: the flat peak-rate demand base is scaled to
         # the chosen clock hour (01:00-05:00 -> near-empty Kuwaiti streets)
         # Load BOTH day shapes once (real_counts.csv is read here and only
@@ -82,7 +101,7 @@ class Simulation:
         self._static_demand = bool(
             SCENARIOS[self.cfg.scenario].get("static_demand"))
         if self._static_demand:
-            cmd += ["--scale", "1.000"]
+            cmd += ["--scale", f"{self.cfg.static_demand_scale:.3f}"]
         else:
             cmd += ["--scale", f"{self._level * self.cfg.demand_factor * self._profile.get(self._scale_hour, 0.3):.3f}"]
         cmd += self.extra_args

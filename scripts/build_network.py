@@ -50,9 +50,48 @@ VTYPES_XML = """<additional>
            lcStrategic="1.0" lcSpeedGain="2.0" lcAssertive="1.5"
            lcPushy="0.8" lcImpatience="1.0" color="1,0,0">
         <param key="has.bluelight.device" value="true"/>
+        <!-- NEVER re-routed by SUMO.  sim/router.py owns ambulance routing
+             (time-dependent Dijkstra on CTMC-predicted speeds) and the
+             green corridor is built from THAT plan; a rerouting device
+             silently overriding it would send the unit off its own
+             corridor.  An explicit vType param outranks
+             --device.rerouting.probability in SUMO's device assignment. -->
+        <param key="has.rerouting.device" value="false"/>
     </vType>
 </additional>
 """
+
+# randomTrips emits a BARE <vType id="bg_passenger" vClass="passenger"/>, and
+# SUMO's defaults for it deadlock a dense grid: impatience="0" yields at a
+# minor link for ever, and lcStrategic="1" starts the move towards a
+# connecting lane too late to finish it on the 3-9 m stub edges netconvert
+# leaves at joined junctions - the car then emergency-stops at the lane end
+# and blocks it for good.  Rebuilt scenarios must not be born gridlocked, so
+# the bare type is rewritten with the measured values (see SimConfig).
+BG_VTYPE_XML = """    <vType id="bg_passenger" vClass="passenger"
+           impatience="0.6" jmTimegapMinor="0.8" tau="0.9" sigma="0.4"
+           lcStrategic="5.0" lcCooperative="1.0" lcAssertive="1.2"
+           lcSpeedGain="1.5" lcLookaheadLeft="4.0" lcSublane="1.5"/>
+"""
+BG_VTYPE_BARE = '<vType id="bg_passenger" vClass="passenger"/>'
+
+
+def patch_bg_vtype(routes_path: str) -> None:
+    """Replace randomTrips' bare background vType with the tuned one."""
+    tmp = routes_path + ".tmp"
+    done = False
+    with open(routes_path) as src, open(tmp, "w") as out:
+        for line in src:
+            if not done and BG_VTYPE_BARE in line:
+                out.write(BG_VTYPE_XML)
+                done = True
+            else:
+                out.write(line)
+    os.replace(tmp, routes_path)
+    print("  background vType: tuned" if done else
+          "  background vType: BARE TYPE NOT FOUND — left as randomTrips "
+          "wrote it; the city will gridlock")
+
 
 def run(cmd: list) -> None:
     print("+", " ".join(os.path.basename(c) if i == 0 else c for i, c in enumerate(cmd)))
@@ -108,6 +147,8 @@ def main() -> None:
         "--prefix", "bg",
         "--trip-attributes", 'departLane="best" departSpeed="max"',
     ])
+
+    patch_bg_vtype(routes)
 
     with open(VTYPES, "w") as f:
         f.write(VTYPES_XML)
